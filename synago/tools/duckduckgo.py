@@ -8,11 +8,11 @@ def duckduckgo_search(
         ):
     """Search the web for the query.
 
-
     Args:
         query: The query to search for.
         max_results: The maximum number of results to return.
-        time_limit: The time limit for the search. d, w, m, y. Defaults to None.
+        time_limit: The time limit for the search. d, w, m, y.
+            Defaults to None.
     """
     with DDGS() as ddgs:
         results = ddgs.text(

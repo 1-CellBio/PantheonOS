@@ -3,7 +3,9 @@ from pprint import pprint
 import fire
 from synago.agent import Agent
 from synago.tools.duckduckgo import duckduckgo_search
-from pydantic import BaseModel
+from synago.tools.web_crawl import web_crawl
+from pydantic import BaseModel, Field
+import asyncio
 
 
 default_theme = "The applications of LLM-based agents in biology and medicine."
@@ -30,7 +32,7 @@ async def main(theme: str = default_theme, output: str | None = None):
     | intitle:dogs |	Page title includes the word "dogs" |
     | inurl:cats  |	Page url includes the word "cats" |
     """,
-        model="gpt-4o",
+        model="gpt-4o-mini",
     )
 
     def merge_search_results(results: list[dict]) -> list[dict]:
@@ -39,25 +41,27 @@ async def main(theme: str = default_theme, output: str | None = None):
             _dict[result["title"]] = result
         return list(_dict.values())
 
-    relation_check_agent = Agent(
-        name="relation_check_agent",
+    info_extraction_agent = Agent(
+        name="info_extraction_agent",
         instructions=f"""You are a expert in the theme: `{theme}`,
-    you can check if the search result is a paper and related to the theme,
-    according to the search result title.
+    you should extract the paper title, summary, journal, time from the page content.
+    You should also check if the search result is a paper and related to the theme.
 
-    Please be very strict,
+    Please be very strict and careful,
     only return True if the paper is very related to the theme.
     """,
-        model="gpt-4o",
+        model="gpt-4o-mini",
     )
 
     format_agent = Agent(
         name="format_agent",
-        instructions="""You are a format agent,
+        instructions=f"""You are a format agent,
     you should format the answer of other agent give a markdown format.
     List all the papers to markdown points.
+
+    Add a well-formatted title and a descriptions about the theme `{theme}`.
     """,
-        model="gpt-4o",
+        model="gpt-4o-mini",
     )
 
     class QueryKeywords(BaseModel):
@@ -79,25 +83,36 @@ async def main(theme: str = default_theme, output: str | None = None):
 
     print("Number of items before relation check: ", len(merged_results))
 
-    class RelationCheck(BaseModel):
-        is_related: list[bool]
-        is_a_paper: list[bool]
+    contents = await web_crawl([result["href"] for result in merged_results])
 
-    relation_check = await relation_check_agent.run(
-        str(merged_results),
-        response_format=RelationCheck,
-    )
+    class ContentInfo(BaseModel):
+        title: str
+        url: str
+        summary: str
+        is_related: bool = Field(description="Whether the paper is related to the theme")
+        is_a_paper: bool = Field(description="Whether the content is a journal or preprint paper")
+        journal: str = Field(description="The journal name of the paper")
+        time: str = Field(description="The time of the paper")
 
-    related_results = [
-        result for result, is_related, is_a_paper
-        in zip(merged_results, relation_check.content.is_related, relation_check.content.is_a_paper)
-        if is_related and is_a_paper
-    ]
+    async def process_content(content, result):
+        try:
+            resp = await info_extraction_agent.run(
+                result["href"] + "\n" + content, response_format=ContentInfo)
+            print(resp.content)
+            if resp.content.is_related and resp.content.is_a_paper:
+                return resp.content
+        except Exception as e:
+            print(e)
+        return None
 
-    print("Number of items after relation check: ", len(related_results))
-    pprint(related_results)
+    tasks = [process_content(content, result) 
+             for content, result in zip(contents, merged_results)]
+    results = await asyncio.gather(*tasks)
+    list_of_info = [r for r in results if r is not None]
 
-    markdown = await format_agent.run(str(related_results))
+    print("Number of items after relation check: ", len(list_of_info))
+
+    markdown = await format_agent.run(list_of_info)
     print("Markdown:")
     print(markdown.content)
 

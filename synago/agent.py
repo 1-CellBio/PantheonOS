@@ -1,5 +1,6 @@
 import copy
 import json
+import inspect
 from typing import Optional, List, Callable, AsyncGenerator, Union
 
 from funcdesc.parse import parse_func
@@ -70,7 +71,10 @@ class Agent:
             func = self.functions[func_name]
             if __CTX_VARS_NAME__ in func.__code__.co_varnames:
                 params[__CTX_VARS_NAME__] = context_variables
-            result = func(**params)
+            if inspect.iscoroutinefunction(func):
+                result = await func(**params)
+            else:
+                result = func(**params)
             context_variables[call["id"]] = result
             messages.append({
                 "role": "tool",
