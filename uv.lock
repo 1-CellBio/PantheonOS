@@ -1780,8 +1780,6 @@ name = "synago"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "crawl4ai" },
-    { name = "duckduckgo-search" },
     { name = "fire" },
     { name = "funcdesc" },
     { name = "loguru" },
@@ -1793,9 +1791,15 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
+tool = [
+    { name = "crawl4ai" },
+    { name = "duckduckgo-search" },
+]
 
 [package.dev-dependencies]
 dev = [
+    { name = "crawl4ai" },
+    { name = "duckduckgo-search" },
     { name = "ipdb" },
     { name = "ipython" },
     { name = "pytest" },
@@ -1804,8 +1808,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crawl4ai", specifier = ">=0.4.23" },
-    { name = "duckduckgo-search", specifier = ">=7.1.1" },
+    { name = "crawl4ai", marker = "extra == 'tool'", specifier = ">=0.4.23" },
+    { name = "duckduckgo-search", marker = "extra == 'tool'", specifier = ">=7.1.1" },
     { name = "fire", specifier = ">=0.7.0" },
     { name = "funcdesc", specifier = ">=0.1.5.1" },
     { name = "loguru", specifier = ">=0.7.3" },
@@ -1816,6 +1820,8 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "crawl4ai", specifier = ">=0.4.23" },
+    { name = "duckduckgo-search", specifier = ">=7.1.1" },
     { name = "ipdb", specifier = ">=0.13.13" },
     { name = "ipython", specifier = ">=8.30.0" },
     { name = "pytest", specifier = ">=8.3.4" },

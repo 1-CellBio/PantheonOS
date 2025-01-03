@@ -1,17 +1,48 @@
+"""
+This is an example of using synago to build a multi-agent system to generate a markdown report of papers about a theme.
+
+# Install the dependencies
+```bash
+pip install synago[tool]
+python -m playwright install --with-deps chromium
+```
+
+# Run the program
+```bash
+python examples/paper_reporter.py --theme "The applications of LLM-based agents in biology and medicine." --output paper_report.md --results_per_keyword 5
+```
+"""
 from pprint import pprint
+import asyncio
 
 import fire
 from synago.agent import Agent
 from synago.tools.duckduckgo import duckduckgo_search
 from synago.tools.web_crawl import web_crawl
+from loguru import logger
 from pydantic import BaseModel, Field
-import asyncio
 
 
 default_theme = "The applications of LLM-based agents in biology and medicine."
 
 
-async def main(theme: str = default_theme, output: str | None = None):
+async def main(
+    theme: str = default_theme,
+    output: str | None = None,
+    results_per_keyword: int = 5,
+):
+    """This program will generate a markdown report of papers about the theme.
+
+    The program will first query the keywords about the theme,
+    then it will crawl the web to get the contents of the papers,
+    and finally it will extract the information of the papers and format them into a markdown report.
+
+
+    Args:
+        theme (str): The theme of the paper report.
+        output (str | None): The path to save the markdown report.
+        results_per_keyword (int): The number of results per keyword.
+    """
 
     query_keywords_agent = Agent(
         name="query_keywords_agent",
@@ -72,16 +103,20 @@ async def main(theme: str = default_theme, output: str | None = None):
         response_format=QueryKeywords,
     )
 
-    print("Query keywords:")
+    logger.info("Query keywords:")
     pprint(query_keywords.content.keywords)
 
     search_results = []
     for keyword in query_keywords.content.keywords:
-        results = duckduckgo_search(keyword, max_results=5)
-        search_results.extend(results)
+        try:
+            results = duckduckgo_search(keyword, max_results=results_per_keyword)
+            await asyncio.sleep(1)
+            search_results.extend(results)
+        except Exception as e:
+            logger.error(e)
     merged_results = merge_search_results(search_results)
 
-    print("Number of items before relation check: ", len(merged_results))
+    logger.info(f"Number of items before relation check: {len(merged_results)}")
 
     contents = await web_crawl([result["href"] for result in merged_results])
 
@@ -98,11 +133,11 @@ async def main(theme: str = default_theme, output: str | None = None):
         try:
             resp = await info_extraction_agent.run(
                 result["href"] + "\n" + content, response_format=ContentInfo)
-            print(resp.content)
+            logger.info(resp.content)
             if resp.content.is_related and resp.content.is_a_paper:
                 return resp.content
         except Exception as e:
-            print(e)
+            logger.error(e)
         return None
 
     tasks = [process_content(content, result) 
@@ -110,10 +145,10 @@ async def main(theme: str = default_theme, output: str | None = None):
     results = await asyncio.gather(*tasks)
     list_of_info = [r for r in results if r is not None]
 
-    print("Number of items after relation check: ", len(list_of_info))
+    logger.info(f"Number of items after relation check: {len(list_of_info)}")
 
     markdown = await format_agent.run(list_of_info)
-    print("Markdown:")
+    logger.info("Markdown:")
     print(markdown.content)
 
     if output:
