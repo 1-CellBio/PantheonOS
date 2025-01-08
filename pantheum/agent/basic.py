@@ -21,7 +21,7 @@ class Agent:
         name: str,
         instructions: str,
         model: str = "gpt-4o-mini",
-        functions: Optional[List[Callable]] = None,
+        tools: Optional[List[Callable]] = None,
         response_format: Optional[BaseModel] = None,
     ):
         self.id = uuid4()
@@ -29,8 +29,8 @@ class Agent:
         self.instructions = instructions
         self.model = model
         self.functions = {}
-        if functions:
-            for func in functions:
+        if tools:
+            for func in tools:
                 self.functions[func.__name__] = func
         self.response_format = response_format
 
@@ -79,6 +79,7 @@ class Agent:
         self,
         messages: List[dict],
         process_chunk: Optional[Callable] = None,
+        process_step_message: Optional[Callable] = None,
         max_turns: Union[int, float] = float("inf"),
         context_variables: Optional[dict] = None,
         response_format: Optional[BaseModel] = None,
@@ -120,6 +121,8 @@ class Agent:
                     message["parsed"] = parsed
 
             history.append(message)
+            if process_step_message:
+                process_step_message(message)
 
             if not message["tool_calls"]:
                 break
@@ -129,6 +132,9 @@ class Agent:
                 context_variables=context_variables,
             )
             history.extend(tool_messages)
+            if process_step_message:
+                for msg in tool_messages:
+                    process_step_message(msg)
 
         return ResponseDetails(
             messages=history[init_len:],
@@ -140,6 +146,7 @@ class Agent:
             response_format: Optional[BaseModel] = None,
             context_variables: Optional[dict] = None,
             process_chunk: Optional[Callable] = None,
+            process_step_message: Optional[Callable] = None,
             ) -> AgentResponse:
         assert isinstance(msg, (list, str, BaseModel, AgentResponse)), \
             "Message must be a list, string, BaseModel or AgentResponse"
@@ -171,6 +178,7 @@ class Agent:
             response_format=response_format,
             context_variables=context_variables,
             process_chunk=process_chunk,
+            process_step_message=process_step_message,
         )
         final_msg = details.messages[-1]
         if response_format:

@@ -40,7 +40,7 @@ def desc_to_openai_function(
                 "required": required,
                 "additionalProperties": False,
             },
-            "strict": True,
+            "strict": False,
         },
     }
 

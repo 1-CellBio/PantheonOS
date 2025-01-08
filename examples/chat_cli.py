@@ -2,9 +2,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import asyncio
-import random
 from pantheum.repl import Repl
 from pantheum.agent import Agent
+from pantheum.tools.duckduckgo import duckduckgo_search
 
 
 scifi_fan = Agent(
@@ -14,16 +14,17 @@ scifi_fan = Agent(
 )
 
 
-adventure_novel_fan = Agent(
-    name="adventure_novel_fan",
-    instructions="You are an adventure novel fan. Please disguise yourself as a human and talk to me.",
+search_engine_expert = Agent(
+    name="search_engine_expert",
+    instructions="You are an expert in search engines. You can use the duckduckgo_search tool to search the web.",
     model="gpt-4o-mini",
+    tools=[duckduckgo_search],
 )
 
 
 async def main():
-    repl = Repl([scifi_fan, adventure_novel_fan])
-    await repl.run()
+    repl = Repl([scifi_fan, search_engine_expert])
+    await repl.run("Hi")
 
 
 if __name__ == "__main__":

@@ -27,11 +27,11 @@ async def test_tool_use():
     )
 
     @agent.tool
-    def get_weather(city: str):
+    def get_weather(city: str, unit: str = "celsius"):
         """Get the weather of a city."""
-        return {"weather": "sunny"}
+        return {"weather": "sunny", "temperature": 20}
 
-    msgs = [{"role": "user", "content": "What is the weather in Palo Alto?"}]
+    msgs = [{"role": "user", "content": "What is the weather in Palo Alto and Redwood City?"}]
     resp = await agent.run_stream(msgs)
     print()
     print(resp)
