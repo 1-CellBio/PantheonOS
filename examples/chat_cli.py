@@ -14,12 +14,6 @@ scifi_fan = Agent(
 )
 
 
-@scifi_fan.tool
-def get_scifi_book_score(book_name: str) -> int:
-    """Get the score of a scifi book."""
-    return random.randint(0, 100)
-
-
 adventure_novel_fan = Agent(
     name="adventure_novel_fan",
     instructions="You are an adventure novel fan. Please disguise yourself as a human and talk to me.",

@@ -1,6 +1,6 @@
 import asyncio
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.markdown import Markdown
@@ -41,6 +41,10 @@ class ChatHistory:
             "Just output your response, " + \
             "please do not include your name at the beginning."
         return conversation
+
+
+class WantAnswer(BaseModel):
+    want_answer: bool = Field(description="Whether the agent wants to answer the question.")
 
 
 class Repl:
@@ -85,6 +89,12 @@ class Repl:
         while True:
             for agent in self.agents:
                 conversation_prompt = self.history.to_conversation_prompt(agent.name)
+                resp = await agent.run(
+                    [conversation_prompt, f"Should {agent.name} answer the last question?"],
+                    response_format=WantAnswer,
+                )
+                if not resp.content.want_answer:
+                    continue
                 self.console.print(f"[blue][bold]{agent.name}[/bold][/blue]: ")
                 content = ""
                 markdown = Markdown(content)
