@@ -104,7 +104,7 @@ class Repl(App):
         while True:
             event = await self.meeting.stream_queue.get()
             if isinstance(event, Record):
-                new_item = Static(
+                mesg_head = Static(
                     "[bold]"
                     f"[blue]{event.source}[/blue] "
                     f"[yellow]({event.timestamp})[/yellow] "
@@ -112,7 +112,7 @@ class Repl(App):
                     "[/bold]:",
                     classes="message-item",
                 )
-                self.msg_container.mount(new_item)
+                self.msg_container.mount(mesg_head)
                 content = Markdown(event.content)
                 self.call_after_refresh(self.msg_container.mount, content)
                 self.call_after_refresh(self.msg_container.scroll_end)
