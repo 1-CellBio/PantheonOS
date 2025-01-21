@@ -56,7 +56,7 @@ class Repl:
             content = ""
             markdown = Markdown(content)
 
-            with Live(markdown, refresh_per_second=10) as live:
+            with Live(markdown, refresh_per_second=4) as live:
                 def process_chunk(chunk: dict):
                     nonlocal content
                     content += chunk.get("content", "") or ""

@@ -16,3 +16,4 @@ def use_reasoning_model(model):
 reasoning_o1 = use_reasoning_model("o1")
 reasoning_o1_mini = use_reasoning_model("o1-mini")
 reasoning_flash_thinking_2 = use_reasoning_model("gemini/gemini-2.0-flash-thinking-exp")
+reasoning_deepseek_reasoner = use_reasoning_model("deepseek/deepseek-reasoner")

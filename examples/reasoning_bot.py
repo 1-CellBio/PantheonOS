@@ -9,8 +9,8 @@ from pantheum.reasoning import reasoning_flash_thinking_2
 reasoning_bot = Agent(
     name="reasoning_bot",
     instructions="You are an AI assistant with reasoning abilities. " \
-        "You can use reasoning to solve complex problems.",
-    model="gpt-4o-mini",
+        "You can use `reasoning` to solve complex problems.",
+    model="gemini/gemini-1.5-flash",
     tools=[reasoning_flash_thinking_2],
 )
 
