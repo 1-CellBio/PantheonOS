@@ -1,5 +1,5 @@
-from pantheum.agent import Agent
-from pantheum.meeting import BrainStorm
+from pantheon.agent import Agent
+from pantheon.meeting import BrainStorm
 
 
 async def test_brainstorm():

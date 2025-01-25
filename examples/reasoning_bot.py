@@ -2,8 +2,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import asyncio
-from pantheum.agent import Agent
-from pantheum.reasoning import reasoning_flash_thinking_2
+from pantheon.agent import Agent
+from pantheon.reasoning import reasoning_flash_thinking_2
 
 
 reasoning_bot = Agent(

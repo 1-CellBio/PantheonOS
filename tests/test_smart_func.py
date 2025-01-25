@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from pantheum.smart_func import smart_func
+from pantheon.smart_func import smart_func
 
 
 async def test_smart_func():

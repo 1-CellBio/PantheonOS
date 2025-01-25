@@ -1,5 +1,5 @@
-from pantheum.tools.web_browse.duckduckgo import duckduckgo_search
-from pantheum.tools.web_browse.web_crawl import web_crawl
+from pantheon.tools.web_browse.duckduckgo import duckduckgo_search
+from pantheon.tools.web_browse.web_crawl import web_crawl
 
 
 def test_duckduckgo_search():

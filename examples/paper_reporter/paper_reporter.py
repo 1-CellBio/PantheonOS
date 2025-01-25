@@ -16,9 +16,9 @@ from pprint import pprint
 import asyncio
 
 import fire
-from pantheum.smart_func import smart_func
-from pantheum.tools.web_browse.duckduckgo import duckduckgo_search
-from pantheum.tools.web_browse.web_crawl import web_crawl
+from pantheon.smart_func import smart_func
+from pantheon.tools.web_browse.duckduckgo import duckduckgo_search
+from pantheon.tools.web_browse.web_crawl import web_crawl
 from loguru import logger
 from pydantic import BaseModel, Field
 

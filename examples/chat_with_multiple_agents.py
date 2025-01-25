@@ -1,8 +1,8 @@
 import asyncio
 
-from pantheum.agent import Agent
-from pantheum.repl.meeting import Repl
-from pantheum.meeting import UserCentricMeeting
+from pantheon.agent import Agent
+from pantheon.repl.meeting import Repl
+from pantheon.meeting import UserCentricMeeting
 
 
 biologist = Agent(

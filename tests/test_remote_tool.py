@@ -1,7 +1,7 @@
 from magique.client import MagiqueError
-from pantheum.remote import tool, ToolSet, connect_remote
-from pantheum.tools.web_browse import WebBrowseToolSet
-from pantheum.tools.code_execution import PythonInterpreterToolSet
+from pantheon.remote import tool, ToolSet, connect_remote
+from pantheon.tools.web_browse import WebBrowseToolSet
+from pantheon.tools.code_execution import PythonInterpreterToolSet
 
 from executor.engine import Engine, LocalJob, ProcessJob
 
@@ -37,7 +37,7 @@ async def test_web_browse_toolset():
 
 
 async def test_agent_call_toolset():
-    from pantheum.agent import Agent
+    from pantheon.agent import Agent
 
     a = False
 

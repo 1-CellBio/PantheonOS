@@ -1,6 +1,6 @@
 import random
 import asyncio
-from pantheum.agent import Agent
+from pantheon.agent import Agent
 
 
 def validate_guess(guess: int) -> str:

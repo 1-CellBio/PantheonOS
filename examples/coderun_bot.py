@@ -2,9 +2,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import asyncio
-from pantheum.agent import Agent
-from pantheum.tools.code_execution import PythonInterpreterToolSet
-from pantheum.remote import run_toolsets
+from pantheon.agent import Agent
+from pantheon.tools.code_execution import PythonInterpreterToolSet
+from pantheon.remote import run_toolsets
 
 
 async def main():

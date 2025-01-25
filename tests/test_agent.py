@@ -1,4 +1,4 @@
-from pantheum.agent import Agent
+from pantheon.agent import Agent
 from pydantic import BaseModel, Field
 from typing import List
 import random

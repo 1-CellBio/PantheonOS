@@ -2,9 +2,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import asyncio
-from pantheum.agent import Agent
-from pantheum.tools.web_browse.duckduckgo import duckduckgo_search
-from pantheum.tools.web_browse.web_crawl import web_crawl
+from pantheon.agent import Agent
+from pantheon.tools.web_browse.duckduckgo import duckduckgo_search
+from pantheon.tools.web_browse.web_crawl import web_crawl
 
 
 search_engine_expert = Agent(
