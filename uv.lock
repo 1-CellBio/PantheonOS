@@ -1092,7 +1092,7 @@ wheels = [
 
 [[package]]
 name = "magique"
-version = "0.1.2"
+version = "0.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "authlib" },
@@ -1111,7 +1111,7 @@ dependencies = [
     { name = "websockets" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/32/b8/7d7d66214be466cc2bb2a69b855cfb976c0eff8c83a27c537e9ab55f6783/magique-0.1.2-py3-none-any.whl", hash = "sha256:93ed2dd65e096c2735f6a062496fff28eb52ac30b5ec287adc34660e6a80d4d0", size = 15747 },
+    { url = "https://files.pythonhosted.org/packages/7b/5e/b35e24d9ff7989c5b8f62bd7311bb4db1d2bff240d3ba28b5514aa14b26c/magique-0.1.3-py3-none-any.whl", hash = "sha256:57e0b14dcf105c60fb2fb84e583a720268562c80da595d795a5d3b27b002fcc0", size = 16151 },
 ]
 
 [[package]]
@@ -1495,7 +1495,7 @@ requires-dist = [
     { name = "funcdesc", specifier = ">=0.1.7.2" },
     { name = "litellm", specifier = ">=1.56.4" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "magique", specifier = ">=0.1.2" },
+    { name = "magique", specifier = ">=0.1.3" },
     { name = "openai", specifier = ">=1.58.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.4" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25.0" },

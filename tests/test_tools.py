@@ -26,13 +26,16 @@ async def test_web_crawl():
     assert isinstance(result[0], str)
 
 
-async def test_python_interpreter_toolset():
+async def test_python_interpreter():
     toolset = PythonInterpreterToolSet("python_interpreter")
-    res = await toolset.run_code("res = 1 + 1", "res")
-    assert res == 2
+    resp = await toolset.run_code("res = 1 + 1", "res")
+    assert resp["result"] == 2
     with pytest.raises(PythonInterpreterError):
         try:
             await toolset.run_code("xxxxx")
         except PythonInterpreterError as e:
             print(e)
             raise e
+    
+    resp = await toolset.run_code("print('hello')")
+    assert resp["stdout"] == "hello\n"

@@ -1,6 +1,8 @@
+import io
 import traceback
 from executor.engine import Engine, ProcessJob
 from typing import Any
+from contextlib import redirect_stdout, redirect_stderr
 
 from ...remote import tool, ToolSet
 from ...utils.log import logger
@@ -54,10 +56,15 @@ class PythonInterpreterToolSet(ToolSet):
 
         def interpreter():
             __res = None
+            __stdout = io.StringIO()
+            __stderr = io.StringIO()
             while True:
-                code, var_name = yield __res
+                code, var_name = yield __res, __stdout.getvalue(), __stderr.getvalue()
+                __stdout.seek(0)
+                __stderr.seek(0)
                 try:
-                    exec(code)
+                    with redirect_stdout(__stdout), redirect_stderr(__stderr):
+                        exec(code, globals())
                 except Exception as e:
                     traceback_str = traceback.format_exc()
                     __res = PythonInterpreterError(traceback_str)
@@ -65,7 +72,7 @@ class PythonInterpreterToolSet(ToolSet):
                 if var_name is None:
                     __res = None
                 else:
-                    __res = locals().get(var_name)
+                    __res = globals().get(var_name)
 
         job = ProcessJob(interpreter)
         await self.engine.submit_async(job)
@@ -97,7 +104,7 @@ class PythonInterpreterToolSet(ToolSet):
             code: str,
             interpreter_id: str,
             result_var_name: str | None = None,
-            ) -> Any:
+            ) -> dict:
         """Run code in an interpreter.
 
         Args:
@@ -109,10 +116,14 @@ class PythonInterpreterToolSet(ToolSet):
         if interpreter_id not in self.interpreters:
             raise ValueError(f"Interpreter {interpreter_id} not found")
         g = self.interpreters[interpreter_id]
-        result = g.send((code, result_var_name))
+        result, stdout, stderr = g.send((code, result_var_name))
         if isinstance(result, PythonInterpreterError):
             raise result
-        return result
+        return {
+            "result": result,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
 
     async def run_setup(self):
         """Setup the toolset before running it."""
