@@ -38,6 +38,13 @@ See the [examples](examples) folder for more details.
   + [x] Tools
   + [ ] Agents
 - [x] Code Execution
+  + [x] Python
+  + [ ] R (before hackathon)
 - [ ] RAG
+- [ ] Web GUI
+  + [ ] Web page
+  + [ ] Slack (before hackathon)
+- [ ] Vision Model usage
+- [ ] Agent team
 - [ ] Long Term Memory
 - [ ] Documentation
