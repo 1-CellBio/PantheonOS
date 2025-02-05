@@ -1,3 +1,4 @@
+import sys
 import time
 
 from pydantic import BaseModel
@@ -6,6 +7,7 @@ from pantheon.remote import tool, ToolSet, connect_remote
 from pantheon.tools.web_browse import WebBrowseToolSet
 from pantheon.tools.python.python_interpreter import PythonInterpreterToolSet, PythonInterpreterError
 from pantheon.tools.r import RInterpreterToolSet
+from pantheon.tools.shell import ShellToolSet
 from pantheon.remote import run_toolsets
 from executor.engine import Engine, LocalJob, ProcessJob
 
@@ -13,6 +15,7 @@ import pytest
 
 
 def test_remote_toolset():
+
     class MyToolSet(ToolSet):
         @tool(job_type="thread")
         def my_tool(self):
@@ -143,5 +146,20 @@ async def test_r_toolset():
 
     async with run_toolsets([toolset]):
         s = await connect_remote(toolset.service_id)
-        resp = await s.invoke("run_code", {"code": "1 + 1"})
+        await s.invoke("run_code", {"code": "a <- 1 + 1"})
+        resp = await s.invoke("run_code", {"code": "a"})
         assert resp.strip() == "[1] 2"
+
+
+async def test_shell_toolset():
+    toolset = ShellToolSet("shell")
+
+    async with run_toolsets([toolset]):
+        s = await connect_remote(toolset.service_id)
+        if sys.platform.startswith("win"):
+            command = "dir"
+        else:
+            command = "ls"
+        await s.invoke("run_command", {"command": command})
+        resp = await s.invoke("run_command", {"command": "echo 'Hello, world!'"})
+        assert "Hello, world!" in resp

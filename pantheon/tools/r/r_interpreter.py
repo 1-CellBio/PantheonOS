@@ -25,11 +25,10 @@ class RInterpreterToolSet(ToolSet):
 
         Args:
             code: The R code to run.
-            __client_id__: The client id of the client that is running the code.
         """
         if __client_id__ is not None:
             p_id = self.clientid_to_interpreterid.get(__client_id__)
-            if p_id is None:
+            if (p_id is None) or (p_id not in self.interpreters):
                 p_id = await self.new_interpreter()
                 self.clientid_to_interpreterid[__client_id__] = p_id
         else:
@@ -56,7 +55,6 @@ class RInterpreterToolSet(ToolSet):
     @tool
     async def delete_interpreter(self, interpreter_id: str):
         """Delete an R interpreter.
-        You can't use this function if you are using `run_code` function.
 
         Args:
             interpreter_id: The id of the interpreter to delete.
