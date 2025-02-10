@@ -176,7 +176,6 @@ class Agent:
             Response = None
 
         while len(history) - init_len < max_turns:
-
             message = {}
             processed_messages = process_messages(history, self.model)
             if tool_use:

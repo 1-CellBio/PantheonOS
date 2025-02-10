@@ -47,16 +47,16 @@ def desc_to_openai_dict(
         "function": {
             "name": desc.name,
             "description": desc.doc or "",
-            "parameters": {
-                "type": "object",
-                "properties": parameters,
-                "required": required,
-                "additionalProperties": False,
-            },
             "strict": False,
         },
     }
-
+    if parameters:
+        func_dict["function"]["parameters"] = {
+            "type": "object",
+            "properties": parameters,
+            "required": required,
+            "additionalProperties": False,
+        }
     return func_dict
 
 

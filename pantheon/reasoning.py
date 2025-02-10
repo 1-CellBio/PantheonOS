@@ -4,7 +4,7 @@ from .utils.llm import litellm
 def use_reasoning_model(model):
     async def reasoning(question: str) -> str:
         """Use reasoning model to solve complex problems.
-        Especially useful for math, physics, programming, and other complex problems."""
+        Especially useful for math, logic, physics, programming and other complex problems."""
         response = await litellm.acompletion(
             model=model,
             messages=[{"role": "user", "content": question}],
