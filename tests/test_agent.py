@@ -172,7 +172,7 @@ async def test_tool_timeout():
         instructions="",
         model="gpt-4o-mini",
         tool_timeout=1,
-        use_short_term_memory=False,
+        use_memory=False,
     )
 
     @agent.tool

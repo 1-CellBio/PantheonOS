@@ -23,8 +23,8 @@ def smart_func(
         func: Callable | None = None,
         model: str = "gpt-4o-mini",
         tools: list[Callable] | None = None,
-        use_short_term_memory: bool = False,
-        short_term_memory: list[dict] | None = None,
+        use_memory: bool = False,
+        memory: list[dict] | None = None,
     ):
     """Decorator for creating a smart function.
     Smart function is a function that uses LLM to perform tasks.
@@ -33,16 +33,16 @@ def smart_func(
         func: The function to be decorated.
         model: The model to use for the smart function.
         tools: The tools to use for the smart function.
-        use_short_term_memory: Whether to use short term memory.
-        short_term_memory: The short term memory to use.
+        use_memory: Whether to use short term memory.
+        memory: The short term memory to use.
     """
     if func is None:
         return partial(
             smart_func,
             model=model,
             tools=tools,
-            use_short_term_memory=use_short_term_memory,
-            short_term_memory=short_term_memory,
+            use_memory=use_memory,
+            memory=memory,
         )
 
     desc = parse_func(func)
@@ -65,8 +65,8 @@ def smart_func(
         model=model,
         tools=tools,
         response_format=val.type,
-        use_short_term_memory=use_short_term_memory,
-        short_term_memory=short_term_memory,
+        use_memory=use_memory,
+        memory=memory,
     )
 
     if inspect.iscoroutinefunction(func):

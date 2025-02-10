@@ -34,8 +34,8 @@ class Agent:
         model: str = "gpt-4o-mini",
         tools: list[Callable] | None = None,
         response_format: Any | None = None,
-        use_short_term_memory: bool = True,
-        short_term_memory: list[dict] | None = None,
+        use_memory: bool = True,
+        memory: list[dict] | None = None,
         tool_timeout: int | None = 10 * 60,
     ):
         self.id = uuid4()
@@ -49,8 +49,8 @@ class Agent:
             for func in tools:
                 self.tool(func)
         self.response_format = response_format
-        self.use_short_term_memory = use_short_term_memory
-        self.short_term_memory = short_term_memory or []
+        self.use_memory = use_memory
+        self.memory = memory or []
         self.tool_timeout = tool_timeout
         self.events_queue: asyncio.Queue = asyncio.Queue()
         # Restrict message targets in meeting
@@ -232,7 +232,7 @@ class Agent:
     def input_to_openai_messages(
             self,
             msg: AgentInput,
-            use_short_term_memory: bool,
+            use_memory: bool,
             ) -> list[dict]:
         assert isinstance(msg, (list, str, BaseModel, AgentResponse)), \
             "Message must be a list, string, BaseModel or AgentResponse"
@@ -258,8 +258,8 @@ class Agent:
                         "Message must be a string, BaseModel or dict"
                     new_messages.append(m)
             messages = new_messages
-        if use_short_term_memory:
-            messages = self.short_term_memory + messages
+        if use_memory:
+            messages = self.memory + messages
         return messages
 
     async def run(
@@ -269,7 +269,8 @@ class Agent:
             context_variables: dict | None = None,
             process_chunk: Callable | None = None,
             process_step_message: Callable | None = None,
-            use_short_term_memory: bool | None = None,
+            use_memory: bool | None = None,
+            update_memory: bool = True,
             tool_timeout: int | None = None,
             model: str | None = None,
             ) -> AgentResponse:
@@ -282,14 +283,15 @@ class Agent:
             context_variables: The context variables to use.
             process_chunk: The function to process the chunk.
             process_step_message: The function to process the step message.
-            use_short_term_memory: Whether to use short term memory.
+            use_memory: Whether to use short term memory.
+            update_memory: Whether to update the short term memory.
             tool_timeout: The timeout for the tool.
             model: The model to use.
         """
-        _use_sm = self.use_short_term_memory
-        if use_short_term_memory is not None:
-            _use_sm = use_short_term_memory
-        messages = self.input_to_openai_messages(msg, _use_sm)
+        _use_m = self.use_memory
+        if use_memory is not None:
+            _use_m = use_memory
+        messages = self.input_to_openai_messages(msg, _use_m)
         response_format = response_format or self.response_format
 
         details = await self.run_stream(
@@ -308,8 +310,8 @@ class Agent:
             content = final_msg.get("parsed")
         else:
             content = final_msg.get("content")
-        if self.use_short_term_memory:
-            self.short_term_memory.extend(details.messages)
+        if self.use_memory and update_memory:
+            self.memory.extend(details.messages)
         return AgentResponse(
             agent_name=self.name,
             content=content,
@@ -323,10 +325,12 @@ class Agent:
         await repl.run(message)
 
     def save_memory(self, file_path: str):
+        """Save the memory to a file."""
         with open(file_path, "w") as f:
-            processed_memory = process_messages(self.short_term_memory, self.model)
+            processed_memory = process_messages(self.memory, self.model)
             json.dump(processed_memory, f)
 
     def load_memory(self, file_path: str):
+        """Load the memory from a file."""
         with open(file_path, "r") as f:
-            self.short_term_memory = json.load(f)
+            self.memory = json.load(f)
