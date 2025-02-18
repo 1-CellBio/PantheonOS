@@ -36,19 +36,28 @@ See the [examples](examples) folder for more details.
 - [x] Reasoning with O1 / Gemini Flash Thinking / Deepseek-R1
 - [x] Distributed
   + [x] Tools
-  + [ ] Agents
-- [x] Code Execution
+  + [x] Agents
+    * [ ] Support streaming response
+- [x] Toolsets
   + [x] Python
   + [x] R
   + [x] Shell
+  + [x] Web Browse
+  + [ ] Jupyter
+  + [ ] RAG
+    * [ ] Document
+    * [ ] Code
 - [x] Agent team
   + [x] Sequential Team
   + [x] Swarm Team
   + [x] MoA(Mixture-of-Agents) Team
 - [x] Memory persistence
-- [ ] RAG
-- [ ] Web GUI
-  + [ ] Web page
-  + [ ] Slack (before hackathon)
-- [ ] Vision ability
+- [ ] Report generation
+- [x] Vision ability
+- [ ] GUI
+  + [ ] Web UI
+  + [x] Slack
+  + [ ] WeChat
+  + [ ] VSCode plugin
+  + [ ] PyCharm plugin
 - [ ] Documentation
