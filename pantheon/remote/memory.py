@@ -36,6 +36,7 @@ class MemoryManagerService:
 
     async def delete_memory(self, id: str):
         self.memory_manager.delete_memory(id)
+        await self.save()
 
     async def get_messages(self, memory_id: str) -> list[dict]:
         memory = self.memory_manager.get_memory(memory_id)

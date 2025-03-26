@@ -67,6 +67,9 @@ class MemoryManager:
     def save(self):
         for memory in self.memory_store.values():
             memory.save(str(self.path / f"{memory.id}.json"))
+        for file in self.path.glob("*.json"):
+            if file.stem not in self.memory_store:
+                file.unlink()
 
     def load(self):
         if not self.path.exists():

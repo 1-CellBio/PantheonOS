@@ -171,3 +171,4 @@ cython_debug/
 try/
 .executor/
 .pantheon-chatroom/
+.pantheon-chatroom-workspace/

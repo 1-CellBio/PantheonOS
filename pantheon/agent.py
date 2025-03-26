@@ -14,7 +14,7 @@ from .utils.misc import desc_to_openai_dict, run_func
 from .utils.llm import (
     acompletion_openai,
     process_messages,
-    acompletion_openai,
+    remove_hidden_fields,
     acompletion_litellm,
 )
 from .utils.vision import vision_to_openai
@@ -150,8 +150,8 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": call["id"],
                     "tool_name": func_name,
-                    "content": repr(result),
                     "raw_content": result,
+                    "content": repr(remove_hidden_fields(result)),
                 })
         return messages
 
@@ -313,7 +313,6 @@ class Agent:
                         "Message must be a string, BaseModel or dict"
                     new_messages.append(m)
             messages = new_messages
-
         return messages
 
     async def run(

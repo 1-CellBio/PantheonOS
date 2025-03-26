@@ -126,3 +126,13 @@ async def openai_embedding(texts: list[str], model: str = "text-embedding-3-larg
     client = openai.AsyncOpenAI()
     resp = await client.embeddings.create(input=texts, model=model)
     return [d.embedding for d in resp.data]
+
+
+def remove_hidden_fields(content: dict) -> dict:
+    content = deepcopy(content)
+    if "hidden_to_model" in content:
+        hidden_fields = content.pop("hidden_to_model")
+        for field in hidden_fields:
+            if field in content:
+                content.pop(field)
+    return content
