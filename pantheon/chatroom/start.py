@@ -26,6 +26,7 @@ async def start_services(
     agent_factory: Callable[[], Awaitable[Agent | Team]] = default_agent_factory,
     log_level: str = "INFO",
 ):
+    agent = await agent_factory()
     w_path = Path(workspace_path)
     w_path.mkdir(parents=True, exist_ok=True)
     memory_service = MemoryManagerService(memory_path)
@@ -36,10 +37,10 @@ async def start_services(
     endpoint = Endpoint(workspace_path=workspace_path)
     asyncio.create_task(endpoint.run(log_level=log_level))
     await asyncio.sleep(0.5)
-    agent = await agent_factory()
     s = await endpoint.get_service("python_interpreter")
     if s is None:
         raise ValueError("Python interpreter service not found")
-    await agent.remote_toolset(s["id"])
+    if isinstance(agent, Agent):
+        await agent.remote_toolset(s["id"])
     chat_room = ChatRoom(agent, endpoint.worker.service_id, remote_memory_manager, name=service_name)
     await chat_room.run(log_level=log_level)
