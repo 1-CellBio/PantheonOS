@@ -39,7 +39,6 @@ def __custom_plt_show(*args, **kwargs):
     GLOBAL_PLOT_BASE64 = base64.b64encode(image_bytes).decode('utf-8')
     buf.close()
     plt.close(fig)
-    print("Plot saved to GLOBAL_PLOT_BASE64 instead of showing.")
 
 __plt_show = plt.show
 plt.show = __custom_plt_show
