@@ -37,10 +37,18 @@ async def start_services(
     endpoint = Endpoint(workspace_path=workspace_path)
     asyncio.create_task(endpoint.run(log_level=log_level))
     await asyncio.sleep(0.5)
+
     s = await endpoint.get_service("python_interpreter")
     if s is None:
         raise ValueError("Python interpreter service not found")
     if isinstance(agent, Agent):
         await agent.remote_toolset(s["id"])
+
+    s = await endpoint.get_service("file_manager")
+    if s is None:
+        raise ValueError("File manager service not found")
+    if isinstance(agent, Agent):
+        await agent.remote_toolset(s["id"])
+
     chat_room = ChatRoom(agent, endpoint.worker.service_id, remote_memory_manager, name=service_name)
     await chat_room.run(log_level=log_level)

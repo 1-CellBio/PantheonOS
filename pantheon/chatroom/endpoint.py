@@ -308,11 +308,6 @@ class Endpoint:
             path=str(self.path),
         )
         self.services.append(toolset)
-        toolset = FileTransferToolSet(
-            name="file_transfer",
-            path=str(self.path),
-        )
-        self.services.append(toolset)
         toolset = WebBrowseToolSet(
             name="web_browse",
         )
