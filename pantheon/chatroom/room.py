@@ -8,6 +8,7 @@ from ..agent import Agent
 from ..team import Team
 from ..memory import MemoryManager
 from ..remote.memory import RemoteMemoryManager
+from ..remote.agent import RemoteAgent
 from ..utils.misc import run_func
 from ..utils.log import logger
 
@@ -46,6 +47,7 @@ class ChatRoom:
         self.worker.register(self.get_chat_messages)
         self.worker.register(self.update_chat_name)
         self.worker.register(self.get_endpoint)
+        self.worker.register(self.get_agents)
 
     async def get_endpoint(self) -> dict:
         s = await connect_remote(self.endpoint_service_id)
@@ -55,6 +57,25 @@ class ChatRoom:
             "service_name": info.service_name,
             "service_id": info.service_id,
         }
+
+    async def get_agents(self) -> dict:
+        def get_agent_info(agent: Agent | RemoteAgent):
+            return {
+                "name": agent.name,
+                "instructions": agent.instructions,
+                "tools": [t.__name__ for t in agent.functions.keys()],
+                "toolsets": [s.service_info.service_id for s in agent.toolset_proxies.values()],
+            }
+        if isinstance(self.agent, Team):
+            return {
+                "success": True,
+                "agents": [get_agent_info(a) for a in self.agent.agents],
+            }
+        else:
+            return {
+                "success": True,
+                "agents": [get_agent_info(self.agent)],
+            }
 
     async def create_chat(self, chat_name: str | None = None) -> dict:
         memory = await run_func(self.memory_manager.new_memory, chat_name)

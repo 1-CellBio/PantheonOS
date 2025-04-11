@@ -32,6 +32,7 @@ class Agent:
         name: str,
         instructions: str,
         model: str = "gpt-4o-mini",
+        icon: str = '🤖',
         tools: list[Callable] | None = None,
         response_format: Any | None = None,
         use_memory: bool = True,
@@ -57,6 +58,7 @@ class Agent:
         self.force_litellm = force_litellm
         # Restrict message targets in meeting
         self.message_to: None | list[str] = None
+        self.icon = icon
 
     def tool(self, func: Callable):
         """
