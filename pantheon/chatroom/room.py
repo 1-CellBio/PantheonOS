@@ -5,7 +5,7 @@ from magique.worker import MagiqueWorker
 from magique.ai import connect_remote
 
 from ..agent import Agent
-from ..team import Team
+from ..team import SwarmCenterTeam
 from ..memory import MemoryManager
 from ..remote.memory import RemoteMemoryManager
 from ..remote.agent import RemoteAgent
@@ -13,17 +13,30 @@ from ..utils.misc import run_func
 from ..utils.log import logger
 
 
+def default_triage_agent():
+    return Agent(
+        name="Triage",
+        instructions="You are a helpful assistant that can answer questions and help with tasks.",
+        model="gpt-4.1",
+    )
+
+
 class ChatRoom:
     def __init__(
         self,
-        agent: Agent | Team,
+        agents: list[Agent | RemoteAgent],
         endpoint_service_id: str,
-        memory_manager: MemoryManager | RemoteMemoryManager,
+        triage_agent: Agent | None = None,
+        memory_manager: MemoryManager | RemoteMemoryManager | None = None,
         name: str = "pantheon-chatroom",
         description: str = "Chatroom for Pantheon agents",
         worker_params: dict | None = None,
     ):
-        self.agent = agent
+        self.triage_agent = triage_agent or default_triage_agent()
+        self.team = SwarmCenterTeam(
+            triage=self.triage_agent,
+            agents=agents,
+        )
         self.endpoint_service_id = endpoint_service_id
         self.memory_manager = memory_manager
         self.name = name
