@@ -11,6 +11,7 @@ class Memory:
         self.name = name
         self.id = str(uuid4())
         self._messages: list[dict] = []
+        self.extra_data: dict = {}
 
     def save(self, file_path: str):
         with open(file_path, "w") as f:
@@ -18,6 +19,7 @@ class Memory:
                 "id": self.id,
                 "name": self.name,
                 "messages": self._messages,
+                "extra_data": self.extra_data,
             }, f)
 
     @classmethod
@@ -27,6 +29,7 @@ class Memory:
             memory = cls(data["name"])
             memory.id = data["id"]
             memory._messages = data["messages"]
+            memory.extra_data = data.get("extra_data", {})
             return memory
 
     def add_messages(self, messages: list[dict]):

@@ -4,6 +4,8 @@ from abc import ABC
 from .agent import Agent, AgentTransfer, AgentInput, AgentResponse
 from .remote.agent import RemoteAgent
 from .utils.misc import run_func
+from .memory import Memory
+from .utils.log import logger
 
 
 class Team(ABC):
@@ -48,13 +50,27 @@ class SwarmTeam(Team):
     """
     def __init__(self, agents: list[Agent | RemoteAgent]):
         super().__init__(agents)
-        self.active_agent = agents[0]
 
-    async def run(self, msg: AgentInput, **kwargs):
+    def get_active_agent(self, memory: Memory) -> Agent | RemoteAgent:
+        active_agent_name = memory.extra_data.get("active_agent")
+        if (active_agent_name is None) or (active_agent_name not in self.agents):
+            active_agent_name = list(self.agents.keys())[0]
+            logger.warning(f"Active agent not found in memory, setting to {active_agent_name}")
+            memory.extra_data["active_agent"] = active_agent_name
+        active_agent = self.agents[active_agent_name]
+        return active_agent
+
+    def set_active_agent(self, memory: Memory, agent_name: str):
+        memory.extra_data["active_agent"] = agent_name
+
+    async def run(self, msg: AgentInput, memory: Memory | None = None, **kwargs):
+        if memory is None:
+            memory = Memory(name="swarm-team")
         while True:
-            resp = await self.active_agent.run(msg, **kwargs)
+            active_agent = self.get_active_agent(memory)
+            resp = await active_agent.run(msg, memory=memory, **kwargs)
             if isinstance(resp, AgentTransfer):
-                self.active_agent = self.agents[resp.to_agent]
+                self.set_active_agent(memory, resp.to_agent)
                 msg = resp
             else:
                 return resp

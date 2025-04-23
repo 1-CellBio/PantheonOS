@@ -96,17 +96,20 @@ class ChatRoom:
             "agents": [get_agent_info(a) for a in self.team.agents.values()],
         }
 
-    async def set_active_agent(self, agent_name: str):
+    async def set_active_agent(self, chat_name: str, agent_name: str):
+        memory = await run_func(self.memory_manager.get_memory, chat_name)
         agent = next((a for a in self.team.agents.values() if a.name == agent_name), None)
         if agent is None:
             return {"success": False, "message": "Agent not found"}
-        self.team.active_agent = agent
+        self.team.set_active_agent(memory, agent_name)
         return {"success": True, "message": "Agent set as active"}
 
-    async def get_active_agent(self) -> dict:
+    async def get_active_agent(self, chat_name: str) -> dict:
+        memory = await run_func(self.memory_manager.get_memory, chat_name)
+        active_agent = self.team.get_active_agent(memory)
         return {
             "success": True,
-            "agent": self.team.active_agent.name,
+            "agent": active_agent.name,
         }
 
     async def create_chat(self, chat_name: str | None = None) -> dict:
