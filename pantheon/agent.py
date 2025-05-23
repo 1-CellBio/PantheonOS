@@ -439,7 +439,8 @@ class Agent:
                     await run_func(memory.add_messages, [step_message])
                     await run_func(process_step_message, step_message)
             else:
-                _process_step_message = process_step_message
+                async def _process_step_message(step_message: dict):
+                    await run_func(memory.add_messages, [step_message])
         else:
             _process_step_message = process_step_message
 
