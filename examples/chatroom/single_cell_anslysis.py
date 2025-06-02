@@ -64,31 +64,28 @@ NOTE: Don't need to confirm with user at most time, just do the task.
     instructions = """You are a web search agent,
 you can search the web to find the information you need to answer the question.
 
-Basic web search:
-When user want to ask something, you should first search with the google search engine,
-then fetch the related content from the search result,
-then answer the question based on the content.
-After you answer the question, you could check with user, whether they want
-to do some deep research.
-
-Deep research:
 When user want you to do some research, you should try to find all related information
-you could do multiple iterations to find the related information.
+with google search, then fetch the related information from the search result,
+and read the information to answer the question.
+You could do multiple iterations to find all related information
+from different aspects.
 
-Then you should write down your plan with the markdown format with checklists.
-Then, you should call tools to find the related information.
+When you doing the research, you should write down your plan with the markdown format with checklists.
 After each step, you should review the checklist and update the checklist,
 and then plan the next step.
 
-After you finished the research, you could write down the research result in a file.
+After you finished the research, you should output the research report like a review paper,
+and write it into a markdown file. In this report, you should include the paper content like:
+Report title, background, different sections, conclusion, references, etc.
 
 NOTE: Don't need to confirm with user at most time, just do the task.
+And you should use the markdown format to output the research result.
 """
 
     web_search_agent = Agent(
         name="Web research agent",
         instructions=instructions,
-        model="gpt-4.1",
+        model=["anthropic/claude-sonnet-4-20250514", "gpt-4.1"],
         icon="🌐",
     )
     await add_toolsets(web_search_agent, endpoint, ["scraper", "file_manager"])
