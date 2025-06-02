@@ -21,7 +21,10 @@ from .utils.llm import (
 )
 from .utils.vision import vision_to_openai, VisionInput
 from .memory import Memory
+from .utils.log import logger
 
+
+DEFAULT_MODEL = "gpt-4.1-mini"
 
 __CTX_VARS_NAME__ = "context_variables"
 __SKIP_PARAMS__ = [__CTX_VARS_NAME__, "__client_id__", "__agent_run__"]
@@ -54,7 +57,7 @@ class Agent:
         self,
         name: str,
         instructions: str,
-        model: str = "gpt-4.1-mini",
+        model: str | list[str] = DEFAULT_MODEL,
         icon: str = '🤖',
         tools: list[Callable] | None = None,
         response_format: Any | None = None,
@@ -66,7 +69,12 @@ class Agent:
         self.id = uuid4()
         self.name = name
         self.instructions = instructions
-        self.model = model
+        if isinstance(model, str):
+            self.models = [model]
+            if model != DEFAULT_MODEL:
+                self.models.append(DEFAULT_MODEL)
+        else:
+            self.models = model
         self.functions: dict[str, Callable] = {}
         self.toolset_proxies: dict[str, ServiceProxy] = {}
         self._func_to_proxy: dict[str, str] = {}
@@ -279,7 +287,6 @@ class Agent:
         model: str | None = None,
         allow_transfer: bool = True,
     ) -> ResponseDetails | AgentTransfer:
-        model = model or self.model
         response_format = response_format or self.response_format
         history = copy.deepcopy(messages)
         tool_timeout = tool_timeout or self.tool_timeout
@@ -298,14 +305,24 @@ class Agent:
         while len(history) - init_len < max_turns:
             message = {}
 
-            message = await self.acompletion(
-                history,
-                model=model,
-                tool_use=tool_use,
-                response_format=Response,
-                process_chunk=process_chunk,
-                allow_transfer=allow_transfer,
-            )
+            error_count = 0
+            for model in self.models:
+                if error_count > 0:
+                    logger.warning(f"Try to use {model}, because of the error of the previous model.")
+                try:
+                    message = await self.acompletion(
+                        history,
+                        model=model,
+                        tool_use=tool_use,
+                        response_format=Response,
+                        process_chunk=process_chunk,
+                        allow_transfer=allow_transfer,
+                    )
+                    break
+                except Exception as e:
+                    logger.error(f"Error completing with model {model}: {e}")
+                    error_count += 1
+                    continue
 
             if Response is not None:
                 content = message.get("content")

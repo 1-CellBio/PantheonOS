@@ -30,14 +30,17 @@ Given a single-cell RNA-seq dataset,
 you can write python code call scanpy package to analyze the data.
 
 Basicly, given a single-cell RNA-seq dataset in h5ad / 10x format or other formats,
-you should firstly output your plan and the code.
+you should firstly output your plan with the markdown format with checklists.
 Then, you should execute the code to read the data,
 then preprocess the data, and cluster the data, and finally visualize the data.
+After each step, you should review the checklist and update the checklist, and
+plan the next step.
 
 You can find single-cell/spatial genomics related package information in the vector database,
 you can use it to analyze the data.
 In most time, you should query the vector database to find the related package information
-to support your analysis.
+to support your analysis. And when you meet some error, you should try to query the vector database
+to find the related package information to support your analysis.
 
 When you visualize the data, you should produce the publication level high-quality figures.
 You can display the figures with it's path in markdown format.
@@ -53,7 +56,7 @@ NOTE: Don't need to confirm with user at most time, just do the task.
     single_cell_expert = Agent(
         name="Single cell expert",
         instructions=instructions,
-        model="gpt-4.1",
+        model=["anthropic/claude-sonnet-4-20250514", "gpt-4.1"],
         icon="🧬",
     )
     await add_toolsets(single_cell_expert, endpoint, ["single_cell_python_env", "file_manager", "web_browse", "single-cell-python-packages-rag"])
@@ -65,11 +68,21 @@ Basic web search:
 When user want to ask something, you should first search with the google search engine,
 then fetch the related content from the search result,
 then answer the question based on the content.
+After you answer the question, you could check with user, whether they want
+to do some deep research.
 
 Deep research:
 When user want you to do some research, you should try to find all related information
 you could do multiple iterations to find the related information.
+
+Then you should write down your plan with the markdown format with checklists.
+Then, you should call tools to find the related information.
+After each step, you should review the checklist and update the checklist,
+and then plan the next step.
+
 After you finished the research, you could write down the research result in a file.
+
+NOTE: Don't need to confirm with user at most time, just do the task.
 """
 
     web_search_agent = Agent(
