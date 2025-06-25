@@ -35,7 +35,7 @@ class AgentService:
         return {
             "name": self.agent.name,
             "instructions": self.agent.instructions,
-            "model": self.agent.model,
+            "models": self.agent.models,
             "functions_names": list(self.agent.functions.keys()),
             "toolset_proxies_names": list(self.agent.toolset_proxies.keys()),
         }
@@ -62,7 +62,7 @@ class AgentService:
         from loguru import logger
         logger.remove()
         logger.add(sys.stderr, level=log_level)
-        logger.info(f"Remote Server: {self.worker.server_url}")
+        logger.info(f"Remote Server: {self.worker.servers}")
         logger.info(f"Service Name: {self.worker.service_name}")
         logger.info(f"Service ID: {self.worker.service_id}")
         return await self.worker.run()
@@ -101,7 +101,7 @@ class RemoteAgent:
         info = await s.invoke("get_info")
         self.name = info["name"]
         self.instructions = info["instructions"]
-        self.model = info["model"]
+        self.models = info["models"]
         self.functions_names = info["functions_names"]
         self.toolset_proxies_names = info["toolset_proxies_names"]
         return info

@@ -1,10 +1,10 @@
 triage:
-  name: Triage
+  name: Triage Agent
   instructions: |
     You are the triage agent,
     you should decide which agent to use based on the user's request.
     If no related agent, you can do the task by yourself.
-  model: gpt-4.1
+  model: openai/gpt-4.1
   icon: 🤖
   toolsets:
     - python_interpreter
@@ -46,7 +46,7 @@ single_cell_expert:
     - anthropic/claude-sonnet-4-20250514
     - anthropic/claude-3-7-sonnet-20250219
     - anthropic/claude-3-5-sonnet-20240620
-    - gpt-4.1
+    - openai/gpt-4.1
   icon: 🧬
   toolsets:
     - single_cell_python_env
@@ -55,7 +55,7 @@ single_cell_expert:
     - web_browse
 
 web_research_agent:
-  name: Web research agent
+  name: Web Research Agent
   instructions: |
     You are a web search agent,
     you can search the web to find the information you need to answer the question.
@@ -78,7 +78,7 @@ web_research_agent:
     And you should use the markdown format to output the research result.
   model:
     - anthropic/claude-sonnet-4-20250514
-    - gpt-4.1
+    - openai/gpt-4.1
   icon: 🌐
   toolsets:
     - scraper

@@ -29,6 +29,7 @@ async def create_agent(
             await agent.remote_toolset(s["id"])
         except Exception as e:
             logger.error(f"Failed to add toolset {toolset} to agent {name}: {e}")
+            agent.not_loaded_toolsets.append(toolset)
     return agent
 
 

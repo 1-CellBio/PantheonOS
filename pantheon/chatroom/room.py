@@ -1,5 +1,6 @@
 import sys
 import asyncio
+from pathlib import Path
 from datetime import datetime
 from typing import Callable
 
@@ -11,7 +12,6 @@ from magique.ai.constant import SERVER_URLS
 from ..agent import Agent
 from ..team import SwarmCenterTeam
 from ..memory import MemoryManager
-from ..remote.memory import RemoteMemoryManager
 from ..remote.agent import RemoteAgent
 from ..utils.misc import run_func
 from ..utils.log import logger
@@ -24,26 +24,32 @@ class ChatRoom:
         self,
         endpoint_service_id: str,
         agents_template: dict | str | None = None,
-        memory_manager: MemoryManager | RemoteMemoryManager | None = None,
-        default_memory_dir: str = "./.pantheon-chatroom",
+        memory_dir: str = "./.pantheon-chatroom",
         name: str = "pantheon-chatroom",
         description: str = "Chatroom for Pantheon agents",
         worker_params: dict | None = None,
         server_url: str | list[str] | None = None,
         endpoint_connect_params: dict | None = None,
     ):
+        self.memory_dir = Path(memory_dir)
+        self.memory_manager = MemoryManager(self.memory_dir)
+
         if agents_template is None:
-            with open(DEFAULT_AGENTS_TEMPLATE_PATH, "r") as f:
-                agents_template = yaml.safe_load(f)
+            if (self.memory_dir / "agents_template.yaml").exists():
+                with open(self.memory_dir / "agents_template.yaml", "r") as f:
+                    agents_template = yaml.safe_load(f)
+            else:
+                with open(DEFAULT_AGENTS_TEMPLATE_PATH, "r") as f:
+                    agents_template = yaml.safe_load(f)
+                self.save_agents_template()
         elif isinstance(agents_template, str):
             with open(agents_template, "r") as f:
                 agents_template = yaml.safe_load(f)
+            if not (self.memory_dir / "agents_template.yaml").exists():
+                self.save_agents_template()
         self.agents_template = agents_template
 
         self.endpoint_service_id = endpoint_service_id
-        if memory_manager is None:
-            memory_manager = MemoryManager(default_memory_dir)
-        self.memory_manager = memory_manager
         self.name = name
         self.description = description
         if isinstance(server_url, str):
@@ -79,6 +85,10 @@ class ChatRoom:
             agents=agents,
         )
         await self.team.async_setup()
+
+    def save_agents_template(self):
+        with open(self.memory_dir / "agents_template.yaml", "w") as f:
+            yaml.dump(self.agents_template, f)
 
     def setup_handlers(self):
         self.worker.register(self.create_chat)
@@ -123,6 +133,10 @@ class ChatRoom:
 
     async def get_agents(self) -> dict:
         def get_agent_info(agent: Agent | RemoteAgent):
+            if hasattr(agent, "not_loaded_toolsets"):
+                not_loaded_toolsets = agent.not_loaded_toolsets
+            else:
+                not_loaded_toolsets = []
             return {
                 "name": agent.name,
                 "instructions": agent.instructions,
@@ -134,6 +148,7 @@ class ChatRoom:
                     } for s in agent.toolset_proxies.values()
                 ],
                 "icon": agent.icon,
+                "not_loaded_toolsets": not_loaded_toolsets,
             }
         return {
             "success": True,

@@ -25,7 +25,7 @@ class MemoryManagerService:
         self.server_urls = server_urls
         _worker_params = {
             "service_name": name,
-            "server_url": server_url,
+            "server_url": server_urls,
             "need_auth": False,
         }
         if worker_params is not None:
@@ -79,7 +79,7 @@ class MemoryManagerService:
         from loguru import logger
         logger.remove()
         logger.add(sys.stderr, level=log_level)
-        logger.info(f"Remote Server: {self.worker.server_url}")
+        logger.info(f"Remote Server: {self.worker.servers}")
         logger.info(f"Service Name: {self.worker.service_name}")
         logger.info(f"Service ID: {self.worker.service_id}")
         return await self.worker.run()
@@ -110,16 +110,16 @@ class RemoteMemoryManager:
     def __init__(
             self,
             service_id_or_name: str,
-            server_url: str | list[str] | None = None,
+            server_url: str |list[str] | None = None,
             ):
         self.service_id_or_name = service_id_or_name
-        if isinstance(server_url, str):
-            server_urls = [server_url]
-        elif server_url is None:
-            server_urls = SERVER_URLS
+        if server_url is None:
+            server_url = SERVER_URLS
+        elif isinstance(server_url, str):
+            server_url = [server_url]
         else:
-            server_urls = server_url
-        self.server_urls = server_urls
+            server_url = server_url
+        self.server_urls = server_url
         self.service = None
 
     async def connect(self):

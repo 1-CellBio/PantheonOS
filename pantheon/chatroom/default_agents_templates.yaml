@@ -1,8 +1,20 @@
 triage:
-  name: Assistant
-  instructions: You are a helpful assistant that can answer questions and help with tasks.
-  model: gpt-4.1
+  name: Triage Agent
+  instructions: |
+    You are the triage agent,
+    you should decide which agent to use based on the user's request.
+    If no related agent, you can do the task by yourself.
+  model: openai/gpt-4.1
   icon: 🤖
+
+data_analysis:
+  name: Data Analysis Agent
+  instructions: |
+    You are a data analysis agent that can analyze data.
+    You can use the python_interpreter to analyze the data.
+    You can use the file_manager to manage the data.
+  model: openai/gpt-4.1
+  icon: 📊
   toolsets:
     - python_interpreter
     - file_manager
@@ -10,7 +22,7 @@ triage:
 web_search:
   name: Web search
   instructions: You are a web search agent that can search the web for information.
-  model: gpt-4.1
+  model: openai/gpt-4.1
   icon: 🔍
   toolsets:
     - web_browse
