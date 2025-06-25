@@ -37,17 +37,18 @@ class ChatRoom:
         if agents_template is None:
             if (self.memory_dir / "agents_template.yaml").exists():
                 with open(self.memory_dir / "agents_template.yaml", "r") as f:
-                    agents_template = yaml.safe_load(f)
+                    self.agents_template = yaml.safe_load(f)
             else:
                 with open(DEFAULT_AGENTS_TEMPLATE_PATH, "r") as f:
-                    agents_template = yaml.safe_load(f)
+                    self.agents_template = yaml.safe_load(f)
                 self.save_agents_template()
         elif isinstance(agents_template, str):
             with open(agents_template, "r") as f:
-                agents_template = yaml.safe_load(f)
+                self.agents_template = yaml.safe_load(f)
             if not (self.memory_dir / "agents_template.yaml").exists():
                 self.save_agents_template()
-        self.agents_template = agents_template
+        else:
+            self.agents_template = agents_template
 
         self.endpoint_service_id = endpoint_service_id
         self.name = name

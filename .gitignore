@@ -170,5 +170,5 @@ cython_debug/
 .vscode/
 try/
 .executor/
-.pantheon-chatroom/
-.pantheon-chatroom-workspace/
+.pantheon-chatroom*/
+.pantheon-chatroom-workspace*/

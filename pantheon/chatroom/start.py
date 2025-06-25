@@ -9,7 +9,7 @@ from magique.ai import connect_remote
 
 async def start_services(
     service_name: str = "pantheon-chatroom",
-    memory_path: str = "./.pantheon-chatroom",
+    memory_dir: str = "./.pantheon-chatroom",
     endpoint_service_id: str | None = None,
     workspace_path: str = "./.pantheon-chatroom-workspace",
     agents_template: dict | str | None = None,
@@ -35,12 +35,10 @@ async def start_services(
     endpoint_connect_params = endpoint_connect_params or {}
     endpoint = await connect_remote(endpoint_service_id, **endpoint_connect_params)
 
-    memory_manager = MemoryManager(memory_path)
-
     chat_room = ChatRoom(
         endpoint_service_id=endpoint_service_id,
         agents_template=agents_template,
-        memory_manager=memory_manager,
+        memory_dir=memory_dir,
         name=service_name,
         worker_params=worker_params,
         endpoint_connect_params=endpoint_connect_params,

@@ -13,7 +13,7 @@ async def create_agent(
         instructions: str,
         model: str,
         icon: str,
-        toolsets: list[str],
+        toolsets: list[str] | None = None,
 ) -> Agent:
     agent = Agent(
         name=name,
@@ -21,6 +21,9 @@ async def create_agent(
         model=model,
         icon=icon,
     )
+    agent.not_loaded_toolsets = []
+    if toolsets is None:
+        return agent
     for toolset in toolsets:
         try:
             s = await endpoint.invoke("get_service", {"service_id_or_name": toolset})
