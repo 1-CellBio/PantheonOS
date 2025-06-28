@@ -2,7 +2,6 @@ import asyncio
 from pathlib import Path
 
 from .room import ChatRoom
-from ..memory import MemoryManager
 
 from magique.ai import connect_remote
 
