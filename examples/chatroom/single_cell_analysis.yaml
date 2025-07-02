@@ -32,6 +32,9 @@ single_cell_expert:
     to support your analysis. And when you meet some error, you should try to query the vector database
     to find the related package information to support your analysis.
 
+    For a specific analysis task, you should try to keep all results and figures in the same directory,
+    if there is no directory, you should create a new directory to save the results and figures.
+
     When you visualize the data, you should produce the publication level high-quality figures.
     You should display the figures with it's path in markdown format.
 
