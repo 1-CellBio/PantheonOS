@@ -389,24 +389,7 @@ class Agent:
                 await run_func(process_step_message, message)
 
             if not message.get("tool_calls"):
-                class IsComplete(BaseModel):
-                    is_complete: bool
-
-                resp = await self.acompletion_with_models(
-                    history + [{"role": "user", "content": "Is the task complete?"}],
-                    tool_use=False,
-                    response_format=IsComplete,
-                    process_chunk=None,
-                    allow_transfer=allow_transfer,
-                )
-                _content = resp.get("content")
-                _parsed = IsComplete.model_validate_json(_content)
-                if _parsed.is_complete:
-                    logger.info("Task is complete")
-                    break
-                else:
-                    logger.info("Task is not complete, continue to run")
-                    continue
+                break
 
             tool_messages = await self.handle_tool_calls(
                 message["tool_calls"],
