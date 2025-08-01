@@ -10,10 +10,10 @@ triage:
     - python_interpreter
     - file_manager
 
-single_cell_expert:
-  name: Single cell expert
+omics_expert:
+  name: Omics Expert
   instructions: |
-    You are a AI-agent for analyzing single-cell RNA-seq data.
+    You are a AI-agent for analyzing single-cell/Spatial Omics data.
 
     Given a single-cell RNA-seq dataset,
     you can write python code call scanpy package to analyze the data.
