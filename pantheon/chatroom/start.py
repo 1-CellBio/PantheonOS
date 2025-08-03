@@ -3,7 +3,7 @@ from pathlib import Path
 
 from .room import ChatRoom
 
-from magique.ai import connect_remote
+from pantheon.toolsets.utils.remote import connect_remote
 
 
 async def start_services(

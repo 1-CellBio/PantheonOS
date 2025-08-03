@@ -35,21 +35,9 @@ See the [examples](examples) folder for more details.
 - [x] Reasoning with O1 / Gemini Flash Thinking / Deepseek-R1
 - [x] Distributed
   + [x] Tools
-  + [x] Agents
+  + [ ] Agents
     * [x] Support streaming response
-- [x] Toolsets
-  + [x] Python
-  + [x] R
-  + [x] Shell
-  + [x] Web Browse
-  + [ ] Jupyter
-  + [ ] File access
-  + [ ] RAG
-    * [x] VectorRAG
-    * [ ] GraphRAG
-    * [x] Package Document
-    * [ ] PDF(paper)
-    * [ ] Code
+    * [ ] Support use in team
 - [x] Agent team
   + [x] Sequential Team
   + [x] Swarm Team

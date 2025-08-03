@@ -7,8 +7,8 @@ from typing import Callable
 
 import yaml
 from magique.worker import MagiqueWorker
-from magique.ai import connect_remote
-from magique.ai.constant import SERVER_URLS
+from pantheon.toolsets.utils.remote import connect_remote
+from pantheon.toolsets.utils.constant import SERVER_URLS
 import openai
 
 from ..agent import Agent
