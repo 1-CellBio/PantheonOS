@@ -29,6 +29,10 @@ extensions = [
     'myst_parser',
 ]
 
+# Use a light syntax highlighting style
+pygments_style = 'default'
+pygments_dark_style = 'monokai'
+
 # Generate autosummary pages
 autosummary_generate = True
 
@@ -43,7 +47,7 @@ html_static_path = ['_static']
 html_title = "Pantheon"
 # Logo configuration
 html_logo = "_static/pantheon.png"
-# html_favicon = "_static/favicon.ico"
+html_favicon = "_static/pantheon.png"
 html_css_files = ['custom.css']
 
 # Furo theme options

@@ -1,5 +1,25 @@
 /* Custom styles for Pantheon Agents documentation */
 
+/* Force light mode code blocks to have proper contrast */
+@media (prefers-color-scheme: light) {
+    .highlight pre {
+        background-color: #f8fafc !important;
+        color: #1f2937 !important;
+    }
+    
+    .highlight pre code,
+    .highlight pre span {
+        color: #1f2937 !important;
+    }
+    
+    /* Override any Furo theme dark backgrounds in light mode */
+    div.highlight,
+    div.highlight-default,
+    div.highlight-python {
+        background-color: #f8fafc !important;
+    }
+}
+
 /* ===== Typography and Base Styles ===== */
 :root {
     /* Light mode colors */
@@ -70,11 +90,29 @@ h1, h2, h3, h4, h5, h6 {
 
 .highlight pre {
     background-color: var(--pantheon-code-bg) !important;
+    color: #1f2937 !important;  /* Dark gray text for light background */
     padding: 1.25rem;
     margin: 0;
     overflow-x: auto;
     font-size: 0.875rem;
     line-height: 1.7;
+}
+
+/* Ensure all code text is visible in light mode */
+.highlight pre code {
+    color: #1f2937 !important;
+    background-color: transparent !important;
+}
+
+/* Dark mode code text color */
+@media (prefers-color-scheme: dark) {
+    .highlight pre {
+        color: #e5e7eb !important;  /* Light gray text for dark background */
+    }
+    
+    .highlight pre code {
+        color: #e5e7eb !important;
+    }
 }
 
 /* Line numbers styling */
@@ -85,6 +123,11 @@ h1, h2, h3, h4, h5, h6 {
     margin-right: 0.75rem;
     color: #94a3b8;
     user-select: none;
+}
+
+/* Default text color for code blocks */
+.highlight span {
+    color: #1f2937 !important;  /* Default dark text for any unstyled elements */
 }
 
 /* Syntax highlighting for light mode */
@@ -154,6 +197,13 @@ h1, h2, h3, h4, h5, h6 {
 
 .highlight .p {    /* Punctuation */
     color: var(--hl-punctuation) !important;
+}
+
+/* Dark mode syntax highlighting defaults */
+@media (prefers-color-scheme: dark) {
+    .highlight span {
+        color: #e5e7eb !important;  /* Default light text for dark mode */
+    }
 }
 
 /* Inline code */
