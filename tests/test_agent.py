@@ -17,7 +17,7 @@ async def test_stream():
         instructions="You are a sci-fi fan, you can answer any sci-fi related questions. Just give me a number without any other words and symbols.",
     )
     msgs = [{"role": "user", "content": "What is the meaning of life?"}]
-    resp = await agent.run_stream(
+    resp = await agent._run_stream(
         msgs,
         process_chunk=lambda chunk: print(chunk.get("content", ""), end="", flush=True),
     )
@@ -37,7 +37,7 @@ async def test_tool_use():
         return {"weather": "sunny", "temperature": 20}
 
     msgs = [{"role": "user", "content": "What is the weather in Palo Alto and Redwood City?"}]
-    resp = await agent.run_stream(msgs)
+    resp = await agent._run_stream(msgs)
     print()
     print(resp)
     call_id = resp.messages[0]["tool_calls"][0]["id"]
