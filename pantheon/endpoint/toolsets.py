@@ -21,6 +21,7 @@ from executor.engine.job.extend import SubprocessJob
 from ..remote import connect_remote
 from ..toolset import ToolSet, tool
 from ..utils.log import logger
+from ..package_runtime.context import export_context, load_context
 
 
 class ToolSetMode(Enum):
@@ -416,7 +417,6 @@ class ToolSetManager:
 
                 log_file = self.log_dir / f"{service_type}.log"
                 env = os.environ.copy()
-                env["PANTHEON_WORKSPACE"] = os.getcwd()
 
                 if self.redirect_log:
                     job = SubprocessJob(
@@ -551,8 +551,7 @@ class ToolSetManager:
         """Prepare ToolSet instantiation arguments."""
         service_name = params.get("name", service_type)
         args = {"name": service_name}
-
-        if service_type == "python_interpreter":
+        if service_type in ("python_interpreter", "shell", "package"):
             args["workdir"] = str(self.path)
         elif service_type == "file_manager":
             args["path"] = str(self.path)
@@ -565,8 +564,6 @@ class ToolSetManager:
             workflow_path = params.get("workflow_path")
             if workflow_path:
                 args["workflow_path"] = workflow_path
-        elif service_type == "rag_manager":
-            args["workspace_path"] = str(self.path)
 
         return args
 

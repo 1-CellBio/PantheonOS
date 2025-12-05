@@ -1,6 +1,7 @@
 """Jupyter Client Kernel ToolSet - Standard Jupyter kernel implementation using jupyter_client"""
 
 import asyncio
+import base64
 import os
 import re
 import time
@@ -11,6 +12,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
+import textwrap
 
 import nbformat.v4
 
@@ -23,6 +25,7 @@ from pantheon.remote.backend.base import RemoteBackend, StreamMessage, StreamTyp
 from pantheon.toolset import ToolSet, tool
 from pantheon.utils.log import logger
 from pantheon.utils.misc import run_func
+from ...package_runtime.context import build_context_env
 
 # Terminal control character processing (nbclient-style)
 # Reference: https://github.com/jupyter/nbclient/blob/main/nbclient/client.py
@@ -493,6 +496,34 @@ class JupyterKernelToolSet(ToolSet):
             self.unified_listener = KernelListener()
             logger.debug("Initialized unified kernel listener")
 
+    def _current_context_dict(self) -> dict:
+        ctx = self.get_context()
+        return dict(ctx) if ctx else {}
+
+    def _build_kernel_env(self) -> dict:
+        env = os.environ.copy()
+        return build_context_env(
+            workdir=self.workdir,
+            context_variables=self._current_context_dict(),
+            base_env=env,
+        )
+
+    def _context_prefix_code(self) -> str:
+        env = build_context_env(
+            workdir=self.workdir,
+            context_variables=self._current_context_dict(),
+        )
+        serialized = env.get("PANTHEON_CONTEXT")
+        if not serialized:
+            return ""
+        encoded = base64.b64encode(serialized.encode("utf-8")).decode("ascii")
+        return textwrap.dedent(
+            f"""
+            import base64, os
+            os.environ['PANTHEON_CONTEXT'] = base64.b64decode('{encoded}').decode('utf-8')
+            """
+        ).strip()
+
     async def _handle_iopub_message(self, session_id: str, jupyter_msg: JupyterMessage):
         """Unified IOPub message handler - Separate metadata flow"""
         try:
@@ -537,8 +568,9 @@ class JupyterKernelToolSet(ToolSet):
                 # Use default kernel (no kernel_name specified)
                 km = AsyncKernelManager()
 
-            # Start kernel in specified working directory
-            await km.start_kernel(cwd=self.workdir)
+            # Start kernel in specified working directory with Pantheon context
+            env = self._build_kernel_env()
+            await km.start_kernel(cwd=self.workdir, env=env)
 
             # Wait for kernel to be ready
             kc = km.client()
@@ -609,6 +641,9 @@ class JupyterKernelToolSet(ToolSet):
 
         client = self.clients[session_id]
         session_info = self.sessions[session_id]
+        context_prefix = self._context_prefix_code()
+        if context_prefix:
+            code = f"{context_prefix}\n{code}" if code else context_prefix
 
         try:
             # Update kernel status

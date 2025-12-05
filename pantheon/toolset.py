@@ -17,6 +17,12 @@ from .remote import RemoteBackendFactory
 from .utils.misc import run_func
 
 
+def _load_context_lazy():
+    from .package_runtime.context import load_context as _load_ctx
+
+    return _load_ctx
+
+
 class ExecutionContext(dict):
     """
     Execution context dict for tools.
@@ -151,11 +157,21 @@ def tool(func: Callable | None = None, *, exclude: bool = False, **kwargs):
     @wraps(func)
     async def wrapper(*args, **func_kwargs):
         # 1. Extract context_variables from kwargs
-        context_variables = func_kwargs.pop("context_variables", {})
+        raw_context = func_kwargs.pop("context_variables", None)
+        if raw_context is None:
+            load_context = _load_context_lazy()
+            payload = load_context()
+            context_variables = dict(payload.get("context_variables") or {})
+        else:
+            context_variables = dict(raw_context)
         # backward compatibility: session_id is now an alias for client_id
         session_id = func_kwargs.pop("session_id", None)
         if session_id:
             context_variables["client_id"] = session_id
+
+        # Ensure dict even if nothing provided/fallback empty
+        if not context_variables:
+            context_variables = {}
 
         # 2. Convert to ExecutionContext (dict subclass for compatibility)
         ctx = get_current_context_variables()

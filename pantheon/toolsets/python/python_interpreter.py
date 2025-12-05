@@ -2,12 +2,15 @@ import os
 import io
 import ast
 import base64
+import json
 import traceback
 from contextlib import redirect_stdout, redirect_stderr
+from pathlib import Path
 
 from executor.engine import Engine, ProcessJob
 
 from ...toolset import tool, ToolSet
+from ...package_runtime.context import build_context_env
 from ...utils.log import logger
 
 
@@ -89,8 +92,11 @@ class PythonInterpreterToolSet(ToolSet):
         self._engine = engine
         self.engine = None
         self.clientid_to_interpreterid = {}
-        self.workdir = workdir
+        self.workdir = (
+            Path(workdir).expanduser().resolve() if workdir else Path.cwd()
+        )
         self.init_code = init_code
+        self._bootstrapped: set[str] = set()
 
     def _init_engine(self):
         if self.engine is None:
@@ -99,12 +105,27 @@ class PythonInterpreterToolSet(ToolSet):
             else:
                 self.engine = self._engine
 
+    def _current_context_dict(self) -> dict:
+        return dict(self.get_context() or {})
+
+    async def _inject_runtime_context(self, interpreter_id: str):
+        env = build_context_env(
+            workdir=str(self.workdir),
+            context_variables=self._current_context_dict(),
+        )
+        if not env:
+            return
+        env_literal = json.dumps(env)
+        await self.__run_code_in_interpreter(
+            f"import os; os.environ.update({env_literal})",
+            interpreter_id,
+        )
+
     @tool
     async def run_python_code(
         self,
         code: str,
         result_var_name: str | None = None,
-        context_variables: dict | None = None,
     ):
         """Run Python code in a new interpreter and return the result.
         If you use this function, don't need to use `new_interpreter` and `delete_interpreter`.
@@ -117,14 +138,8 @@ class PythonInterpreterToolSet(ToolSet):
         Returns:
             A dictionary with the result, stdout, and stderr.
         """
-        # context_variables: The context variables to use.
-        #    "client_id" is used to identify the interpreter.
-        #    If not provided will use the default client id.
-        #    For each client id, a new interpreter will be created.
-        #    NOTE: This context_variables is not visible to the agent.
-        if context_variables is None:
-            context_variables = {}
-        client_id = context_variables.get("client_id")
+        context_dict = dict(self.get_context() or {})
+        client_id = context_dict.get("client_id")
         if client_id is None:
             client_id = "default"
             logger.warning("No client id provided, using default client id.")
@@ -132,6 +147,8 @@ class PythonInterpreterToolSet(ToolSet):
         if (p_id is None) or (p_id not in self.interpreters):
             p_id = await self.new_interpreter()
             self.clientid_to_interpreterid[client_id] = p_id
+
+        await self._inject_runtime_context(p_id)
 
         # Execute code with automatic recovery on process failure
         try:
@@ -328,6 +345,7 @@ class PythonInterpreterToolSet(ToolSet):
         del self.interpreters[interpreter_id]
         del self.jobs[interpreter_id]
         self.engine.jobs.remove(job)
+        self._bootstrapped.discard(interpreter_id)
 
     @tool
     async def list_interpreters(self) -> list[dict]:

@@ -26,6 +26,7 @@ builtin_services:
   # === Tier 1: Essential Services (Recommended for all deployments) ===
   - todolist              # Task management with session isolation
   - file_manager          # File operations (read, write, list, delete, etc.)
+  - package               # Read-only view of available packages
 
   # === Tier 2: Common Development Tools ===
   # - file_editor           # Advanced file editing (Claude Code-like)

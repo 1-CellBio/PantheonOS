@@ -9,6 +9,7 @@ from .workflow import WorkflowToolSet
 from .notebook import IntegratedNotebookToolSet, JupyterKernelToolSet
 from .scraper import ScraperToolSet
 from .rag import VectorRAGToolSet
+from .package import PackageToolSet
 from .database_api import DatabaseAPIQueryToolSet
 
 
@@ -25,6 +26,7 @@ __all__ = [
     "ScraperToolSet",
     # Workflows & code
     "WorkflowToolSet",
+    "PackageToolSet",
     # Notebooks
     "JupyterKernelToolSet",
     "IntegratedNotebookToolSet",

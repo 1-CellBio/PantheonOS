@@ -1,8 +1,12 @@
+import os
+import shlex
 import uuid
+from pathlib import Path
 
 from ._shell import AsyncShell
 from ...toolset import ToolSet, tool
 from ...utils.log import logger
+from ...package_runtime.context import build_context_env
 
 
 class ShellToolSet(ToolSet):
@@ -16,11 +20,40 @@ class ShellToolSet(ToolSet):
     def __init__(
         self,
         name: str,
+        workdir: str | None = None,
         **kwargs,
     ):
         super().__init__(name, **kwargs)
         self.clientid_to_shellid = {}
         self.shells = {}
+        self.workdir = (
+            Path(workdir).expanduser().resolve() if workdir else Path.cwd()
+        )
+
+    def _prepare_shell_env(self) -> dict:
+        return os.environ.copy()
+
+    def _current_context_dict(self) -> dict:
+        ctx = dict(self.get_context() or {})
+        return ctx
+
+    def _build_runtime_env(self) -> dict:
+        return build_context_env(
+            workdir=str(self.workdir),
+            context_variables=self._current_context_dict(),
+        )
+
+    async def _apply_context_to_shell(self, shell: AsyncShell):
+        env = self._build_runtime_env()
+        if not env:
+            return
+        exports = " && ".join(
+            f"export {key}={shlex.quote(value)}" for key, value in env.items()
+        )
+        try:
+            await shell.run_command(exports)
+        except Exception:
+            logger.warning("Failed to propagate context variables to shell session")
 
     @tool
     async def new_shell(self) -> dict:
@@ -28,6 +61,7 @@ class ShellToolSet(ToolSet):
         You can use `run_command_in_shell` to run command in the shell,
         by providing the shell id."""
         shell = AsyncShell()
+        shell.env = self._prepare_shell_env()
         initial_output = await shell.start()
         shell_id = str(uuid.uuid4())
         self.shells[shell_id] = shell
@@ -137,7 +171,6 @@ class ShellToolSet(ToolSet):
         self,
         command: str,
         timeout: int | None = None,
-        context_variables: dict | None = None,
     ):
         """Run shell command and get the output.
 
@@ -145,14 +178,8 @@ class ShellToolSet(ToolSet):
             command: The command to run.
             timeout: The timeout for the command to run. Use None for no timeout (long-running commands).
         """
-        # context_variables: The context variables to use.
-        #    "client_id" is used to identify the shell.
-        #    If not provided will use the default client id.
-        #    For each client id, a new shell will be created.
-        #    NOTE: This context_variables is not visible to the agent.
-        if context_variables is None:
-            context_variables = {}
-        client_id = context_variables.get("client_id")
+        context_dict = dict(self.get_context() or {})
+        client_id = context_dict.get("client_id")
         if client_id is None:
             client_id = "default"
             logger.warning("No client id provided, using default client id.")
@@ -172,6 +199,9 @@ class ShellToolSet(ToolSet):
             shell_id = await self._restart_shell(client_id)
             initial_output = ""  # New shell will have its own initial output
 
+        shell = self.shells[shell_id]
+        await self._apply_context_to_shell(shell)
+
         # Try to run command with automatic recovery on failure
         try:
             output = await self.run_command_in_shell(command, shell_id, timeout=timeout)
@@ -189,6 +219,8 @@ class ShellToolSet(ToolSet):
                 # Shell crashed, restart and retry
                 logger.warning(f"Shell command failed: {e}")
                 shell_id = await self._restart_shell(client_id)
+                shell = self.shells[shell_id]
+                await self._apply_context_to_shell(shell)
 
                 try:
                     output = await self.run_command_in_shell(
