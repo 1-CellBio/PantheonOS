@@ -47,7 +47,12 @@ async def load_agent(path: str):
     return agent
 
 
-async def main(workdir: str, prompt: str | None = None, log_level: str = "WARNING"):
+async def main(
+    workdir: str,
+    prompt: str | None = None,
+    gateway: str | None = None,
+    log_level: str = "WARNING",
+):
     loguru.logger.remove()
     loguru.logger.add(sys.stdout, level=log_level)
 
@@ -106,7 +111,11 @@ async def main(workdir: str, prompt: str | None = None, log_level: str = "WARNIN
         except Exception:
             print(agent_name+":\n", msg)
 
-    await team.run(prompt, process_step_message=process_step_message)
+    if gateway is None:
+        await team.run(prompt, process_step_message=process_step_message)
+    else:
+        agent = eval(gateway)
+        await agent.run(prompt, process_step_message=process_step_message)
 
 
 if __name__ == "__main__":
