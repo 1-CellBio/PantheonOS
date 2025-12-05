@@ -54,8 +54,6 @@ class FileManagerToolSetBase(ToolSet):
         """List all files in the directory."""
         if not self.path.exists():
             return {"success": False, "error": "Directory does not exist"}
-        if (sub_dir is not None) and (".." in sub_dir):
-            return {"success": False, "error": "Sub directory cannot contain '..'"}
         if sub_dir is None or sub_dir == "":
             files = list(self.path.glob("*"))
         else:
@@ -79,33 +77,36 @@ class FileManagerToolSetBase(ToolSet):
     @tool
     async def create_directory(self, sub_dir: str):
         """Create a new directory."""
-        if ".." in sub_dir:
-            return {"success": False, "error": "Sub directory cannot contain '..'"}
         new_dir = self.path / sub_dir
         new_dir.mkdir(parents=True, exist_ok=True)
         return {"success": True}
 
     @tool
     async def create_file(self, file_path: str, content: str | None = "") -> dict:
-        """Create a new text file (optionally seeded with content)."""
-        if ".." in file_path:
-            return {"success": False, "error": "File path cannot contain '..'"}
+        """Create a new text file only if it does not exist.
 
+        Args:
+            file_path: The path to the file to create.
+            content: Optional initial content for the file.
+
+        Returns:
+            dict: Success status or error if file already exists.
+        """
         target_path = self.path / file_path
+        if target_path.exists():
+            return {"success": False, "error": "File already exists"}
         try:
             target_path.parent.mkdir(parents=True, exist_ok=True)
             with open(target_path, "w", encoding="utf-8") as handle:
                 handle.write(content or "")
             return {"success": True}
-        except Exception as exc:  # pragma: no cover - surfaced to caller
+        except Exception as exc:
             logger.error(f"create_file failed for {file_path}: {exc}")
             return {"success": False, "error": str(exc)}
 
     @tool
     async def delete_directory(self, sub_dir: str):
         """Delete a directory and all its contents recursively."""
-        if ".." in sub_dir:
-            return {"success": False, "error": "Sub directory cannot contain '..'"}
         dir_path = self.path / sub_dir
         if not dir_path.exists():
             return {"success": False, "error": "Directory does not exist"}
@@ -117,8 +118,6 @@ class FileManagerToolSetBase(ToolSet):
     @tool
     async def delete_file(self, file_path: str):
         """Delete a file."""
-        if ".." in file_path:
-            return {"success": False, "error": "File path cannot contain '..'"}
         path = self.path / file_path
         if not path.exists():
             return {"success": False, "error": "File does not exist"}
@@ -131,10 +130,6 @@ class FileManagerToolSetBase(ToolSet):
     @tool
     async def move_file(self, old_path: str, new_path: str):
         """Move a file."""
-        if ".." in old_path:
-            return {"success": False, "error": "Old path cannot contain '..'"}
-        if ".." in new_path:
-            return {"success": False, "error": "New path cannot contain '..'"}
         old_path = self.path / old_path
         if not old_path.exists():
             return {"success": False, "error": "Old path does not exist"}
@@ -175,8 +170,6 @@ class FileManagerToolSet(FileManagerToolSetBase):
         """List all files in the directory recursively."""
         if not self.path.exists():
             return {"success": False, "error": "Directory does not exist"}
-        if (sub_dir is not None) and (".." in sub_dir):
-            return {"success": False, "error": "Sub directory cannot contain '..'"}
 
         def _list_tree(path: Path) -> dict:
             """Helper function to recursively build the tree structure."""
@@ -205,8 +198,6 @@ class FileManagerToolSet(FileManagerToolSetBase):
             file_path: The path to the file to read.
             first_n_lines: The number of lines to read from the file. If not provided, the entire file will be read.
         """
-        if ".." in file_path:
-            return {"success": False, "error": "File path cannot contain '..'"}
         file_path = self.path / file_path
         if not file_path.exists():
             return {"success": False, "error": "File does not exist"}
@@ -225,15 +216,25 @@ class FileManagerToolSet(FileManagerToolSetBase):
 
     @tool
     async def write_file(self, file_path: str, content: str) -> dict:
-        """Write text to a file, note this function only supports text files."""
-        if ".." in file_path:
-            return {"success": False, "error": "File path cannot contain '..'"}
-        file_path = self.path / file_path
-        if not file_path.parent.exists():
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "w") as f:
-            f.write(content)
-        return {"success": True}
+        """Write text to a file, overwriting if it exists.
+
+        Args:
+            file_path: The path to the file to write.
+            content: The content to write to the file.
+
+        Returns:
+            dict: Success status or error message.
+        """
+        target_path = self.path / file_path
+        try:
+            if not target_path.parent.exists():
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(target_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return {"success": True}
+        except Exception as exc:
+            logger.error(f"write_file failed for {file_path}: {exc}")
+            return {"success": False, "error": str(exc)}
 
     @tool
     async def update_file(
@@ -258,9 +259,6 @@ class FileManagerToolSet(FileManagerToolSetBase):
         Returns:
             dict: Success status, number of replacements made, or error message.
         """
-        if ".." in file_path:
-            return {"success": False, "error": "File path cannot contain '..'"}
-
         target_path = self.path / file_path
         if not target_path.exists():
             return {"success": False, "error": "File does not exist"}
@@ -381,8 +379,6 @@ class FileManagerToolSet(FileManagerToolSetBase):
             page_numbers: The numbers of the pages to observe. If not provided, all pages will be observed.
             dpi: The DPI of the screenshots. If not provided, the default value is 300.
         """
-        if ".." in pdf_path:
-            return {"success": False, "error": "File path cannot contain '..'"}
         file_path = self.path / pdf_path
         if not file_path.exists():
             return {"success": False, "error": "PDF file does not exist"}
@@ -426,9 +422,6 @@ class FileManagerToolSet(FileManagerToolSetBase):
         Returns:
             dict: Success status, content, and metadata about the PDF.
         """
-        if ".." in pdf_path:
-            return {"success": False, "error": "File path cannot contain '..'"}
-
         file_path = self.path / pdf_path
 
         # Check if file exists
@@ -523,10 +516,6 @@ class FileManagerToolSet(FileManagerToolSetBase):
         """
         # Security: Maximum image size (10MB)
         MAX_IMAGE_SIZE = 10 * 1024 * 1024
-
-        # Security: Validate path doesn't contain directory traversal
-        if ".." in image_path:
-            return {"success": False, "error": "Image path cannot contain '..'"}
 
         try:
             i_path = self.path / image_path
