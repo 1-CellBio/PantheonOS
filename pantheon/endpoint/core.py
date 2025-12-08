@@ -62,10 +62,12 @@ class Endpoint(FileTransferToolSet):
             workspace_path = self.config.get(
                 "workspace_path", "./.pantheon-chatroom-workspace"
             )
+        # Convert to absolute path BEFORE chdir to avoid path resolution issues
+        workspace_path = str(Path(workspace_path).resolve())
         Path(workspace_path).mkdir(parents=True, exist_ok=True)
 
         # Switch to workspace directory for this Endpoint instance
-        os.chdir(str(workspace_path))
+        os.chdir(workspace_path)
 
         self.log_dir = Path(workspace_path) / ".endpoint-logs"
         self.log_dir.mkdir(parents=True, exist_ok=True)

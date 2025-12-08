@@ -44,6 +44,8 @@ class ChatRoom(ToolSet):
         check_before_chat: The function to check before chat.
         enable_nats_streaming: Enable NATS streaming for real-time message publishing.
                                Default: False.
+        default_team: A fixed PantheonTeam to use for all chats (bypasses template system).
+                      Useful for REPL or embedded usage. Default: None.
         **kwargs: Additional parameters passed to ToolSet (e.g., id_hash).
     """
 
@@ -57,6 +59,7 @@ class ChatRoom(ToolSet):
         speech_to_text_model: str = "gpt-4o-mini-transcribe",
         check_before_chat: Callable | None = None,
         enable_nats_streaming: bool = False,
+        default_team: "PantheonTeam | None" = None,
         **kwargs,
     ):
         # Initialize ToolSet (will handle worker creation in run())
@@ -116,6 +119,9 @@ class ChatRoom(ToolSet):
         self.speech_to_text_model = speech_to_text_model
         self.threads: dict[str, Thread] = {}
         self.check_before_chat = check_before_chat
+
+        # Default team (bypasses template system when set)
+        self._default_team = default_team
 
     async def _get_endpoint_service(self):
         """Get endpoint service object (instance or RemoteService)."""
@@ -192,6 +198,10 @@ class ChatRoom(ToolSet):
 
     async def get_team_for_chat(self, chat_id: str) -> PantheonTeam:
         """Get the team for a specific chat, creating from memory if needed."""
+        # 0. If default_team is set, always use it (bypass template system)
+        if self._default_team is not None:
+            return self._default_team
+
         # FIX for performance, history chat will get team even not needed.
         # 1. Check if team already exists in cache
         if chat_id in self.chat_teams:

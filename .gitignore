@@ -158,6 +158,7 @@ chatroom-workspace/
 .pantheon-chatroom*/
 .pantheon-chatroom-workspace*/
 .pantheon-test-default-workspace/
+.pantheon/
 
 # NATS JetStream storage
 jetstream_storage/

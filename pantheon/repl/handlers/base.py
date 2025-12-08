@@ -11,7 +11,11 @@ class CommandHandler(ABC):
     def __init__(self, console: Console, parent: "Repl"):
         self.console = console
         self.parent = parent
-        self.team = parent.team
+
+    @property
+    def team(self):
+        """Get team from parent (supports both _team and team)."""
+        return getattr(self.parent, '_team', None) or getattr(self.parent, 'team', None)
 
     @abstractmethod
     def match_command(self, command: str) -> bool:

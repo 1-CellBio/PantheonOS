@@ -329,8 +329,9 @@ class PythonInterpreterToolSet(ToolSet):
         await g.asend(None)  # Initialize the generator
         self.interpreters[job.id] = g
         if self.workdir is not None:
+            # Use repr() to properly escape backslashes on Windows
             await self.run_code_in_interpreter(
-                f"import os; os.chdir('{self.workdir}')", job.id
+                f"import os; os.chdir({repr(str(self.workdir))})", job.id
             )
         if self.init_code is not None:
             await self.run_code_in_interpreter(self.init_code, job.id)

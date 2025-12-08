@@ -1,3 +1,5 @@
+"""REPL - Command line interface for Pantheon agents, based on ChatRoom."""
+
 import asyncio
 import sys
 import time
@@ -7,13 +9,13 @@ from pathlib import Path
 
 from rich.text import Text
 from rich.live import Live
-from rich.panel import Panel
 from rich.markdown import Markdown
 
 # Simple readline support for history
 try:
     import readline
     import atexit
+
     READLINE_AVAILABLE = True
 except ImportError:
     READLINE_AVAILABLE = False
@@ -21,7 +23,7 @@ except ImportError:
 from ..agent import Agent
 from ..team import Team
 from ..team.pantheon import PantheonTeam
-from ..memory import Memory
+from ..chatroom import ChatRoom
 from ..constant import CLI_HISTORY_FILE
 from .ui import ReplUI
 from .handlers.base import CommandHandler
@@ -30,25 +32,69 @@ from .handlers.builtin.bash import BashCommandHandler
 
 
 class Repl(ReplUI):
-    """REPL for agent or team interaction.
+    """REPL for agent or team interaction, based on ChatRoom.
+
+    Supports multiple initialization modes:
+    - agent: Pass an Agent or Team directly (legacy mode, creates embedded ChatRoom)
+    - chatroom: Pass an existing ChatRoom instance
+    - endpoint: Pass an Endpoint instance (creates ChatRoom with it)
+    - None: Auto-create ChatRoom with embedded Endpoint
 
     Args:
-        agent: An Agent or Team instance. Single Agent will be wrapped in PantheonTeam.
+        agent: An Agent or Team instance (legacy mode).
+        chatroom: An existing ChatRoom instance.
+        endpoint: An Endpoint instance to create ChatRoom with.
+        memory_dir: Directory for chat persistence.
+        chat_id: Specific chat ID to use (creates new if None).
     """
-    def __init__(self, agent: Agent | Team):
+
+    def __init__(
+        self,
+        agent: Agent | Team | None = None,
+        chatroom: ChatRoom | None = None,
+        endpoint: "Endpoint | None" = None,
+        memory_dir: str = ".pantheon",
+        chat_id: str | None = None,
+    ):
         super().__init__()  # init UI
 
-        # Wrap single Agent in PantheonTeam for unified handling
-        if isinstance(agent, Team):
-            self.team = agent
+        # Determine ChatRoom source
+        if chatroom is not None:
+            # Mode 1: Use existing ChatRoom
+            self._chatroom = chatroom
+        elif agent is not None:
+            # Mode 2: Legacy - create ChatRoom from Agent/Team
+            self._chatroom = self._create_chatroom_from_agent(agent, memory_dir)
+        elif endpoint is not None:
+            # Mode 3: Create ChatRoom with provided Endpoint
+            self._chatroom = ChatRoom(
+                endpoint=endpoint,
+                memory_dir=memory_dir,
+                enable_nats_streaming=False,
+            )
         else:
-            self.team = PantheonTeam([agent])
+            # Mode 4: Auto-create everything
+            self._chatroom = ChatRoom(
+                endpoint=None,  # Auto-create Endpoint
+                memory_dir=memory_dir,
+                enable_nats_streaming=False,
+            )
 
-        # REPL-managed memory for team
-        self.memory = Memory("repl-session")
+        # Current chat session
+        self._chat_id = chat_id
+
+        # Reference to team for UI display (will be set after first chat)
+        self._team: PantheonTeam | None = None
+        if agent is not None:
+            if isinstance(agent, Team):
+                self._team = agent
+            else:
+                self._team = PantheonTeam([agent])
 
         # Set multi-agent mode flag (for UI display)
-        self._is_multi_agent = len(self.team.agents) > 1
+        self._is_multi_agent = (
+            self._team is not None and len(self._team.agents) > 1
+        )
 
         self.current_task = None
         self.tool_calls_active = False
@@ -82,29 +128,34 @@ class Repl(ReplUI):
         # Setup signal handlers for better interrupt handling
         self._setup_signal_handlers()
 
-        # Simple fixed input panel at bottom
-        self.input_panel = Panel(
-            Text("Type your message here...", style="dim"),
-            title="Input",
-            border_style="bright_blue"
-        )
-
+        # Command handlers
         self.handlers: list[CommandHandler] = [
             BashCommandHandler(self.console, self),
         ]
 
+    def _create_chatroom_from_agent(
+        self, agent: Agent | Team, memory_dir: str
+    ) -> ChatRoom:
+        """Create ChatRoom from Agent/Team (legacy compatibility)."""
+        # Wrap single Agent in PantheonTeam
+        if isinstance(agent, Team):
+            team = agent
+        else:
+            team = PantheonTeam([agent])
+
+        # Create ChatRoom with default_team (bypasses template system)
+        return ChatRoom(
+            endpoint=None,  # Auto-create Endpoint
+            memory_dir=memory_dir,
+            enable_nats_streaming=False,
+            default_team=team,
+        )
+
     def register_handler(self, handler: CommandHandler | str | Path):
-        """Register a handler for processing commands
-
-        Args:
-            handler: A CommandHandler instance or a path to a config file/folder.
-
-        If a path or string is provided, the config file/folder will be loaded and used to create a TemplateHandler instance.
-        If a CommandHandler instance is provided, it will be added to the handlers list.
-        """
+        """Register a handler for processing commands."""
         if isinstance(handler, CommandHandler):
             self.handlers.append(handler)
-        elif isinstance(handler, str) or isinstance(handler, Path):
+        elif isinstance(handler, (str, Path)):
             p = Path(handler)
             if p.exists():
                 template = load_template(p)
@@ -114,15 +165,13 @@ class Repl(ReplUI):
                 self.console.print(f"[red]Template file not found: {p}[/red]")
 
     def _setup_signal_handlers(self):
-        """Setup signal handlers for better interrupt management"""
+        """Setup signal handlers for better interrupt management."""
         self._interrupt_count = 0
         self._last_interrupt_time = 0
 
         def signal_handler(signum, frame):
-            import time
             current_time = time.time()
 
-            # If interrupts come within 2 seconds of each other, count them
             if current_time - self._last_interrupt_time < 2.0:
                 self._interrupt_count += 1
             else:
@@ -130,82 +179,76 @@ class Repl(ReplUI):
 
             self._last_interrupt_time = current_time
 
-            # Show cancellation message for first interrupt
             if self._interrupt_count == 1:
-                self.console.print("\n[yellow]Operation interrupted - press Ctrl+C again within 2 seconds to force exit[/yellow]")
-                # Try to cancel the current agent task if it exists
-                if hasattr(self, '_current_agent_task') and self._current_agent_task and not self._current_agent_task.done():
+                self.console.print(
+                    "\n[yellow]Operation interrupted - press Ctrl+C again within 2 seconds to force exit[/yellow]"
+                )
+                if (
+                    hasattr(self, "_current_agent_task")
+                    and self._current_agent_task
+                    and not self._current_agent_task.done()
+                ):
                     try:
                         self._current_agent_task.cancel()
                     except Exception:
-                        pass  # Ignore errors during cancellation
+                        pass
             elif self._interrupt_count >= 2:
                 self.console.print("\n[red]Force exit requested[/red]")
                 sys.exit(1)
 
-            # For first interrupt, let KeyboardInterrupt be raised normally
-            # This allows the normal interrupt handling to work
-
-        # Only set up signal handler on Unix-like systems
-        if hasattr(signal, 'SIGINT'):
+        if hasattr(signal, "SIGINT"):
             signal.signal(signal.SIGINT, signal_handler)
 
     def _setup_input_system(self):
-        """Setup simple input system with readline history"""
+        """Setup simple input system with readline history."""
         if READLINE_AVAILABLE:
-            # Setup readline with history
             if self.history_file.exists():
                 readline.read_history_file(str(self.history_file))
             atexit.register(readline.write_history_file, str(self.history_file))
             readline.set_history_length(1000)
-
-            # Simple readline configuration for better user experience
             readline.parse_and_bind("tab: complete")
             readline.parse_and_bind("set completion-ignore-case on")
-
-            # Configure readline to prevent prompt corruption
             readline.set_startup_hook(None)
             readline.set_pre_input_hook(None)
-
-            # Ensure proper history navigation
-            readline.parse_and_bind("\"\\e[A\": previous-history")
-            readline.parse_and_bind("\"\\e[B\": next-history")
+            readline.parse_and_bind('"\\e[A": previous-history')
+            readline.parse_and_bind('"\\e[B": next-history')
 
     def _load_history(self):
-        """Load command history from file"""
+        """Load command history from file."""
         if self.history_file.exists():
             try:
-                with open(self.history_file, 'r', encoding='utf-8') as f:
-                    self.command_history = [line.strip() for line in f.readlines()[-100:]]  # Keep last 100
+                with open(self.history_file, "r", encoding="utf-8") as f:
+                    self.command_history = [
+                        line.strip() for line in f.readlines()[-100:]
+                    ]
             except Exception:
                 self.command_history = []
 
     def _save_history(self):
-        """Save command history to file"""
+        """Save command history to file."""
         try:
-            with open(self.history_file, 'a', encoding='utf-8') as f:
+            with open(self.history_file, "a", encoding="utf-8") as f:
                 if self.command_history:
-                    f.write(self.command_history[-1] + '\n')
+                    f.write(self.command_history[-1] + "\n")
         except Exception:
-            pass  # Silently ignore history save errors
+            pass
 
     def _add_to_history(self, command: str):
-        """Add command to history"""
+        """Add command to history."""
         command = command.strip()
-        if command and (not self.command_history or self.command_history[-1] != command):
+        if command and (
+            not self.command_history or self.command_history[-1] != command
+        ):
             self.command_history.append(command)
             self._save_history()
             self.history_index = len(self.command_history)
 
-    def show_input_panel(self):
-        """Show the input panel at bottom"""
-        self.console.print("\n")
-        self.console.print(self.input_panel)
-
     def ask_user_input(self) -> str:
         """Get user input with multi-line support and readline history."""
         try:
-            self.console.print("[dim]Enter your message (press Enter twice to finish)[/dim]")
+            self.console.print(
+                "[dim]Enter your message (press Enter twice to finish)[/dim]"
+            )
             lines = []
             while True:
                 prompt_text = "... " if lines else ">   "
@@ -213,16 +256,16 @@ class Repl(ReplUI):
                 if READLINE_AVAILABLE:
                     line = input(prompt_text)
                 else:
-                    self.console.print(f"[bright_blue]{prompt_text}[/bright_blue]", end=" ")
+                    self.console.print(
+                        f"[bright_blue]{prompt_text}[/bright_blue]", end=" "
+                    )
                     line = input()
 
                 if line.strip() == "":
-                    # Empty line ends input
                     break
 
                 lines.append(line)
 
-            # Return multi-line string
             return "\n".join(lines).strip()
 
         except KeyboardInterrupt:
@@ -231,51 +274,67 @@ class Repl(ReplUI):
         except EOFError:
             raise
 
-
     def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count using rough approximation (4 chars ≈ 1 token)"""
+        """Estimate token count using rough approximation."""
         if not text:
             return 0
-        # Simple estimation: ~4 characters per token for English text
         return max(1, len(text) // 4)
 
     def _format_token_count(self, count: int) -> str:
-        """Format token count with appropriate units and thousand separators"""
+        """Format token count with appropriate units."""
         if count >= 1000000:
             return f"{count/1000000:.1f}M"
-        elif count >= 10000:  # Use K for 10K+
+        elif count >= 10000:
             return f"{count/1000:.1f}K"
-        elif count >= 1000:   # Use comma separator for 1K-10K
+        elif count >= 1000:
             return f"{count:,}"
         else:
             return str(count)
 
     def _update_token_stats(self, input_tokens: int, output_tokens: int):
-        """Update token statistics"""
+        """Update token statistics."""
         self.current_input_tokens = input_tokens
         self.current_output_tokens = output_tokens
         self.total_input_tokens += input_tokens
         self.total_output_tokens += output_tokens
 
-    def _add_output_tokens_estimate(self, content: str):
-        """Add estimated tokens from tool calls or other agent messages"""
-        if hasattr(self, 'estimated_output_tokens'):
-            additional_tokens = self._estimate_tokens(content)
-            self.estimated_output_tokens += additional_tokens
+    async def _setup(self):
+        """Initialize REPL and ChatRoom."""
+        # Start ChatRoom setup (including auto-created Endpoint)
+        await self._chatroom.run_setup()
+
+        # Create or get chat session
+        if self._chat_id is None:
+            result = await self._chatroom.create_chat("repl-session")
+            self._chat_id = result["chat_id"]
+
+        # Get team reference for UI display
+        if self._team is None:
+            self._team = await self._chatroom.get_team_for_chat(self._chat_id)
+            self._is_multi_agent = len(self._team.agents) > 1
 
     async def run(self, message: str | dict | None = None, disable_logging: bool = True):
+        """Main REPL loop."""
         if disable_logging:
             from loguru import logger
+
             logger.remove()
             logger.add(sys.stdout, level="WARNING")
-        # Simple greeting
+
+        # Initialize
+        await self._setup()
+
+        # Print greeting
         await self.print_greeting()
 
         # Set up connection between UI and token tracking
         self._parent_repl = self
 
-        # Start the message printing task
-        print_task = asyncio.create_task(self.print_message())
+        # Start the message printing task only if team has events_queue (legacy mode)
+        # In ChatRoom mode, streaming is handled via process_chunk/process_step_message callbacks
+        print_task = None
+        if self._team and hasattr(self._team, 'events_queue') and self._team.events_queue:
+            print_task = asyncio.create_task(self.print_message())
 
         # Handle initial message if provided
         current_message = message
@@ -284,11 +343,9 @@ class Repl(ReplUI):
 
         # Main message processing loop
         while True:
-            # Get message (either initial message or new user input)
             if current_message is None:
                 try:
                     current_message = self.ask_user_input()
-                    # Skip empty messages (from ESC interruption)
                     if not current_message.strip():
                         continue
                     self._add_to_history(current_message)
@@ -297,48 +354,83 @@ class Repl(ReplUI):
                     self._print_session_summary()
                     break
 
-            # Handle special commands FIRST (before sending to API)
+            # Handle commands
             cmd = current_message.strip()
-
             cmd_lower = cmd.lower()
 
+            # Exit commands
             if cmd_lower in ["exit", "quit", "q", "/exit", "/quit", "/q"]:
                 self._print_session_summary()
                 break
+
+            # Help command
             elif cmd_lower in ["help", "/help"]:
                 self._print_help()
-                current_message = None  # Reset to get new input
-                continue
-            elif cmd_lower in ["status", "/status"]:
-                self._print_status()
-                current_message = None  # Reset to get new input
-                continue
-            elif cmd_lower in ["clear", "/clear"]:
-                self.console.clear()
-                self.memory = Memory("repl-session")  # Reset memory
-                self._current_agent_name = None  # Reset agent display state
-                self._last_printed_agent = None
-                await self.print_greeting()
-                current_message = None  # Reset to get new input
-                continue
-            elif cmd_lower in ["history", "/history"]:
-                self._print_history()
-                current_message = None  # Reset to get new input
-                continue
-            elif cmd_lower in ["tokens", "/tokens"]:
-                self._print_token_analysis()
-                current_message = None  # Reset to get new input
-                continue
-            elif cmd_lower in ["/save"] or current_message.strip().lower().startswith("/save"):
-                self._handle_save_command(current_message.strip())
-                current_message = None  # Reset to get new input
-                continue
-            elif current_message.strip().lower().startswith("/load"):
-                self._handle_load_command(current_message.strip())
-                current_message = None  # Reset to get new input
+                current_message = None
                 continue
 
-            # Handle custom commands
+            # Status command
+            elif cmd_lower in ["status", "/status"]:
+                self._print_status()
+                current_message = None
+                continue
+
+            # Clear command
+            elif cmd_lower in ["clear", "/clear"]:
+                await self._handle_clear()
+                current_message = None
+                continue
+
+            # History command
+            elif cmd_lower in ["history", "/history"]:
+                self._print_history()
+                current_message = None
+                continue
+
+            # Tokens command
+            elif cmd_lower in ["tokens", "/tokens"]:
+                self._print_token_analysis()
+                current_message = None
+                continue
+
+            # Save command
+            elif cmd_lower == "/save" or cmd_lower.startswith("/save "):
+                self._handle_save_command(cmd)
+                current_message = None
+                continue
+
+            # Load command
+            elif cmd_lower.startswith("/load "):
+                self._handle_load_command(cmd)
+                current_message = None
+                continue
+
+            # New chat command
+            elif cmd_lower in ["/new", "/new-chat"]:
+                await self._handle_new_chat()
+                current_message = None
+                continue
+
+            # List chats command
+            elif cmd_lower in ["/list", "/chats"]:
+                await self._handle_list_chats()
+                current_message = None
+                continue
+
+            # Switch chat command
+            elif cmd_lower.startswith("/switch "):
+                chat_id = cmd[8:].strip()
+                await self._handle_switch_chat(chat_id)
+                current_message = None
+                continue
+
+            # Agents command
+            elif cmd_lower in ["/agents", "/team"]:
+                await self._handle_show_agents()
+                current_message = None
+                continue
+
+            # Custom command handlers
             continue_flag = False
             for handler in self.handlers:
                 if handler.match_command(cmd):
@@ -351,231 +443,344 @@ class Repl(ReplUI):
             if continue_flag:
                 continue
 
-            # If not a special command, process with agent
-            start_time = time.time()
+            # Process with ChatRoom
+            await self._process_message(current_message)
+            current_message = None
 
-            # Estimate input tokens
-            input_tokens = self._estimate_tokens(current_message)
-            output_tokens = 0
+        if print_task:
+            print_task.cancel()
 
-            # Create live status with real-time token tracking (Claude Code style)
-            content_buffer = []
-            tool_calls_content_buffer = []
-            estimated_output_tokens = 0  # Track estimated output tokens from all sources
+    async def _process_message(self, message: str):
+        """Process a message through ChatRoom."""
+        start_time = time.time()
 
-            def process_chunk(chunk: dict):
-                nonlocal estimated_output_tokens
-                content = chunk.get("content")
-                tool_calls = chunk.get("tool_calls")
-                if (content is None) and (tool_calls is None):
-                    return
-                if tool_calls is not None:
-                    for tool_call in tool_calls:
-                        if "function" in tool_call:
-                            if "arguments" in tool_call["function"]:
-                                t_content = (content or "") + (tool_call["function"]["arguments"])
-                                tool_calls_content_buffer.append(t_content)
-                if content is not None:
-                    content_buffer.append(content)
-                # Update estimated tokens when we get new content
-                estimated_output_tokens = self._estimate_tokens(
-                    ''.join(content_buffer+tool_calls_content_buffer))
+        # Estimate input tokens
+        input_tokens = self._estimate_tokens(message)
+        output_tokens = 0
 
-            # Tetris-style animation frames (different from Claude's *)
-            animation_frames = ["▢", "▣", "▤", "▥", "▦", "▧", "▨", "▩"]
-            frame_index = 0
+        # Content buffers for streaming
+        content_buffer = []
+        tool_calls_content_buffer = []
+        estimated_output_tokens = 0
 
-            # Show Processing message immediately after user input (Claude Code style)
-            processing_live = Live(console=self.console, refresh_per_second=4)
-            processing_live.start()
+        def process_chunk(chunk: dict):
+            nonlocal estimated_output_tokens
+            content = chunk.get("content")
+            tool_calls = chunk.get("tool_calls")
+            if content is None and tool_calls is None:
+                return
+            if tool_calls is not None:
+                for tool_call in tool_calls:
+                    if "function" in tool_call:
+                        if "arguments" in tool_call["function"]:
+                            t_content = (content or "") + tool_call["function"][
+                                "arguments"
+                            ]
+                            tool_calls_content_buffer.append(t_content)
+            if content is not None:
+                content_buffer.append(content)
+            estimated_output_tokens = self._estimate_tokens(
+                "".join(content_buffer + tool_calls_content_buffer)
+            )
+
+        # Animation frames
+        animation_frames = ["▢", "▣", "▤", "▥", "▦", "▧", "▨", "▩"]
+        frame_index = 0
+
+        processing_live = Live(console=self.console, refresh_per_second=4)
+        processing_live.start()
+
+        try:
+
+            def update_processing_status():
+                nonlocal frame_index
+                current_output_tokens = estimated_output_tokens
+                elapsed = time.time() - start_time
+                current_frame = animation_frames[frame_index % len(animation_frames)]
+
+                if self._current_tool_name and self._tools_executing:
+                    status_text = f"[dim]{current_frame} Running [bold cyan]{self._current_tool_name}[/bold cyan]... • {self._format_token_count(input_tokens)} in, {self._format_token_count(current_output_tokens)} out"
+                else:
+                    status_text = f"[dim]{current_frame} Processing... • {self._format_token_count(input_tokens)} in, {self._format_token_count(current_output_tokens)} out"
+
+                if elapsed > 1:
+                    status_text += f" • {elapsed:.1f}s"
+                status_text += "[/dim]"
+
+                processing_live.update(Text.from_markup(status_text))
+                frame_index += 1
 
             try:
-                def update_processing_status():
-                    nonlocal frame_index
-                    # Use the estimated output tokens (updated by process_chunk and tool calls)
-                    current_output_tokens = estimated_output_tokens
-                    elapsed = time.time() - start_time
+                update_processing_status()
+                self._tools_executing = False
 
-                    # Create processing message with animated tetris block and real-time token info
-                    current_frame = animation_frames[frame_index % len(animation_frames)]
-
-                    # Base status with animation and token info
-                    if self._current_tool_name and self._tools_executing:
-                        # Show tool name only when currently executing
-                        status_text = f"[dim]{current_frame} Running [bold cyan]{self._current_tool_name}[/bold cyan]... • {self._format_token_count(input_tokens)} in, {self._format_token_count(current_output_tokens)} out"
-                    else:
-                        # Default processing message
-                        status_text = f"[dim]{current_frame} Processing... • {self._format_token_count(input_tokens)} in, {self._format_token_count(current_output_tokens)} out"
-
-                    if elapsed > 1:
-                        status_text += f" • {elapsed:.1f}s"
-                    status_text += "[/dim]"
-
-                    processing_live.update(Text.from_markup(status_text))
-                    frame_index += 1
-
-                try:
-                    # Initial processing status display
+                def smart_process_chunk(chunk: dict):
+                    process_chunk(chunk)
                     update_processing_status()
 
-                    # Track if tools are executing
-                    self._tools_executing = False
+                def process_step_message(step: dict):
+                    """Handle step messages (tool calls, tool results)."""
+                    # Handle tool calls
+                    if tool_calls := step.get("tool_calls"):
+                        for call in tool_calls:
+                            tool_name = call.get("function", {}).get("name")
+                            if tool_name:
+                                try:
+                                    import json
+                                    args = json.loads(
+                                        call.get("function", {}).get("arguments", "{}")
+                                    )
+                                except Exception:
+                                    args = {}
+                                self.print_tool_call(tool_name, args)
 
-                    def smart_process_chunk(chunk: dict):
-                        # Store content
-                        process_chunk(chunk)
-                        # Always update processing status for real-time feedback
-                        update_processing_status()
-
-                    # Store processing_live reference for tool calls
-                    self._current_live_display = processing_live
-
-                    # Create a background task to keep updating progress during toolset execution
-                    progress_update_task = None
-                    async def periodic_progress_update():
-                        """Background task to update progress during toolset execution"""
-                        while not agent_task.done():
-                            await asyncio.sleep(0.25)  # Update 4 times per second
-                            if not agent_task.done():
-                                update_processing_status()
-
-                    # Process with team - tool outputs will display independently
-                    # Create a cancellable task for the team processing
-                    agent_task = asyncio.create_task(
-                        self.team.run(
-                            current_message,
-                            memory=self.memory,
-                            process_chunk=smart_process_chunk,
-                        )
-                    )
-
-                    # Start background progress update task
-                    progress_update_task = asyncio.create_task(periodic_progress_update())
-
-                    # Store the task so it can be cancelled on interrupt
-                    self._current_agent_task = agent_task
-
-                    try:
-                        await agent_task
-                    except asyncio.CancelledError:
-                        self.console.print("\n[yellow]Operation was cancelled[/yellow]")
-                        raise KeyboardInterrupt
-                    finally:
-                        self._current_agent_task = None
-                        # Cancel progress update task
-                        if progress_update_task and not progress_update_task.done():
-                            progress_update_task.cancel()
-                            try:
-                                await progress_update_task
-                            except asyncio.CancelledError:
-                                pass
-
-                    # Final output token calculation
-                    if content_buffer:
-                        full_content = ''.join(content_buffer)
-                        if full_content.strip():
-                            output_tokens = self._estimate_tokens(full_content)
-
-                    # Update token statistics
-                    self._update_token_stats(input_tokens, output_tokens)
-                    self.message_count += 1
-
-                except KeyboardInterrupt:
-                    #self.console.print("\n[yellow]Operation cancelled by user[/yellow]")
-                    # Reset interrupt counter since we handled it gracefully
-                    self._interrupt_count = 0
-                    # Cancel any running agent task
-                    if self._current_agent_task and not self._current_agent_task.done():
-                        self._current_agent_task.cancel()
+                    # Handle tool results
+                    elif step.get("role") == "tool":
+                        tool_name = step.get("tool_name", "")
+                        content = step.get("content", "")
                         try:
-                            await self._current_agent_task
-                        except asyncio.CancelledError:
-                            pass
-                    # Cancel progress update task
-                    if 'progress_update_task' in locals() and progress_update_task and not progress_update_task.done():
+                            import json
+                            result = json.loads(content)
+                            self.print_tool_result(tool_name, result)
+                        except Exception:
+                            if content.strip():
+                                self.print_tool_result(tool_name, {"output": content})
+
+                self._current_live_display = processing_live
+
+                async def periodic_progress_update():
+                    while not chat_task.done():
+                        await asyncio.sleep(0.25)
+                        if not chat_task.done():
+                            update_processing_status()
+
+                # Call ChatRoom.chat()
+                chat_task = asyncio.create_task(
+                    self._chatroom.chat(
+                        chat_id=self._chat_id,
+                        message=[{"role": "user", "content": message}],
+                        process_chunk=smart_process_chunk,
+                        process_step_message=process_step_message,
+                    )
+                )
+
+                progress_update_task = asyncio.create_task(periodic_progress_update())
+                self._current_agent_task = chat_task
+
+                try:
+                    result = await chat_task
+                except asyncio.CancelledError:
+                    self.console.print("\n[yellow]Operation was cancelled[/yellow]")
+                    raise KeyboardInterrupt
+                finally:
+                    self._current_agent_task = None
+                    if progress_update_task and not progress_update_task.done():
                         progress_update_task.cancel()
                         try:
                             await progress_update_task
                         except asyncio.CancelledError:
                             pass
-                    current_message = None  # Reset to get new input
-                    continue
-                except Exception as e:
-                    self.console.print(f"\n[red]Error:[/red] {str(e)}")
-                    self.console.print("[dim]You can continue the conversation or type 'exit' to quit[/dim]")
-                finally:
-                    # Stop processing display
-                    processing_live.stop()
-                    self._tools_executing = False
-                    self._current_live_display = None
-                    # Clear tool name for next request
-                    self._current_tool_name = None
-                    # Clean up agent task reference
-                    if self._current_agent_task and not self._current_agent_task.done():
-                        self._current_agent_task.cancel()
-                    self._current_agent_task = None
+
+                # Check for errors in result
+                if result and not result.get("success", True):
+                    processing_live.stop()  # Stop Live before printing error
+                    error_msg = result.get("message", "Unknown error")
+                    self.console.print(f"\n[red]Error:[/red] {error_msg}")
+                    self.console.print(
+                        "[dim]You can continue the conversation or type 'exit' to quit[/dim]"
+                    )
+                    return
+
+                # Final output token calculation
+                if content_buffer:
+                    full_content = "".join(content_buffer)
+                    if full_content.strip():
+                        output_tokens = self._estimate_tokens(full_content)
+
+                # Update token statistics
+                self._update_token_stats(input_tokens, output_tokens)
+                self.message_count += 1
+
+            except KeyboardInterrupt:
+                self._interrupt_count = 0
+                if self._current_agent_task and not self._current_agent_task.done():
+                    self._current_agent_task.cancel()
+                    try:
+                        await self._current_agent_task
+                    except asyncio.CancelledError:
+                        pass
+                if (
+                    "progress_update_task" in locals()
+                    and progress_update_task
+                    and not progress_update_task.done()
+                ):
+                    progress_update_task.cancel()
+                    try:
+                        await progress_update_task
+                    except asyncio.CancelledError:
+                        pass
+                return
+            except Exception as e:
+                self.console.print(f"\n[red]Error:[/red] {str(e)}")
+                self.console.print(
+                    "[dim]You can continue the conversation or type 'exit' to quit[/dim]"
+                )
             finally:
-                # Ensure processing is stopped
-                if 'processing_live' in locals():
-                    processing_live.stop()
+                processing_live.stop()
+                self._tools_executing = False
+                self._current_live_display = None
+                self._current_tool_name = None
+                if self._current_agent_task and not self._current_agent_task.done():
+                    self._current_agent_task.cancel()
+                self._current_agent_task = None
+        finally:
+            if "processing_live" in locals():
+                processing_live.stop()
 
-            # Processing is complete - clear the status line and show final content
-            self.console.print()  # Clear processing status with newline
+        # Print final content
+        self.console.print()
+        if content_buffer:
+            full_content = "".join(content_buffer)
+            if full_content.strip():
+                if (
+                    "```" in full_content
+                    or "def " in full_content
+                    or "import " in full_content
+                ):
+                    self.console.print(full_content)
+                else:
+                    self.console.print(Markdown(full_content))
 
-            # Print accumulated content after processing
-            if content_buffer:
-                full_content = ''.join(content_buffer)
-                if full_content.strip():
+        self.console.print()
 
-                    # Check if content contains code blocks - if so, use plain text
-                    if '```' in full_content or 'def ' in full_content or 'import ' in full_content:
-                        self.console.print(full_content)
-                    else:
-                        self.console.print(Markdown(full_content))
+    # ===== Chat management commands =====
 
-            self.console.print()  # Add spacing
-            current_message = None  # Reset to get new input
+    async def _handle_new_chat(self):
+        """Create a new chat session."""
+        result = await self._chatroom.create_chat()
+        self._chat_id = result["chat_id"]
+        self.console.print(
+            f"[green]✅ Created new chat:[/green] {result.get('chat_name', self._chat_id)}"
+        )
+        self.console.print()
 
-        print_task.cancel()
+    async def _handle_list_chats(self):
+        """List all chat sessions."""
+        result = await self._chatroom.list_chats()
+        if result.get("success"):
+            chats = result.get("chats", [])
+            self.console.print()
+            self.console.print(
+                "[dim][bold blue]-- CHATS ------------------------------------------------------------[/bold blue][/dim]"
+            )
+            self.console.print()
+            if not chats:
+                self.console.print("[dim]No chats found[/dim]")
+            else:
+                for chat in chats[:10]:  # Show last 10
+                    marker = "→ " if chat.get("chat_id") == self._chat_id else "  "
+                    name = chat.get("chat_name", "Unnamed")
+                    chat_id = chat.get("chat_id", "")[:8]
+                    self.console.print(f"[dim]{marker}[/dim][bold]{name}[/bold] [dim]({chat_id})[/dim]")
+            self.console.print()
+        else:
+            self.console.print(f"[red]Error listing chats: {result.get('message')}[/red]")
+
+    async def _handle_switch_chat(self, chat_id: str):
+        """Switch to a different chat session."""
+        # Verify chat exists
+        result = await self._chatroom.list_chats()
+        if result.get("success"):
+            chats = result.get("chats", [])
+            found = None
+            for chat in chats:
+                if chat.get("chat_id", "").startswith(chat_id) or chat.get(
+                    "chat_name", ""
+                ).lower().startswith(chat_id.lower()):
+                    found = chat
+                    break
+
+            if found:
+                self._chat_id = found["chat_id"]
+                self.console.print(
+                    f"[green]✅ Switched to:[/green] {found.get('chat_name', self._chat_id)}"
+                )
+            else:
+                self.console.print(f"[red]Chat not found: {chat_id}[/red]")
+        self.console.print()
+
+    async def _handle_show_agents(self):
+        """Show agents in current team."""
+        self.console.print()
+        self.console.print(
+            "[dim][bold blue]-- AGENTS -----------------------------------------------------------[/bold blue][/dim]"
+        )
+        self.console.print()
+
+        if self._team:
+            for agent in self._team.agents.values():
+                agent_info = f"  • [bright_blue]{agent.name}[/bright_blue]"
+                if hasattr(agent, "models") and agent.models:
+                    model = (
+                        agent.models[0]
+                        if isinstance(agent.models, list)
+                        else agent.models
+                    )
+                    agent_info += f" [dim]({model})[/dim]"
+                self.console.print(agent_info)
+        else:
+            self.console.print("[dim]No team loaded[/dim]")
+        self.console.print()
+
+    async def _handle_clear(self):
+        """Clear current chat and create new one."""
+        self.console.clear()
+        # Delete old chat and create new
+        if self._chat_id:
+            await self._chatroom.delete_chat(self._chat_id)
+        result = await self._chatroom.create_chat("repl-session")
+        self._chat_id = result["chat_id"]
+        self._current_agent_name = None
+        self._last_printed_agent = None
+        await self.print_greeting()
 
     def _handle_save_command(self, command: str):
-        """Handle /save commands in REPL"""
+        """Handle /save command."""
         try:
             parts = command.split()
-            filename = None
-
             if len(parts) > 1:
-                # User specified a filename: /save myfile.md
                 filename = parts[1]
-                if not filename.endswith('.json'):
-                    filename += '.json'
-
+                if not filename.endswith(".json"):
+                    filename += ".json"
             else:
-                filename = datetime.now().strftime("%Y%m%d_%H%M%S") + '.json'
+                filename = datetime.now().strftime("%Y%m%d_%H%M%S") + ".json"
 
-            self.memory.save(filename)
+            # Save via ChatRoom's memory manager
+            asyncio.create_task(self._save_chat(filename))
             self.console.print(f"[green]✅ Conversation saved to:[/green] {filename}")
-
         except Exception as e:
             self.console.print(f"[red]Error saving conversation: {str(e)}[/red]")
-        self.console.print()  # Add spacing
+        self.console.print()
+
+    async def _save_chat(self, filename: str):
+        """Save current chat to file."""
+        memory = await self._chatroom.memory_manager.get_memory(self._chat_id)
+        memory.save(filename)
 
     def _handle_load_command(self, command: str):
-        """Handle /load commands in REPL"""
+        """Handle /load command."""
         try:
             parts = command.split()
             filename = parts[1]
-            self.memory = Memory.load(filename)
-            self.console.print(f"[green]✅ Conversation loaded from:[/green] {filename}")
+            self.console.print(
+                f"[yellow]Note: /load is not fully supported in ChatRoom mode. Use /switch instead.[/yellow]"
+            )
         except Exception as e:
             self.console.print(f"[red]Error loading conversation: {str(e)}[/red]")
-        self.console.print()  # Add spacing
+        self.console.print()
 
 
 if __name__ == "__main__":
-    agent = Agent(
-        "agent",
-        "You are a helpful assistant."
-    )
-    repl = Repl(agent)
+    agent = Agent("agent", "You are a helpful assistant.")
+    repl = Repl(agent=agent)
     asyncio.run(repl.run())

@@ -263,7 +263,10 @@ class ReplUI:
         self.console.print()
 
         # Always use team (single agent is wrapped in PantheonTeam)
-        self._print_greeting_team(self.team)
+        if hasattr(self, '_team') and self._team:
+            self._print_greeting_team(self._team)
+        elif hasattr(self, 'team') and self.team:
+            self._print_greeting_team(self.team)
 
         self.console.print()
         self.console.print("[dim][bold blue]-- HELP -------------------------------------------------------------[/bold blue][/dim]")
@@ -310,7 +313,6 @@ class ReplUI:
 
     def _print_help(self):
         """Print available commands"""
-        #self.console.print("\n[bold]Commands:[/bold]")
         self.console.print("[dim][bold blue]-- BASIC ------------------------------------------------------------[/bold blue][/dim]")
         self.console.print()
         self.console.print("[dim][bold purple]/help    [/bold purple][/dim] - Show this help")
@@ -325,8 +327,15 @@ class ReplUI:
         self.console.print("[dim]Ctrl+C x2[/dim] - Force exit (within 2 seconds)")
         self.console.print()
 
+        self.console.print("[dim][bold blue]-- CHAT MANAGEMENT --------------------------------------------------[/bold blue][/dim]")
+        self.console.print()
+        self.console.print("[dim][bold purple]/new     [/bold purple][/dim] - Create new chat session")
+        self.console.print("[dim][bold purple]/list    [/bold purple][/dim] - List all chat sessions")
+        self.console.print("[dim][bold purple]/switch  [/bold purple][/dim] - Switch to another chat (by id or name)")
+        self.console.print("[dim][bold purple]/agents  [/bold purple][/dim] - Show agents in current team")
+        self.console.print()
+
         if READLINE_AVAILABLE:
-            #self.console.print("\n[bold]Navigation:[/bold]")
             self.console.print("[dim][bold blue]-- NAVIGATION -------------------------------------------------------[/bold blue][/dim]")
             self.console.print()
             self.console.print("[dim][bold purple]↑/↓[/bold purple] - Browse command history")
@@ -408,16 +417,21 @@ class ReplUI:
         self.console.print()
 
         # Display agent/team info
-        if len(self.team.agents) == 1:
-            agent = list(self.team.agents.values())[0]
+        team = getattr(self, '_team', None) or getattr(self, 'team', None)
+        if team and len(team.agents) == 1:
+            agent = list(team.agents.values())[0]
             self.console.print(f"[dim]• Agent:    [/dim] {agent.name}")
             if hasattr(agent, 'models') and agent.models:
                 model = agent.models[0] if isinstance(agent.models, list) else agent.models
                 self.console.print(f"[dim]• Model:    [/dim] {model}")
-        else:
-            active = self.team.get_active_agent(self.memory)
-            self.console.print(f"[dim]• Team:     [/dim] {len(self.team.agents)} agents")
-            self.console.print(f"[dim]• Active:   [/dim] {active.name}")
+        elif team:
+            memory = getattr(self, 'memory', None)
+            if memory:
+                active = team.get_active_agent(memory)
+                self.console.print(f"[dim]• Team:     [/dim] {len(team.agents)} agents")
+                self.console.print(f"[dim]• Active:   [/dim] {active.name}")
+            else:
+                self.console.print(f"[dim]• Team:     [/dim] {len(team.agents)} agents")
 
         self.console.print(f"[dim]• Messages: [/dim] {self.message_count}")
         self.console.print(f"[dim]• Duration: [/dim] {duration_mins}m")
@@ -842,7 +856,8 @@ class ReplUI:
                     continue
 
                 # Only print other message types (like system messages, if any)
-                default_name = list(self.team.agents.keys())[0] if self.team.agents else "agent"
+                team = getattr(self, '_team', None) or getattr(self, 'team', None)
+                default_name = list(team.agents.keys())[0] if team and team.agents else "agent"
                 print_agent_message_modern_style(
                     agent_name or default_name,
                     message,
