@@ -29,16 +29,13 @@ DEFAULT_TOOLSETS = []
 
 class ChatRoom(ToolSet):
     """
-    ChatRoom is a service that allow user to interact with a team of agents.
-    It can connect to a remote service to get the agents and tools,
-    and be connected with Pantheon-UI to provide a user-friendly interface.
-
-    A chatroom contains a series of chats, which are identified by a chat_id.
-    Each chats will be associated with a memory, which is a file in the memory_dir.
+    ChatRoom is a service that allows user to interact with a team of agents.
 
     Args:
-        endpoint_service_id: The service ID of the endpoint service.
+        endpoint: Endpoint instance (embed mode), service_id string (remote mode),
+                  or None (auto-create Endpoint in embed mode).
         memory_dir: The directory to store the memory.
+        workspace_path: Workspace path for auto-created Endpoint (only used when endpoint=None).
         name: The name of the chatroom.
         description: The description of the chatroom.
         speech_to_text_model: The model to use for speech to text.
@@ -48,9 +45,9 @@ class ChatRoom(ToolSet):
 
     def __init__(
         self,
-        endpoint: "Endpoint | None" = None,
-        endpoint_service_id: str | None = None,
+        endpoint: "Endpoint | str | None" = None,
         memory_dir: str = "./.pantheon-chatroom",
+        workspace_path: str | None = None,
         name: str = "pantheon-chatroom",
         description: str = "Chatroom for Pantheon agents",
         speech_to_text_model: str = "gpt-4o-mini-transcribe",
@@ -60,19 +57,39 @@ class ChatRoom(ToolSet):
         # Initialize ToolSet (will handle worker creation in run())
         super().__init__(name=name, **kwargs)
 
-        # Determine endpoint connection mode
-        if endpoint is not None:
-            # Embed mode: directly hold Endpoint instance
+        # ChatRoom specific initialization (before endpoint setup for workspace_path default)
+        self.memory_dir = Path(memory_dir)
+        self.memory_manager = MemoryManager(self.memory_dir)
+
+        # Determine endpoint connection mode based on type
+        if isinstance(endpoint, str):
+            # Remote mode: endpoint is a service_id string
+            self._endpoint_embed = False
+            self._endpoint = None
+            self.endpoint_service_id = endpoint
+            self._auto_created_endpoint = False
+        elif endpoint is None:
+            # Auto-create mode: create Endpoint instance automatically
+            from ..endpoint import Endpoint
+
+            # Use workspace_path or default to memory_dir/.workspace
+            if workspace_path is None:
+                workspace_path = str(self.memory_dir / ".workspace")
+
+            self._endpoint = Endpoint(
+                config=None,
+                workspace_path=workspace_path,
+            )
+            self._endpoint_embed = True
+            self.endpoint_service_id = None
+            self._auto_created_endpoint = True
+            logger.info(f"ChatRoom: auto-created Endpoint at {workspace_path}")
+        else:
+            # Embed mode: endpoint is an Endpoint instance
             self._endpoint_embed = True
             self._endpoint = endpoint
             self.endpoint_service_id = None
-        elif endpoint_service_id is not None:
-            # Process mode: hold endpoint service_id, connect lazily
-            self._endpoint_embed = False
-            self._endpoint = None
-            self.endpoint_service_id = endpoint_service_id
-        else:
-            raise ValueError("Must provide either 'endpoint' or 'endpoint_service_id'")
+            self._auto_created_endpoint = False
 
         self._endpoint_service = None
         self._backend = None
@@ -81,10 +98,6 @@ class ChatRoom(ToolSet):
         # True: ChatRoom itself is started as a remote service (streams needed)
         # False: ChatRoom itself is embedded (no need for stream publish)
         self._embed = True  # Default to True, will be updated by run_setup()
-
-        # ChatRoom specific initialization
-        self.memory_dir = Path(memory_dir)
-        self.memory_manager = MemoryManager(self.memory_dir)
 
         # Initialize template manager (supports old and new formats, manages agents.yaml library)
         self.template_manager = get_template_manager()
@@ -169,6 +182,22 @@ class ChatRoom(ToolSet):
 
     async def run_setup(self):
         """Setup the chatroom (ToolSet hook called before run)."""
+        # Start auto-created Endpoint if needed
+        if self._auto_created_endpoint and self._endpoint is not None:
+            logger.info("ChatRoom: starting auto-created Endpoint...")
+            asyncio.create_task(self._endpoint.run(remote=False))
+            # Wait for endpoint to be ready
+            max_retries = 30
+            for i in range(max_retries):
+                if self._endpoint._setup_completed:
+                    logger.info(
+                        f"ChatRoom: auto-created Endpoint ready (service_id={self._endpoint.service_id})"
+                    )
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                logger.warning("ChatRoom: Endpoint startup timeout, continuing anyway")
+
         if self._endpoint_embed:
             logger.info(
                 f"ChatRoom: endpoint_mode=embed, endpoint_id={self._endpoint.service_id}"

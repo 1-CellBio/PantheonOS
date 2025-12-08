@@ -263,8 +263,7 @@ async def start_services(
 
     # ===== Step 2: Create ChatRoom =====
     chat_room = ChatRoom(
-        endpoint=endpoint,  # Embed mode: has value; Process mode: None
-        endpoint_service_id=final_endpoint_service_id,  # Process mode: has value; Embed mode: None
+        endpoint=endpoint if endpoint is not None else final_endpoint_service_id,
         memory_dir=memory_dir,
         name=service_name,
         speech_to_text_model=speech_to_text_model,
