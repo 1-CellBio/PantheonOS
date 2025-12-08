@@ -192,13 +192,16 @@ class PackageToolSet(ToolSet):
                     continue
                 pkg_info = detail.get("package", {})
                 for method in pkg_info.get("methods", []):
+                    is_async = method.get("async", False)
+                    method_path = f"packages.{pkg_name}.{method.get('name')}"
+                    call_example = f"await {method_path}(...)" if is_async else f"{method_path}(...)"
                     tools.append({
                         "package": pkg_name,
                         "method": method.get("name"),
                         "signature": method.get("signature", "()"),
                         "doc": method.get("doc") or "",
-                        "async": method.get("async", False),
-                        "call_example": f"packages.{pkg_name}.{method.get('name')}(...)",
+                        "async": is_async,
+                        "call_example": call_example,
                     })
             except Exception as e:
                 logger.warning(f"Failed to get tools from package {pkg_name}: {e}")

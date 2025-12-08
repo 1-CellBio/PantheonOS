@@ -48,12 +48,11 @@ report = pp.packages.sales_report.generate(date="2025-12-01", region="APAC")
 
 inventory = pp.packages.inventory.restock(product="Widget", delta=5)
 
-notification = await pp.packages.ops_center.notify.async_call(
-    payload={"event": "ready"},
-)
+notification = await pp.packages.ops_center.notify(payload={"event": "ready"})
 ```
-- Treat regular methods like any other Python function.
-- ToolSet methods remain async-aware: call them with `await ...` or use `await .async_call(...)` explicitly.
+- **Sync methods**: Call directly like any Python function.
+- **Async methods**: Use `await` to get the result.
+- **Force sync execution**: Use `.sync_call(...)` to run an async method synchronously (handles nested event loops automatically).
 
 ## Authoring or Updating Packages
 1. Create/modify files under `.pantheon/packages/<package_name>/` via `file_manager`, `shell`, or `python_interpreter`. No `__init__.py` is required.
@@ -92,6 +91,6 @@ Save the file—future imports automatically pick up the latest code.
 ## Quick Checklist
 - Need to understand what exists? `list_packages()` → `describe()` → `search()`.
 - Need new behavior? Add files under `.pantheon/packages/<name>/`, ensure methods have docstrings, then import again.
-- Need async work? Either `await` the method or call `.async_call(...)`.
+- Need async work? Just `await` the method. Need sync execution? Use `.sync_call(...)`.
 
 Stick to this workflow and you can discover, modify, and invoke every package capability directly from your Python code without learning any extra tools or internal details.

@@ -1035,12 +1035,19 @@ class ChatRoom(ToolSet):
         return template_manager.list_template_files(file_type)
 
     @tool
-    async def read_template_file(self, file_path: str) -> dict:
+    async def read_template_file(
+        self, file_path: str, resolve_refs: bool = False
+    ) -> dict:
         """
         Read a template markdown file.
+
+        Args:
+            file_path: Path to template file (e.g., "teams/default.md")
+            resolve_refs: If True, resolve agent references to full configs.
+                         Use False for editing, True for applying template to chat.
         """
         template_manager = get_template_manager()
-        return template_manager.read_template_file(file_path)
+        return template_manager.read_template_file(file_path, resolve_refs=resolve_refs)
 
     @tool
     async def write_template_file(self, file_path: str, content: dict) -> dict:

@@ -263,12 +263,16 @@ class TemplateManager:
             logger.error(f"Error listing template files: {e}")
             return {"success": False, "error": str(e)}
 
-    def read_template_file(self, file_path: str) -> Dict[str, Any]:
+    def read_template_file(
+        self, file_path: str, resolve_refs: bool = False
+    ) -> Dict[str, Any]:
         """
         Read a template markdown file.
 
         Args:
             file_path: Path to template file (e.g., "teams/default.md" or "agents/analyzer.md")
+            resolve_refs: If True, resolve agent references (agents with empty model field)
+                         to full agent configs. Use False for editing, True for applying.
 
         Returns:
             Response dict with file content
@@ -277,7 +281,7 @@ class TemplateManager:
             file_type, template_id = self._parse_template_file_path(file_path)
 
             if file_type == "teams":
-                team = self.file_manager.read_team(template_id, resolve_refs=False)
+                team = self.file_manager.read_team(template_id, resolve_refs=resolve_refs)
                 if not team:
                     return {
                         "success": False,

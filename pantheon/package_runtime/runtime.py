@@ -46,14 +46,36 @@ class PackageRuntimeMethod:
             **kwargs,
         )
 
-    async def async_call(self, *args, **kwargs):
-        result = self._invoke(*args, **kwargs)
-        return await _ensure_awaitable(result)
-
     def __call__(self, *args, **kwargs):
+        """Call the package method, preserving its original sync/async nature.
+
+        If the underlying method is async, this returns a coroutine that
+        the caller should await. If sync, returns the result directly.
+        """
+        return self._invoke(*args, **kwargs)
+
+    def sync_call(self, *args, **kwargs):
+        """Force synchronous execution of the method.
+
+        Use this when you need to call an async method from a sync context.
+        If already inside an event loop, runs the coroutine in a separate
+        thread to avoid nested loop issues (no external dependencies).
+
+        Returns:
+            The result of the method execution (not a coroutine).
+        """
         result = self._invoke(*args, **kwargs)
         if asyncio.iscoroutine(result) or asyncio.isfuture(result):
-            return asyncio.run(result)
+            try:
+                asyncio.get_running_loop()
+                # Already in an event loop - run in a separate thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(asyncio.run, result)
+                    return future.result()
+            except RuntimeError:
+                # No running loop, asyncio.run() is safe
+                return asyncio.run(result)
         return result
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper

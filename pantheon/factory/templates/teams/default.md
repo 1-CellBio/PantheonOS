@@ -19,6 +19,8 @@ default_coordinator:
   toolsets:
     - file_manager
     - python_interpreter
+    - shell
+    - package
 ---
 
 Team Coordinator orchestrating specialists for comprehensive task handling.
