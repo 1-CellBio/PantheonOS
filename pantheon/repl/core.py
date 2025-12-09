@@ -4,6 +4,7 @@ import asyncio
 import sys
 import time
 import signal
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -316,10 +317,8 @@ class Repl(ReplUI):
     async def run(self, message: str | dict | None = None, disable_logging: bool = True):
         """Main REPL loop."""
         if disable_logging:
-            from loguru import logger
-
-            logger.remove()
-            logger.add(sys.stdout, level="WARNING")
+            from ..utils.log import disable_all
+            disable_all()
 
         # Initialize
         await self._setup()
@@ -501,7 +500,6 @@ class Repl(ReplUI):
                 return ascii_frames
 
         animation_frames = get_animation_frames()
-        frame_index = 0
 
         # Separator - fancy or ASCII
         def get_separator():
@@ -533,35 +531,72 @@ class Repl(ReplUI):
                     result.append(f"[{color}]{char}[/{color}]")
                 return "".join(result)
 
+            def format_tool_name_for_status(tool_name: str) -> str:
+                """Format tool name for status display: 'toolset__function' → 'function'"""
+                if "__" in tool_name:
+                    _, function = tool_name.split("__", 1)
+                    return function
+                return tool_name
+
             def update_processing_status():
-                nonlocal frame_index
                 current_output_tokens = estimated_output_tokens
                 elapsed = time.time() - start_time
-                current_frame = animation_frames[frame_index % len(animation_frames)]
+
+                # Time-based animation for consistent speed
+                animation_fps = 8  # Spinner: 8 frames per second
+                wave_fps = 4  # Wave: 4 steps per second (slower for visual effect)
+
+                animation_index = int(elapsed * animation_fps) % len(animation_frames)
+                wave_offset = int(elapsed * wave_fps)
+
+                current_frame = animation_frames[animation_index]
 
                 if self._current_tool_name and self._tools_executing:
-                    wave_text = create_wave_text(f"Running {self._current_tool_name}...", frame_index)
+                    display_name = format_tool_name_for_status(self._current_tool_name)
+                    wave_text = create_wave_text(f"Running {display_name}...", wave_offset)
                     status_text = f"[dim]{current_frame}[/dim] {wave_text} [dim]{sep} {self._format_token_count(input_tokens)} in, {self._format_token_count(current_output_tokens)} out"
                 else:
-                    wave_text = create_wave_text("Processing...", frame_index)
+                    wave_text = create_wave_text("Processing...", wave_offset)
                     status_text = f"[dim]{current_frame}[/dim] {wave_text} [dim]{sep} {self._format_token_count(input_tokens)} in, {self._format_token_count(current_output_tokens)} out"
 
                 if elapsed > 1:
                     status_text += f"[dim] {sep} {elapsed:.1f}s[/dim]"
 
                 processing_live.update(Text.from_markup(status_text))
-                frame_index += 1
 
             try:
                 update_processing_status()
                 self._tools_executing = False
 
+                # Thread-based animation events (defined early for use in callbacks)
+                animation_stop_event = threading.Event()
+                animation_pause_event = threading.Event()  # For pausing during prints
+
                 def smart_process_chunk(chunk: dict):
                     process_chunk(chunk)
-                    update_processing_status()
+                    # Note: animation now handled by separate thread
 
                 def process_step_message(step: dict):
-                    """Handle step messages (tool calls, tool results)."""
+                    """Handle step messages (tool calls, tool results, assistant content)."""
+                    # Handle assistant content FIRST (before tool calls)
+                    # This prints intermediate thoughts before showing tool usage
+                    if step.get("role") == "assistant" and step.get("content"):
+                        assistant_content = step.get("content")
+                        if assistant_content.strip():
+                            # Pause animation, print content, resume animation
+                            animation_pause_event.set()
+                            processing_live.stop()
+                            self.console.print()
+                            if "```" in assistant_content or "def " in assistant_content or "import " in assistant_content:
+                                self.console.print(assistant_content)
+                            else:
+                                self.console.print(Markdown(assistant_content))
+                            self.console.print()
+                            processing_live.start()
+                            animation_pause_event.clear()
+                            # Clear buffer to avoid duplicate printing at the end
+                            content_buffer.clear()
+
                     # Handle tool calls
                     if tool_calls := step.get("tool_calls"):
                         for call in tool_calls:
@@ -590,11 +625,19 @@ class Repl(ReplUI):
 
                 self._current_live_display = processing_live
 
-                async def periodic_progress_update():
-                    while not chat_task.done():
-                        await asyncio.sleep(0.25)
-                        if not chat_task.done():
-                            update_processing_status()
+                def animation_thread_func():
+                    """Run animation in separate thread to avoid event loop blocking."""
+                    while not animation_stop_event.is_set():
+                        # Check if paused (during content printing)
+                        if not animation_pause_event.is_set():
+                            try:
+                                update_processing_status()
+                            except Exception:
+                                pass  # Ignore errors in animation thread
+                        time.sleep(0.125)  # 8 fps
+
+                animation_thread = threading.Thread(target=animation_thread_func, daemon=True)
+                animation_thread.start()
 
                 # Call ChatRoom.chat()
                 chat_task = asyncio.create_task(
@@ -606,7 +649,6 @@ class Repl(ReplUI):
                     )
                 )
 
-                progress_update_task = asyncio.create_task(periodic_progress_update())
                 self._current_agent_task = chat_task
 
                 try:
@@ -616,12 +658,9 @@ class Repl(ReplUI):
                     raise KeyboardInterrupt
                 finally:
                     self._current_agent_task = None
-                    if progress_update_task and not progress_update_task.done():
-                        progress_update_task.cancel()
-                        try:
-                            await progress_update_task
-                        except asyncio.CancelledError:
-                            pass
+                    # Stop animation thread
+                    animation_stop_event.set()
+                    animation_thread.join(timeout=0.5)
 
                 # Check for errors in result
                 if result and not result.get("success", True):
@@ -651,16 +690,11 @@ class Repl(ReplUI):
                         await self._current_agent_task
                     except asyncio.CancelledError:
                         pass
-                if (
-                    "progress_update_task" in locals()
-                    and progress_update_task
-                    and not progress_update_task.done()
-                ):
-                    progress_update_task.cancel()
-                    try:
-                        await progress_update_task
-                    except asyncio.CancelledError:
-                        pass
+                # Stop animation thread
+                if "animation_stop_event" in locals():
+                    animation_stop_event.set()
+                if "animation_thread" in locals() and animation_thread.is_alive():
+                    animation_thread.join(timeout=0.5)
                 return
             except Exception as e:
                 self.console.print(f"\n[red]Error:[/red] {str(e)}")
@@ -668,6 +702,11 @@ class Repl(ReplUI):
                     "[dim]You can continue the conversation or type 'exit' to quit[/dim]"
                 )
             finally:
+                # Stop animation thread first
+                if "animation_stop_event" in locals():
+                    animation_stop_event.set()
+                if "animation_thread" in locals() and animation_thread.is_alive():
+                    animation_thread.join(timeout=0.5)
                 processing_live.stop()
                 self._tools_executing = False
                 self._current_live_display = None

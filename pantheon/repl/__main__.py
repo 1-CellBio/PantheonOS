@@ -41,7 +41,8 @@ def start(
     memory_dir: str = ".pantheon",
     workspace: str = None,
     chat_id: str = None,
-    log_level: str = "WARNING",
+    log_level: str = None,
+    quiet: bool = True,
 ):
     """Start Pantheon REPL.
 
@@ -50,7 +51,8 @@ def start(
         memory_dir: Directory for chat persistence (default: .pantheon).
         workspace: Workspace directory for Endpoint.
         chat_id: Resume specific chat by ID.
-        log_level: Log level (DEBUG, INFO, WARNING, ERROR).
+        log_level: Log level (DEBUG, INFO, WARNING, ERROR). Overrides --quiet.
+        quiet: Disable all logging (default: True). Use --no-quiet to enable.
     """
     asyncio.run(
         _start_async(
@@ -59,6 +61,7 @@ def start(
             workspace=workspace,
             chat_id=chat_id,
             log_level=log_level,
+            quiet=quiet,
         )
     )
 
@@ -68,22 +71,30 @@ async def _start_async(
     memory_dir: str = ".pantheon",
     workspace: str = None,
     chat_id: str = None,
-    log_level: str = "WARNING",
+    log_level: str = None,
+    quiet: bool = True,
 ):
     """Async implementation of start."""
-    # Setup logging
-    from loguru import logger
+    # Import modules first (this triggers utils/log.py which sets up default logging)
+    from .core import Repl
+    from ..chatroom import ChatRoom
+    from ..utils.log import disable_all, set_level
 
-    logger.remove()
-    logger.add(sys.stderr, level=log_level)
+    # Setup logging AFTER imports (to override utils/log.py defaults)
+    if quiet and log_level is None:
+        # Completely disable all logging
+        disable_all()
+    elif log_level is not None:
+        # Use specified log level
+        set_level(log_level)
+    else:
+        # Default to WARNING level
+        set_level("WARNING")
 
     # Use original CWD as workspace if not specified
     # This ensures file operations work relative to user's launch directory
     if workspace is None:
         workspace = _ORIGINAL_CWD
-
-    from .core import Repl
-    from ..chatroom import ChatRoom
 
     if template:
         # Load team from template file
@@ -132,17 +143,9 @@ async def _start_async(
             chat_id=chat_id,
         )
 
-    await repl.run(disable_logging=(log_level != "DEBUG"))
-
-
-def main():
-    """Entry point."""
-    fire.Fire(
-        {
-            "start": start,
-        },
-        name="pantheon-repl",
-    )
+    # Disable logging unless explicitly set to DEBUG
+    disable_logging = quiet and log_level != "DEBUG"
+    await repl.run(disable_logging=disable_logging)
 
 
 if __name__ == "__main__":

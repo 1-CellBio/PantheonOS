@@ -1,9 +1,6 @@
 import sys
 from contextlib import contextmanager
 from loguru import logger as loguru_logger
-from rich.console import Console
-
-console = Console()
 
 LEVEL_MAP = {
     "DEBUG": 10,
@@ -11,34 +8,6 @@ LEVEL_MAP = {
     "WARNING": 30,
     "ERROR": 40,
 }
-
-
-class RichLogger:
-    def __init__(self):
-        self.level = LEVEL_MAP["INFO"]
-
-    def set_level(self, level: str):
-        self.level = LEVEL_MAP[level]
-
-    def info(self, message: str):
-        if self.level > LEVEL_MAP["INFO"]:
-            return
-        console.print(message)
-
-    def error(self, message: str):
-        if self.level > LEVEL_MAP["ERROR"]:
-            return
-        console.print(message)
-
-    def warning(self, message: str):
-        if self.level > LEVEL_MAP["WARNING"]:
-            return
-        console.print(message)
-
-    def debug(self, message: str):
-        if self.level > LEVEL_MAP["DEBUG"]:
-            return
-        console.print(message)
 
 
 @contextmanager
@@ -69,24 +38,27 @@ def _context_aware_filter(record):
 
 logger = loguru_logger
 
+# Track if logging has been explicitly disabled
+_logging_disabled = False
+
 # Apply context-aware filter to all handlers
 # Remove default handler and add new one with our filter
 loguru_logger.remove()
 loguru_logger.add(sys.stderr, filter=_context_aware_filter, level="DEBUG")
 
 
-def use_rich_mode():
-    global logger
-    logger = RichLogger()
-
-
 def set_level(level: str):
-    if isinstance(logger, RichLogger):
-        logger.set_level(level)
-    else:
-        loguru_logger.remove()
-        loguru_logger.add(sys.stderr, filter=_context_aware_filter, level=level)
+    """Set the logging level."""
+    global _logging_disabled
+    if _logging_disabled:
+        return  # Don't re-enable if disabled
+    loguru_logger.remove()
+    loguru_logger.add(sys.stderr, filter=_context_aware_filter, level=level)
 
 
-def disable(name: str):
-    loguru_logger.disable(name)
+def disable_all():
+    """Completely disable all logging. Cannot be re-enabled."""
+    global _logging_disabled
+    _logging_disabled = True
+    loguru_logger.remove()
+    loguru_logger.disable("pantheon")

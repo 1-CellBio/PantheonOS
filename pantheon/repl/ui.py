@@ -94,6 +94,19 @@ class ReplUI:
         self._last_printed_agent: str | None = None
         self._is_multi_agent: bool = False
 
+    def _format_tool_name(self, tool_name: str) -> tuple[str, str]:
+        """Format tool name for display.
+
+        Converts 'toolset__function' format to readable display.
+        Returns (formatted_name, raw_function_name) tuple.
+        """
+        if "__" in tool_name:
+            toolset, function = tool_name.split("__", 1)
+            # toolset: dim grey, function: cyan
+            formatted = f"[grey50]{toolset} ›[/grey50] [cyan]{function}[/cyan]"
+            return formatted, function
+        return f"[cyan]{tool_name}[/cyan]", tool_name
+
     def _should_display_bash_in_box(self, command: str) -> bool:
         """Determine if a bash command should be displayed in a code box instead of inline"""
         command = command.strip()
@@ -660,36 +673,38 @@ class ReplUI:
                 self.console.print(f"⏺ [bold]Bash[/bold]({command})")
 
         else:
-            # Generic tool call
+            # Generic tool call - format tool name
+            formatted_name, raw_name = self._format_tool_name(tool_name)
+
             if args:
                 # Try to show the most relevant argument
                 key_arg = None
                 if 'file_path' in args:
-                    key_arg = f"file_path='{args['file_path']}'"
+                    key_arg = f"[dim]file_path=[/dim]'{args['file_path']}'"
                 elif 'pattern' in args:
-                    key_arg = f"pattern='{args['pattern']}'"
+                    key_arg = f"[dim]pattern=[/dim]'{args['pattern']}'"
                 elif 'query' in args:
-                    key_arg = f"query='{args['query'][:50]}...'" if len(str(args['query'])) > 50 else f"query='{args['query']}'"
+                    key_arg = f"[dim]query=[/dim]'{args['query'][:50]}...'" if len(str(args['query'])) > 50 else f"[dim]query=[/dim]'{args['query']}'"
                 elif 'code' in args:
                     # Display code for run_python and run_r tools
                     code_lines = str(args['code']).strip().split('\n')
                     if len(code_lines) == 1 and len(code_lines[0]) <= 60:
-                        key_arg = f"code='{code_lines[0]}'"
+                        key_arg = f"[dim]code=[/dim]'{code_lines[0]}'"
                     elif len(code_lines) <= 3 and all(len(line) <= 50 for line in code_lines):
                         code_preview = '; '.join(line.strip() for line in code_lines)
-                        key_arg = f"code='{code_preview[:70]}...'" if len(code_preview) > 70 else f"code='{code_preview}'"
+                        key_arg = f"[dim]code=[/dim]'{code_preview[:70]}...'" if len(code_preview) > 70 else f"[dim]code=[/dim]'{code_preview}'"
                     else:
                         first_line = code_lines[0][:50]
-                        key_arg = f"code='{first_line}... ({len(code_lines)} lines)'"
+                        key_arg = f"[dim]code=[/dim]'{first_line}... ({len(code_lines)} lines)'"
                 elif tool_name == "use_workflow":
-                    key_arg = ", ".join([f"{k}='{v}'" for k, v in args.items()])
+                    key_arg = ", ".join([f"[dim]{k}=[/dim]'{v}'" for k, v in args.items()])
 
                 if key_arg:
-                    self.console.print(f"⏺ [bold]{tool_name}[/bold]({key_arg})")
+                    self.console.print(f"⏺ {formatted_name}({key_arg})")
                 else:
-                    self.console.print(f"⏺ [bold]{tool_name}[/bold](...)")
+                    self.console.print(f"⏺ {formatted_name}([dim]...[/dim])")
             else:
-                self.console.print(f"⏺ [bold]{tool_name}[/bold]()")
+                self.console.print(f"⏺ {formatted_name}()")
 
         self.console.print()  # Add space after tool call
 
