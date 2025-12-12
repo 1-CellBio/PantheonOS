@@ -650,23 +650,42 @@ class TimingTracker:
             self.end(phase)
 
 
-def count_tokens_in_messages(messages: list[dict], model: str) -> dict:
-    """Count tokens with per-role breakdown and context usage metrics."""
+def count_tokens_in_messages(
+    messages: list[dict], model: str, tools: list[dict] | None = None
+) -> dict:
+    """Count tokens with per-role breakdown and context usage metrics.
+
+    Separates system prompt (first system message) and tools definition from other roles.
+    """
     try:
-        from litellm.utils import token_counter, get_model_info
+        from litellm.utils import get_model_info, token_counter
 
         total_tokens = 0
         tokens_by_role = {}
         message_counts = {}
+        system_prompt_tokens = 0
+        tools_definition_tokens = 0
 
-        # Count tokens per message
-        for msg in messages:
+        # 1. Count tokens for messages
+        for i, msg in enumerate(messages):
             role = msg.get("role", "unknown")
             msg_tokens = token_counter(model=model, messages=[msg])
 
+            # Check if this is the system prompt (first system message)
+            if role == "system" and i == 0:
+                system_prompt_tokens = msg_tokens
+                # Don't add to tokens_by_role["system"], kept separate
+            else:
+                tokens_by_role[role] = tokens_by_role.get(role, 0) + msg_tokens
+
             total_tokens += msg_tokens
-            tokens_by_role[role] = tokens_by_role.get(role, 0) + msg_tokens
             message_counts[role] = message_counts.get(role, 0) + 1
+
+        # 2. Count tokens for tools definition
+        if tools:
+            # litellm token_counter handles tools definition specifically
+            tools_definition_tokens = token_counter(model=model, messages=[], tools=tools)
+            total_tokens += tools_definition_tokens
 
         model_info = get_model_info(model)
 
@@ -681,9 +700,12 @@ def count_tokens_in_messages(messages: list[dict], model: str) -> dict:
         # calculate cost for the current model
         cost_per_token = model_info.get("input_cost_per_token", 0) or 0
         current_cost = round(total_tokens * cost_per_token, 4)
+
         return {
             "total": int(total_tokens),
             "by_role": tokens_by_role,
+            "system_prompt": system_prompt_tokens,
+            "tools_definition": tools_definition_tokens,
             "message_counts": message_counts,
             "max_tokens": max_tokens,
             "remaining": remaining,
@@ -699,6 +721,8 @@ def count_tokens_in_messages(messages: list[dict], model: str) -> dict:
         return {
             "total": 0,
             "by_role": {},
+            "system_prompt": 0,
+            "tools_definition": 0,
             "message_counts": {},
             "max_tokens": 0,
             "remaining": 0,
@@ -716,6 +740,8 @@ def format_token_visualization(
     """Format token distribution bar with per-role breakdown and warning if usage >= 90%."""
     total_tokens = token_info.get("total", 0)
     by_role = token_info.get("by_role", {})
+    system_prompt_tokens = token_info.get("system_prompt", 0)
+    tools_definition_tokens = token_info.get("tools_definition", 0)
     message_counts = token_info.get("message_counts", {})
     max_tokens = token_info.get("max_tokens", 0)
     remaining_tokens = token_info.get("remaining", 0)
@@ -728,7 +754,9 @@ def format_token_visualization(
 
     # Color codes for different roles (ANSI 256-color)
     role_colors = {
-        "system": "\033[38;5;103m",  # Dusty blue
+        "system_prompt": "\033[38;5;103m",  # Dusty blue (for system prompt)
+        "tools_definition": "\033[38;5;37m",  # Cyan (for tools definition)
+        "system": "\033[38;5;103m",  # Dusty blue (kept for other system msgs)
         "user": "\033[38;5;108m",  # Dusty green
         "assistant": "\033[38;5;137m",  # Dusty brown
         "tool": "\033[38;5;94m",  # Dark magenta/wine
@@ -740,21 +768,28 @@ def format_token_visualization(
     used_width = max(1, round(used_ratio * bar_width))
     remaining_width = bar_width - used_width
 
-    # Build segments for used tokens (colored by role)
-    role_order = ["system", "user", "assistant", "tool"]
-    used_bar_segments = []
-    for role in role_order:
-        if role not in by_role or by_role[role] == 0:
-            continue
+    # Define segment order: System Prompt -> Tools Def -> System(rest) -> User -> Assistant -> Tool
+    segments_data = [
+        ("system_prompt", system_prompt_tokens),
+        ("tools_definition", tools_definition_tokens),
+        ("system", by_role.get("system", 0)),
+        ("user", by_role.get("user", 0)),
+        ("assistant", by_role.get("assistant", 0)),
+        ("tool", by_role.get("tool", 0)),
+    ]
 
-        tokens = by_role[role]
+    used_bar_segments = []
+    # Accumulate used segments
+    for name, count in segments_data:
+        if count == 0:
+            continue
         segment_width = (
-            max(1, round((tokens / total_tokens) * used_width))
+            max(1, round((count / total_tokens) * used_width))
             if total_tokens > 0
             else 0
         )
 
-        color = role_colors.get(role, "")
+        color = role_colors.get(name, "")
         segment = color + "█" * segment_width + reset_color
         used_bar_segments.append(segment)
 
@@ -773,21 +808,26 @@ def format_token_visualization(
 
     # Build summary line with detailed information
     summary_parts = []
-    for role in role_order:
-        if role not in by_role or by_role[role] == 0:
-            continue
-
-        tokens = by_role[role]
-        percentage = (tokens / total_tokens) * 100
-        msg_count = message_counts.get(role, 0)
-        color = role_colors.get(role, "")
-
-        # Format: "Role: X tokens (Y%, Z msgs)"
-        role_summary = (
-            f"{color}{role}{reset_color}: {tokens} tokens ({percentage:.0f}%, "
-            f"{msg_count} msg{'s' if msg_count != 1 else ''})"
+    
+    # helper for summary item
+    def add_summary_item(name, label, count, msg_count=None):
+        if count == 0:
+            return
+        percentage = (count / total_tokens) * 100
+        color = role_colors.get(name, "")
+        count_part = f"msg{'s' if msg_count != 1 else ''}"
+        msg_info = f", {msg_count} {count_part}" if msg_count is not None else ""
+        
+        summary_parts.append(
+            f"{color}{label}{reset_color}: {count} ({percentage:.0f}%{msg_info})"
         )
-        summary_parts.append(role_summary)
+
+    add_summary_item("system_prompt", "SysPrompt", system_prompt_tokens)
+    add_summary_item("tools_definition", "ToolsDef", tools_definition_tokens)
+    add_summary_item("system", "System", by_role.get("system", 0), message_counts.get("system", 0))
+    add_summary_item("user", "User", by_role.get("user", 0), message_counts.get("user", 0))
+    add_summary_item("assistant", "Assistant", by_role.get("assistant", 0), message_counts.get("assistant", 0))
+    add_summary_item("tool", "Tool", by_role.get("tool", 0), message_counts.get("tool", 0))
 
     summary_line = "📊 " + " | ".join(summary_parts)
     # Add current cost to summary line

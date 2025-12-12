@@ -14,7 +14,7 @@ from .renderers import (
     ToolCallRenderer,
     ToolResultRenderer,
 )
-from .utils import get_separator, format_tool_name, format_relative_time, CLAUDE_BOX, OutputAdapter, get_token_stats, render_token_panel
+from .utils import get_separator, format_tool_name, format_relative_time, CLAUDE_BOX, OutputAdapter, get_token_stats, get_detailed_token_stats, render_token_panel
 # Simple readline support for history
 try:
     import readline
@@ -497,7 +497,7 @@ class ReplUI:
             self.console.print(f"[dim]{len(self.command_history) - len(recent) + i:2d}.[/dim] {cmd}")
         self.console.print()
 
-    def _print_token_analysis(self):
+    async def _print_token_analysis(self):
         """Print detailed token usage analysis with Claude Code-style UI."""
         # Gather data from chatroom/team
         chatroom = getattr(self, '_chatroom', None)
@@ -512,7 +512,7 @@ class ReplUI:
         }
         
         # Get token stats using utility
-        token_info = get_token_stats(chatroom, chat_id, team, fallback_stats)
+        token_info = await get_detailed_token_stats(chatroom, chat_id, team, fallback_stats)
         
         # Render the panel
         render_token_panel(self.output.console, token_info, self.session_start)

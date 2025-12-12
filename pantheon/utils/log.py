@@ -44,7 +44,7 @@ _logging_disabled = False
 # Apply context-aware filter to all handlers
 # Remove default handler and add new one with our filter
 loguru_logger.remove()
-loguru_logger.add(sys.stderr, filter=_context_aware_filter, level="DEBUG")
+loguru_logger.add(sys.stderr, filter=_context_aware_filter, level="WARNING")
 
 
 def set_level(level: str):

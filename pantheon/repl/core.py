@@ -574,7 +574,7 @@ class Repl(ReplUI):
 
         # Tokens command
         elif cmd_lower in ["tokens", "/tokens"]:
-            self._print_token_analysis()
+            await self._print_token_analysis()
             return
 
         # Save command

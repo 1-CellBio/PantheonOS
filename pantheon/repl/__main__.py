@@ -11,6 +11,7 @@ Usage:
 import asyncio
 import os
 import sys
+import logging
 from pathlib import Path
 
 import fire
@@ -96,6 +97,8 @@ async def _start_async(
     if quiet and log_level is None:
         # Completely disable all logging
         disable_all()
+        # Also silence traitlets which might be used by jupyter_client/ipykernel components
+        logging.getLogger("traitlets").setLevel(logging.ERROR)
     elif log_level is not None:
         # Use specified log level
         set_level(log_level)

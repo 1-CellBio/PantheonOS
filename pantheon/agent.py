@@ -999,7 +999,7 @@ class Agent:
         # Step 9: Log timing breakdown with visual token metrics
         timings = tracker.get_all()
         # Collect token statistics
-        token_info = count_tokens_in_messages(messages, model)
+        token_info = count_tokens_in_messages(messages, model, tools=tools)
         # Format visual token breakdown and warning (if needed)
         bar_line, summary_line, warning_line = format_token_visualization(token_info)
         # Log combined timing and token metrics

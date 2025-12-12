@@ -178,6 +178,65 @@ def format_token_count(count: int) -> str:
     return f"{count:,}" if count >= 1000 else str(count)
 
 
+
+async def get_detailed_token_stats(chatroom, chat_id, team, fallback: dict) -> dict:
+    """Gather detailed token statistics (async) including tools and system prompt."""
+    from ..utils.llm import count_tokens_in_messages, process_messages_for_model
+    from ..utils.log import logger
+
+    messages, model, tools, system_prompt = [], "unknown", None, None
+
+    # Get agent/model/tools/instructions
+    if team and team.agents:
+        # Default to first agent unless we can determine active one
+        agent = list(team.agents.values())[0]
+        
+        model = (agent.models[0] if isinstance(getattr(agent, 'models', None), list) 
+                 else getattr(agent, 'models', None) or getattr(agent, 'model', 'unknown'))
+        
+        system_prompt = getattr(agent, 'instructions', None)
+        
+        try:
+             tools = await agent.get_tools_for_llm()
+        except Exception as e:
+             logger.warning(f"Failed to get tools: {e}")
+
+    # Try to get messages from chatroom via memory_manager
+    if chatroom and chat_id:
+        try:
+            if hasattr(chatroom, 'memory_manager'):
+                memory = chatroom.memory_manager.get_memory(chat_id)
+                if memory:
+                    raw_messages = memory.get_messages(None) or []
+                    messages = process_messages_for_model(raw_messages, model)
+        except Exception as e:
+            logger.warning(f"Failed to get messages for token stats: {e}")
+
+    # Prepend system prompt if not present
+    if system_prompt:
+        if not messages or messages[0].get("role") != "system":
+             messages.insert(0, {"role": "system", "content": system_prompt})
+
+    if messages:
+        try:
+            info = count_tokens_in_messages(messages, model, tools=tools)
+            info["model"] = model
+            return info
+        except Exception as e:
+            logger.warning(f"Failed to count tokens: {e}")
+
+    # Fallback if calculation failed
+    total = fallback.get("total_input_tokens", 0) + fallback.get("total_output_tokens", 0)
+    return {
+        "total": total, "max_tokens": 200000, "remaining": 200000 - total,
+        "usage_percent": round(total / 200000 * 100, 1) if total else 0,
+        "by_role": {"user": fallback.get("total_input_tokens", 0), "assistant": fallback.get("total_output_tokens", 0)},
+        "message_counts": {"user": fallback.get("message_count", 0), "assistant": fallback.get("message_count", 0)},
+        "warning_90": False, "critical_95": False, "current_cost": 0, "model": model,
+        "system_prompt": 0, "tools_definition": 0, "error": None
+    }
+
+
 def get_token_stats(chatroom, chat_id, team, fallback: dict) -> dict:
     """Gather token statistics from chatroom or fallback to local stats."""
     from ..utils.llm import count_tokens_in_messages, process_messages_for_model
@@ -225,12 +284,22 @@ def render_token_panel(console: Console, info: dict, session_start: datetime):
     """Render Claude Code-style token analysis panel."""
     total = info.get("total", 0)
     by_role = info.get("by_role", {})
+    system_prompt_tokens = info.get("system_prompt", 0)
+    tools_definition_tokens = info.get("tools_definition", 0)
+    
     msg_counts = info.get("message_counts", {})
     max_tok = info.get("max_tokens", 200000)
     usage_pct = info.get("usage_percent", 0)
     
     B = "[bold blue]"  # Box border color
-    role_colors = {"system": "blue", "user": "green", "assistant": "yellow", "tool": "magenta"}
+    role_colors = {
+        "system_prompt": "blue", 
+        "tools_definition": "cyan",
+        "system": "blue", 
+        "user": "green", 
+        "assistant": "yellow", 
+        "tool": "magenta"
+    }
     
     console.print()
     console.print(f"{B}╭─ Context ─────────────────────────────────────────────────────────╮[/]")
@@ -245,21 +314,30 @@ def render_token_panel(console: Console, info: dict, session_start: datetime):
     used_ratio = total / max_tok if max_tok > 0 else 0
     used_width = max(1, round(used_ratio * bar_w)) if total > 0 else 0  # At least 1 block if any usage
     
-    # Build colored segments proportional to each role
+    # Segments in order
+    segments_data = [
+        ("system_prompt", system_prompt_tokens),
+        ("tools_definition", tools_definition_tokens),
+        ("system", by_role.get("system", 0)),
+        ("user", by_role.get("user", 0)),
+        ("assistant", by_role.get("assistant", 0)),
+        ("tool", by_role.get("tool", 0)),
+    ]
+    
+    # Build colored segments
     bar_segments = []
-    for role in ["system", "user", "assistant", "tool"]:
-        role_tokens = by_role.get(role, 0)
-        if role_tokens > 0 and total > 0:
-            seg_width = max(1, round((role_tokens / total) * used_width))
-            color = role_colors.get(role, "white")
+    for name, count in segments_data:
+        if count > 0 and total > 0:
+            seg_width = max(1, round((count / total) * used_width))
+            color = role_colors.get(name, "white")
             bar_segments.append(f"[{color}]{'█' * seg_width}[/]")
     
     # Combine segments and add remaining empty space
     bar = "".join(bar_segments)
     # Calculate actual filled width from segments (may exceed due to rounding)
-    actual_filled = sum(max(1, round((by_role.get(r, 0) / total) * used_width)) 
-                        for r in ["system", "user", "assistant", "tool"] 
-                        if by_role.get(r, 0) > 0) if total > 0 else 0
+    actual_filled = sum(max(1, round((count / total) * used_width)) 
+                        for name, count in segments_data 
+                        if count > 0 and total > 0)
     remaining_width = max(0, bar_w - actual_filled)
     bar += f"[dim]{'░' * remaining_width}[/]"
     
@@ -269,17 +347,27 @@ def render_token_panel(console: Console, info: dict, session_start: datetime):
     
     # Token distribution legend
     console.print(f"{B}├───────────────────────────────────────────────────────────────────┤[/]")
-    for role in ["system", "user", "assistant", "tool"]:
-        if (tok := by_role.get(role, 0)) > 0:
-            pct = tok / total * 100
-            color = role_colors[role]
-            console.print(f"{B}│[/] [{color}]●[/] {role.capitalize():<10} {format_token_count(tok):>8} ({pct:4.1f}%) [dim]{msg_counts.get(role, 0)} msgs[/]")
+    
+    def print_legend_item(name, label, count, msg_count=None):
+        if count > 0:
+            pct = count / total * 100
+            color = role_colors.get(name, "white")
+            msg_info = f"[dim]{msg_count} msgs[/]" if msg_count is not None else ""
+            console.print(f"{B}│[/] [{color}]●[/] {label:<16} {format_token_count(count):>8} ({pct:4.1f}%) {msg_info}")
+
+    print_legend_item("system_prompt", "System Prompt", system_prompt_tokens)
+    print_legend_item("tools_definition", "Tools Definition", tools_definition_tokens)
+    print_legend_item("system", "System Msgs", by_role.get("system", 0), msg_counts.get("system", 0))
+    print_legend_item("user", "User", by_role.get("user", 0), msg_counts.get("user", 0))
+    print_legend_item("assistant", "Assistant", by_role.get("assistant", 0), msg_counts.get("assistant", 0))
+    print_legend_item("tool", "Tool", by_role.get("tool", 0), msg_counts.get("tool", 0))
     
     # Session stats
     console.print(f"{B}├───────────────────────────────────────────────────────────────────┤[/]")
     dur = int((datetime.now() - session_start).total_seconds() / 60)
     model = info.get("model", "unknown")[:30]
-    console.print(f"{B}│[/] [dim]Messages:[/] {sum(msg_counts.values())} [dim]• Duration:[/] {dur}m [dim]• Model:[/] {model}")
+    total_msgs = sum(msg_counts.values())
+    console.print(f"{B}│[/] [dim]Messages:[/] {total_msgs} [dim]• Duration:[/] {dur}m [dim]• Model:[/] {model}")
     if (cost := info.get("current_cost", 0)) > 0:
         console.print(f"{B}│[/] [dim]Estimated Cost:[/] ${cost:.4f}")
     
