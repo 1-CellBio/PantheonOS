@@ -484,8 +484,8 @@ def remove_ui_fields(messages: list[dict]) -> list[dict]:
         "message_id",
         "chunk_index",
         "transfer",
-        # Metadata fields
-        "_metadata",
+        # NOTE: _metadata is intentionally preserved here for cost tracking
+        # It must be removed explicitly by remove_metadata before sending to LLM
     }
 
     for msg in messages:
@@ -493,6 +493,17 @@ def remove_ui_fields(messages: list[dict]) -> list[dict]:
             if field in msg:
                 del msg[field]
 
+    return messages
+
+
+def remove_metadata(messages: list[dict]) -> list[dict]:
+    """
+    Remove _metadata field from messages.
+    This should be called just before sending messages to the LLM.
+    """
+    for msg in messages:
+        if "_metadata" in msg:
+            del msg["_metadata"]
     return messages
 
 
@@ -651,7 +662,10 @@ class TimingTracker:
 
 
 def count_tokens_in_messages(
-    messages: list[dict], model: str, tools: list[dict] | None = None
+    messages: list[dict], 
+    model: str, 
+    tools: list[dict] | None = None,
+    assistant_message: dict | None = None
 ) -> dict:
     """Count tokens with per-role breakdown and context usage metrics.
 
@@ -666,8 +680,13 @@ def count_tokens_in_messages(
         system_prompt_tokens = 0
         tools_definition_tokens = 0
 
+        # Create counting list
+        msgs_to_count = list(messages)
+        if assistant_message:
+            msgs_to_count.append(assistant_message)
+
         # 1. Count tokens for messages
-        for i, msg in enumerate(messages):
+        for i, msg in enumerate(msgs_to_count):
             role = msg.get("role", "unknown")
             msg_tokens = token_counter(model=model, messages=[msg])
 
@@ -697,15 +716,61 @@ def count_tokens_in_messages(
         usage_percent = (
             round((total_tokens / max_tokens * 100), 1) if max_tokens > 0 else 0
         )
-        # calculate cost for the current model
+        
+        # calculate estimated cost for the current model
         cost_per_token = model_info.get("input_cost_per_token", 0) or 0
         current_cost = round(total_tokens * cost_per_token, 4)
+        total_session_cost = None
+
+        # Determine target message for cost tracking
+        # Use explicit assistant_message if provided (Write Mode), 
+        # otherwise find last assistant message in history (Read Mode)
+        target_message = assistant_message or next(
+            (m for m in reversed(msgs_to_count) if m.get("role") == "assistant"), 
+            None
+        )
+
+        # Process cost tracking if we have a target message
+        if target_message:
+            meta = target_message.get("_metadata", {})
+            
+            # Scenario A: Write Mode (Provider returned debug cost in metadata)
+            if "_debug_cost" in meta:
+                current_cost = meta.pop("_debug_cost", 0.0)
+                meta.pop("_debug_usage", None)  # Consume debug usage
+
+                # Calculate total cost from history
+                # Find the most recent previous assistant message with cost data
+                prev_msg = next(
+                    (m for m in reversed(messages) 
+                     if m is not target_message 
+                     and m.get("role") == "assistant" 
+                     and "total_cost" in m.get("_metadata", {})), 
+                    None
+                )
+                
+                previous_total = prev_msg["_metadata"]["total_cost"] if prev_msg else 0.0
+                total_session_cost = previous_total + current_cost
+                
+                # Persist updated cost info to metadata
+                meta["current_cost"] = current_cost
+                meta["total_cost"] = total_session_cost
+                
+                # Ensure metadata dict is attached to message
+                if "_metadata" not in target_message:
+                    target_message["_metadata"] = meta
+            
+            # Scenario B: Read Mode (Historical data exists)
+            elif "current_cost" in meta:
+                current_cost = meta["current_cost"]
+                total_session_cost = meta.get("total_cost")
 
         return {
             "total": int(total_tokens),
             "by_role": tokens_by_role,
             "system_prompt": system_prompt_tokens,
             "tools_definition": tools_definition_tokens,
+            "tools_count": len(tools) if tools else 0,
             "message_counts": message_counts,
             "max_tokens": max_tokens,
             "remaining": remaining,
@@ -713,6 +778,7 @@ def count_tokens_in_messages(
             "warning_90": usage_percent >= 90,
             "critical_95": usage_percent >= 95,
             "current_cost": current_cost,
+            "total_cost": total_session_cost,
             "error": None,
         }
 
@@ -833,6 +899,10 @@ def format_token_visualization(
     # Add current cost to summary line
     current_cost = token_info.get("current_cost", 0)
     summary_line += f" | Cost: ${current_cost:.4f}"
+    
+    # Add total cost to summary line if available
+    if (total_cost := token_info.get("total_cost")) is not None:
+         summary_line += f" | Total: ${total_cost:.4f}"
 
     # Generate warning line if usage >= 90%
     warning_line = ""

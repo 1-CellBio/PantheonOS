@@ -126,6 +126,32 @@ def _clean_message_fields(message: dict) -> None:
         message["tool_calls"] = None
 
 
+def _extract_cost_and_usage(complete_resp: Any) -> tuple[float, dict]:
+    """Calculate cost and extract usage from response."""
+    try:
+        from litellm import completion_cost
+        cost = completion_cost(completion_response=complete_resp)
+        usage = getattr(complete_resp, "usage", None)
+        
+        usage_dict = {}
+        if usage:
+            if hasattr(usage, "model_dump"):
+                usage_dict = usage.model_dump()
+            elif hasattr(usage, "to_dict"):
+                usage_dict = usage.to_dict()
+            else:
+                try:
+                    usage_dict = dict(usage)
+                except Exception:
+                    pass
+                    
+        return cost or 0.0, usage_dict
+    except Exception as e:
+        logger.warning(f"Failed to calculate completion cost: {e}")
+        return 0.0, {}
+
+
+
 def extract_message_from_response(
     complete_resp: Any,
     error_prefix: str = "API"
@@ -157,6 +183,16 @@ def extract_message_from_response(
     # Extract message
     try:
         message = complete_resp.choices[0].message.model_dump()
+        
+        # Calculate cost and usage
+        cost, usage = _extract_cost_and_usage(complete_resp)
+        
+        # Attach debug info (hidden fields)
+        if "_metadata" not in message:
+            message["_metadata"] = {}
+        message["_metadata"]["_debug_cost"] = cost
+        message["_metadata"]["_debug_usage"] = usage
+
     except (AttributeError, IndexError, TypeError) as e:
         return _create_error_message(
             f"{error_prefix}: Failed to extract message - {type(e).__name__}"
@@ -241,12 +277,18 @@ async def call_llm_provider(
         acompletion_openai,
         acompletion_zhipu,
         acompletion_litellm,
+        remove_metadata,
     )
+
+    # Remove metadata before sending to LLM
+    
+    clean_messages = [m.copy() for m in messages]
+    clean_messages = remove_metadata(clean_messages)
 
     # Call appropriate provider
     if config.provider_type == ProviderType.ZHIPU:
         complete_resp = await acompletion_zhipu(
-            messages=messages,
+            messages=clean_messages,
             model=config.model_name,
             tools=tools,
             response_format=response_format,
@@ -263,7 +305,7 @@ async def call_llm_provider(
         if "/" not in model_name:
             model_name = f"{config.provider_type.value}/{model_name}"
         complete_resp = await acompletion_litellm(
-            messages=messages,
+            messages=clean_messages,
             model=model_name,
             tools=tools,
             response_format=response_format,
@@ -275,7 +317,7 @@ async def call_llm_provider(
 
     else:  # LITELLM
         complete_resp = await acompletion_litellm(
-            messages=messages,
+            messages=clean_messages,
             model=config.model_name,
             tools=tools,
             response_format=response_format,

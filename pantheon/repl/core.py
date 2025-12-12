@@ -422,7 +422,8 @@ class Repl(ReplUI):
             }
             token_info = get_token_stats(self._chatroom, self._chat_id, self._team, fallback)
             usage_pct = token_info.get("usage_percent", 0)
-            self.prompt_app.update_token_usage(usage_pct)
+            total_cost = token_info.get("total_cost") or 0.0
+            self.prompt_app.update_token_usage(usage_pct, total_cost)
         except Exception:
             pass  # Silently ignore errors
 
@@ -1187,7 +1188,7 @@ class Repl(ReplUI):
 
     async def _save_chat(self, filename: str):
         """Save current chat to file."""
-        memory = await self._chatroom.memory_manager.get_memory(self._chat_id)
+        memory = self._chatroom.memory_manager.get_memory(self._chat_id)
         memory.save(filename)
 
     def _handle_load_command(self, command: str):

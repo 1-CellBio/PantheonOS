@@ -237,6 +237,7 @@ class PantheonInputApp:
         self._refresh_task = None
         self._wave_offset = 0
         self._token_usage_pct = 0.0  # Token usage percentage for status bar
+        self._total_cost = 0.0  # Total session cost
 
         # Style
         self.style = Style.from_dict({
@@ -429,6 +430,8 @@ class PantheonInputApp:
     def get_status_formatted_text(self) -> HTML:
         """Generate bottom status bar content (model/agent info) in muted gray."""
         usage_display = f"ctx: {self._token_usage_pct:.0f}%" if self._token_usage_pct > 0 else "ctx: 0%"
+        if self._total_cost and self._total_cost > 0:
+            usage_display += f" │ cost: ${self._total_cost:.4f}"
         status = "Processing..." if self._is_processing else "Ready"
         return HTML(
             f'<style fg="#666666">⏺ {self._model_name} │ agent: {self._current_agent} │ {usage_display} │ {status}</style>'
@@ -489,7 +492,8 @@ class PantheonInputApp:
         self._current_agent = agent_name
         self.app.invalidate()
     
-    def update_token_usage(self, usage_pct: float):
+    def update_token_usage(self, usage_pct: float, total_cost: float = 0.0):
         """Update token usage percentage for status bar display."""
         self._token_usage_pct = usage_pct
+        self._total_cost = total_cost
         self.app.invalidate()

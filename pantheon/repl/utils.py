@@ -184,7 +184,11 @@ async def get_detailed_token_stats(chatroom, chat_id, team, fallback: dict) -> d
     from ..utils.llm import count_tokens_in_messages, process_messages_for_model
     from ..utils.log import logger
 
-    messages, model, tools, system_prompt = [], "unknown", None, None
+    tools = []
+    messages = []
+    raw_messages = []
+    model = "unknown"
+    system_prompt = None
 
     # Get agent/model/tools/instructions
     if team and team.agents:
@@ -219,7 +223,11 @@ async def get_detailed_token_stats(chatroom, chat_id, team, fallback: dict) -> d
 
     if messages:
         try:
-            info = count_tokens_in_messages(messages, model, tools=tools)
+            info = count_tokens_in_messages(
+                messages,
+                model,
+                tools=tools
+            )
             info["model"] = model
             return info
         except Exception as e:
@@ -242,7 +250,7 @@ def get_token_stats(chatroom, chat_id, team, fallback: dict) -> dict:
     from ..utils.llm import count_tokens_in_messages, process_messages_for_model
     from ..utils.log import logger
     
-    messages, model = [], "unknown"
+    messages, raw_messages, model = [], [], "unknown"
     
     # Get model from team first (needed for processing)
     if team and team.agents:
@@ -263,7 +271,10 @@ def get_token_stats(chatroom, chat_id, team, fallback: dict) -> dict:
     
     if messages:
         try:
-            info = count_tokens_in_messages(messages, model)
+            info = count_tokens_in_messages(
+                messages, 
+                model
+            )
             info["model"] = model
             return info
         except Exception as e:
@@ -286,6 +297,7 @@ def render_token_panel(console: Console, info: dict, session_start: datetime):
     by_role = info.get("by_role", {})
     system_prompt_tokens = info.get("system_prompt", 0)
     tools_definition_tokens = info.get("tools_definition", 0)
+    tools_count = info.get("tools_count", 0)
     
     msg_counts = info.get("message_counts", {})
     max_tok = info.get("max_tokens", 200000)
@@ -348,15 +360,15 @@ def render_token_panel(console: Console, info: dict, session_start: datetime):
     # Token distribution legend
     console.print(f"{B}├───────────────────────────────────────────────────────────────────┤[/]")
     
-    def print_legend_item(name, label, count, msg_count=None):
+    def print_legend_item(name, label, count, msg_count=None, unit="msgs"):
         if count > 0:
             pct = count / total * 100
             color = role_colors.get(name, "white")
-            msg_info = f"[dim]{msg_count} msgs[/]" if msg_count is not None else ""
-            console.print(f"{B}│[/] [{color}]●[/] {label:<16} {format_token_count(count):>8} ({pct:4.1f}%) {msg_info}")
+            msg_info = f"[dim]{msg_count} {unit}[/]" if msg_count is not None else ""
+            console.print(f"{B}│[/] [{color}]●[/] {label:<24} {format_token_count(count):>8} ({pct:4.1f}%) {msg_info}")
 
     print_legend_item("system_prompt", "System Prompt", system_prompt_tokens)
-    print_legend_item("tools_definition", "Tools Definition", tools_definition_tokens)
+    print_legend_item("tools_definition", "Tools Definition", tools_definition_tokens, tools_count, "tools")
     print_legend_item("system", "System Msgs", by_role.get("system", 0), msg_counts.get("system", 0))
     print_legend_item("user", "User", by_role.get("user", 0), msg_counts.get("user", 0))
     print_legend_item("assistant", "Assistant", by_role.get("assistant", 0), msg_counts.get("assistant", 0))
@@ -368,8 +380,12 @@ def render_token_panel(console: Console, info: dict, session_start: datetime):
     model = info.get("model", "unknown")[:30]
     total_msgs = sum(msg_counts.values())
     console.print(f"{B}│[/] [dim]Messages:[/] {total_msgs} [dim]• Duration:[/] {dur}m [dim]• Model:[/] {model}")
+    
+    if (total_c := info.get("total_cost")) is not None:
+         console.print(f"{B}│[/] [dim]Total Cost:[/] ${total_c:.4f}")
+         
     if (cost := info.get("current_cost", 0)) > 0:
-        console.print(f"{B}│[/] [dim]Estimated Cost:[/] ${cost:.4f}")
+        console.print(f"{B}│[/] [dim]Est. Next Cost:[/] ${cost:.4f}")
     
     # Warning
     if info.get("warning_90") or info.get("critical_95"):

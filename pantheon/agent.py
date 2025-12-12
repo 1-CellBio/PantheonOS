@@ -996,10 +996,12 @@ class Agent:
         message["end_timestamp"] = end_timestamp
         message["generation_duration"] = total_time
 
-        # Step 9: Log timing breakdown with visual token metrics
+        # Step 9: Log timing and tokens
         timings = tracker.get_all()
-        # Collect token statistics
-        token_info = count_tokens_in_messages(messages, model, tools=tools)
+        # Collect token statistics with actual cost from assistant message
+        token_info = count_tokens_in_messages(
+            messages, model, tools=tools, assistant_message=message
+        )
         # Format visual token breakdown and warning (if needed)
         bar_line, summary_line, warning_line = format_token_visualization(token_info)
         # Log combined timing and token metrics
