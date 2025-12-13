@@ -13,8 +13,9 @@ import re
 import sys
 import time
 import asyncio
+
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Callable, Awaitable
 
 from prompt_toolkit import Application
 from prompt_toolkit.layout import Layout, HSplit, FloatContainer, Float, DynamicContainer, ConditionalContainer
@@ -343,6 +344,10 @@ class PantheonInputApp:
         self._wave_offset = 0
         self._token_usage_pct = 0.0  # Token usage percentage for status bar
         self._total_cost = 0.0  # Total session cost
+        
+        # Task panel state
+        self._task_panel_visible = False
+        self._task_panel_content = ""  # Pre-rendered ANSI content
 
         # Style
         self.style = Style.from_dict({
@@ -394,22 +399,38 @@ class PantheonInputApp:
         # So we attach our KB to the Layout or Application
         
         # Main Layout Structure
-        # 1. Processing status line (above input, only visible when processing)
-        # 2. Input Area (TextArea) with top/bottom borders
-        # 3. Status Bar (model/agent info) below Input
-        # 4. All wrapped in FloatContainer to support CompletionsMenu (dropdown)
+        # 1. Task Panel (when active task)
+        # 2. Processing status line (above input, only visible when processing)
+        # 3. Input Area (TextArea) with top/bottom borders
+        # 4. Status Bar (model/agent info) below Input
+        # All wrapped in FloatContainer to support CompletionsMenu (dropdown)
 
         self.processing_control = FormattedTextControl(text=self.get_processing_formatted_text)
         self.status_control = FormattedTextControl(text=self.get_status_formatted_text)
+        self.task_panel_control = FormattedTextControl(text=self._get_task_panel_text)
 
         self.root_container = HSplit([
+            # Dynamic Task Panel (only visible when there's an active task)
+            ConditionalContainer(
+                Window(
+                    content=self.task_panel_control,
+                    height=Dimension(
+                        min=6, 
+                        max=20,  # Increased max height
+                        preferred=20,  # Prefer max height if content available
+                    ),
+                    style="class:task-panel"
+                ),
+                filter=Condition(lambda: self._task_panel_visible)
+            ),
+
             # Empty line for spacing (only when processing)
             ConditionalContainer(
                 Window(height=1),
                 filter=Condition(lambda: self._is_processing)
             ),
 
-            # Processing status line (above input)
+            # Processing status line (directly above input)
             ConditionalContainer(
                 Window(
                     content=self.processing_control,
@@ -570,6 +591,7 @@ class PantheonInputApp:
         if self._total_cost and self._total_cost > 0:
             usage_display += f" │ cost: ${self._total_cost:.4f}"
         status = "Processing..." if self._is_processing else "Ready"
+        
         return HTML(
             f'<style fg="#666666">⏺ {self._model_name} │ agent: {self._current_agent} │ {usage_display} │ {status}</style>'
         )
@@ -634,3 +656,35 @@ class PantheonInputApp:
         self._token_usage_pct = usage_pct
         self._total_cost = total_cost
         self.app.invalidate()
+    
+    # === Task Panel Methods ===
+    
+    def _get_task_panel_text(self):
+        """Generate task panel content for prompt_toolkit."""
+        if not self._task_panel_content:
+            return []
+        # Return ANSI formatted text
+        from prompt_toolkit.formatted_text import ANSI
+        return ANSI(self._task_panel_content)
+    
+
+    def update_task_panel(self, ansi_content: str):
+        """Update task panel content (called by TaskUIRenderer).
+        
+        Args:
+            ansi_content: Pre-rendered ANSI string content
+        """
+        self._task_panel_content = ansi_content
+        self.app.invalidate()
+    
+    def show_task_panel(self):
+        """Show task panel (when there's an active task)."""
+        self._task_panel_visible = True
+        self.app.invalidate()
+    
+    def hide_task_panel(self):
+        """Hide task panel (no active task)."""
+        self._task_panel_visible = False
+        self._task_panel_content = ""
+        self.app.invalidate()
+    

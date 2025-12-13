@@ -54,6 +54,10 @@ toolsets = [
     "ipykernel>=6.25.0",
     "nbformat>=5.10.0",
     "jedi>=0.19.0",
+    # Code outline tools (tree-sitter)
+    "tree-sitter>=0.24.0",
+    "tree-sitter-python>=0.24.0",
+    "tree-sitter-javascript>=0.24.0",
 ]
 server = [
     "nats-server-bin>=2.10.0",

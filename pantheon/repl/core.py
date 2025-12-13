@@ -32,6 +32,7 @@ from ..chatroom import ChatRoom
 from ..constant import CLI_HISTORY_FILE
 from .ui import ReplUI
 from .renderers import DisplayMode
+from .task_renderers import TaskUIRenderer, NotifyUIRenderer
 from .handlers.base import CommandHandler
 from .handlers.template_handler import TemplateHandler, load_template
 from .handlers.builtin.bash import BashCommandHandler
@@ -148,6 +149,10 @@ class Repl(ReplUI):
         self.prompt_app: PantheonInputApp | None = None
         self._use_prompt_toolkit = True  # Enable new UI by default
         self.message_queue = None
+        
+        # Task UI renderers
+        self.task_ui_renderer = TaskUIRenderer(self.console)
+        self.notify_ui_renderer = NotifyUIRenderer(self.console)
 
         # Cache last listed team files for index selection in /team
         self._last_team_files: list[dict] | None = None
@@ -486,6 +491,9 @@ class Repl(ReplUI):
                     self.prompt_app.update_model(model)
                     self.prompt_app.update_agent(first_agent_name)
             
+            # Set prompt_app reference for task UI renderer
+            self.task_ui_renderer.set_prompt_app(self.prompt_app)
+            
             # Note: Renderers will be re-initialized inside patch_stdout context in loop
 
         self._parent_repl = self
@@ -656,6 +664,40 @@ class Repl(ReplUI):
 
         # Process with ChatRoom
         await self._process_message(current_message)
+    
+    def _should_display_tool_in_scrollback(self, tool_name: str) -> bool:
+        """Determine if tool should be displayed in scrollback history.
+        
+        In compact mode with an active task:
+        - task_boundary and notify_user are hidden (handled by Task UI)
+        - Other tools are hidden (shown in Task UI's Latest Actions)
+        
+        In verbose mode: always show all tools.
+        
+        Args:
+            tool_name: Full tool name
+            
+        Returns:
+            True if tool should be displayed in scrollback
+        """
+        # Verbose mode: show everything
+        if self.display_config.mode == DisplayMode.VERBOSE:
+            return True
+        
+        # task_boundary is always handled by Task UI, never show in scrollback
+        if "task_boundary" in tool_name:
+            return False
+        
+        # notify_user displays its own panel, don't duplicate
+        if "notify_user" in tool_name:
+            return False
+        
+        # In compact mode with active task: hide tools (shown in Task UI)
+        if self.task_ui_renderer.has_active_task():
+            return False
+        
+        # No active task: show normally
+        return True
 
     async def _process_message(self, message: str):
         """Process a message through ChatRoom."""
@@ -727,6 +769,10 @@ class Repl(ReplUI):
                 current_frame = animation_frames[animation_index]
                 
                 if self.prompt_app:
+                    # Update Task UI Spinner (if active task)
+                    if self.task_ui_renderer.has_active_task():
+                        self.task_ui_renderer.advance_spinner()
+
                     # Update Prompt App Status Bar with animation state
                     status_str = f"{'Running ' + format_tool_name(self._current_tool_name) + '...' if (self._current_tool_name and self._tools_executing) else 'Processing...'}"
                     self.prompt_app.update_processing(
@@ -792,6 +838,9 @@ class Repl(ReplUI):
                     if step.get("role") == "assistant" and step.get("content"):
                         assistant_content = step.get("content")
                         if assistant_content.strip():
+                            # Add message to task UI recent activity
+                            self.task_ui_renderer.add_message(assistant_content)
+                            
                             # Pause animation, print content, resume animation
                             animation_pause_event.set()
                             if not self.prompt_app:
@@ -825,38 +874,63 @@ class Repl(ReplUI):
                                     )
                                 except Exception:
                                     args = {}
-                                self.print_tool_call(tool_name, args)
+                                
+                                # Update Task UI
+                                if "task_boundary" in tool_name:
+                                    self.task_ui_renderer.update_task_boundary(args)
+                                else:
+                                    # Add tool to recent activity with args for key param display
+                                    self.task_ui_renderer.add_tool_call(tool_name, args=args, is_running=True)
+                                
+                                # Display in scrollback (filtered in compact mode with active task)
+                                if self._should_display_tool_in_scrollback(tool_name):
+                                    self.print_tool_call(tool_name, args)
 
                     # Handle tool results
                     elif step.get("role") == "tool":
                         tool_name = step.get("tool_name", "")
                         content = step.get("content", "")
+                        
+                        # Update Task UI
+                        self.task_ui_renderer.update_tool_complete(tool_name)
+                        
+                        # Handle notify_user result
+                        if "notify_user" in tool_name:
+                            raw_content = step.get("raw_content", {})
+                            if isinstance(raw_content, dict):
+                                # First: print static Task UI summary
+                                self.task_ui_renderer.on_notify_user()
+                                # Then: show notification UI for user interaction
+                                blocked = self.notify_ui_renderer.render_notification(raw_content)
 
                         # Prefer raw_content if available (original dict)
                         raw_content = step.get("raw_content")
-                        if raw_content is not None and isinstance(raw_content, dict):
-                            self.print_tool_result(tool_name, raw_content)
-                        else:
-                            # Try to parse content
-                            try:
-                                import json
-                                result = json.loads(content)
-                                self.print_tool_result(tool_name, result)
-                            except json.JSONDecodeError:
-                                # Try ast.literal_eval for repr() output
+                        
+                        # Display in scrollback (filtered in compact mode with active task)
+                        if self._should_display_tool_in_scrollback(tool_name):
+                            if raw_content is not None and isinstance(raw_content, dict):
+                                self.print_tool_result(tool_name, raw_content)
+                            else:
+                                # Try to parse content
                                 try:
-                                    import ast
-                                    result = ast.literal_eval(content)
-                                    if isinstance(result, dict):
-                                        self.print_tool_result(tool_name, result)
-                                    else:
-                                        self.print_tool_result(tool_name, {"output": str(result)})
+                                    import json
+                                    result = json.loads(content)
+                                    self.print_tool_result(tool_name, result)
+                                except json.JSONDecodeError:
+                                    # Try ast.literal_eval for repr() output
+                                    try:
+                                        import ast
+                                        result = ast.literal_eval(content)
+                                        if isinstance(result, dict):
+                                            self.print_tool_result(tool_name, result)
+                                        else:
+                                            self.print_tool_result(tool_name, {"output": str(result)})
+                                    except Exception:
+                                        if content.strip():
+                                            self.print_tool_result(tool_name, {"output": content})
                                 except Exception:
                                     if content.strip():
                                         self.print_tool_result(tool_name, {"output": content})
-                            except Exception:
-                                if content.strip():
-                                    self.print_tool_result(tool_name, {"output": content})
 
                 self._current_live_display = processing_live
 

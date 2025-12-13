@@ -19,6 +19,7 @@ agentic_agent:
     - shell
     - integrated_notebook
     - task
+    - code
 ---
 
 {{agentic_coding}}
