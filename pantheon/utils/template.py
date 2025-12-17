@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-import tomli
+import tomllib
 import yaml
 from collections import OrderedDict
 
@@ -96,7 +96,7 @@ def load_single_template(file_path: str | Path) -> dict:
         raise FileNotFoundError(f"File not found: {file_path}")
     if path.suffix == ".toml":
         with open(path, "rb") as f:
-            return tomli.load(f)
+            return tomllib.load(f)
     elif path.suffix == ".yaml" or path.suffix == ".yml":
         with open(path, "r") as f:
             return yaml.safe_load(f)
