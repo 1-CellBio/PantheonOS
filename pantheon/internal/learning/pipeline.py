@@ -66,6 +66,14 @@ def build_learning_input(
     Returns:
         LearningInput ready for submission to Reflector
     """
+    # Validate agent_name, fallback to global if empty
+    if not agent_name or not agent_name.strip():
+        from pantheon.utils.log import logger
+        logger.warning("agent_name is empty in build_learning_input, using 'global'")
+        agent_name = "global"
+    else:
+        agent_name = agent_name.strip()
+    
     from pantheon.utils.message_formatter import format_messages_to_text
     
     # Use unified function for formatting
@@ -115,6 +123,8 @@ class LearningPipeline:
         learning_dir: str,
         cleanup_after_learning: bool = False,
         skills_dir: Optional[Path] = None,
+        min_confidence_threshold: float = 0.3,
+        min_atomicity_score: float = 0.7,
     ):
         self._skillbook = skillbook
         self._reflector = reflector
@@ -122,6 +132,8 @@ class LearningPipeline:
         self._learning_dir = learning_dir
         self._cleanup_after_learning = cleanup_after_learning
         self._skills_dir = skills_dir
+        self._min_confidence_threshold = min_confidence_threshold
+        self._min_atomicity_score = min_atomicity_score
         self._queue: asyncio.Queue[LearningInput] = asyncio.Queue()
         self._task: Optional[asyncio.Task] = None
         self._running = False
@@ -193,7 +205,7 @@ class LearningPipeline:
             # 1. Reflector analysis
             reflection = await self._reflector.reflect(input, self._skillbook)
             
-            if reflection.confidence < 0.3:
+            if reflection.confidence < self._min_confidence_threshold:
                 logger.debug(f"Low confidence reflection ({reflection.confidence}), skipping")
                 return
 
@@ -205,13 +217,14 @@ class LearningPipeline:
 
             # 3. Get update operations from SkillManager
             operations = await self._skill_manager.update_skills(
-                reflection, self._skillbook, input.agent_name
+                reflection, self._skillbook, input.agent_name,
+                min_atomicity_score=self._min_atomicity_score,
             )
 
             # 4. Apply operations and collect stats
             ops_summary = {"ADD": 0, "UPDATE": 0, "TAG": 0, "REMOVE": 0}
             for op in operations:
-                self._apply_operation(op)
+                self._apply_operation(op, default_agent_scope=input.agent_name)
                 ops_summary[op.type] = ops_summary.get(op.type, 0) + 1
 
             # 5. Persist after each update
@@ -261,7 +274,7 @@ class LearningPipeline:
         except Exception as e:
             logger.warning(f"Failed to cleanup learning file {file_path}: {e}")
 
-    def _apply_operation(self, op: UpdateOperation) -> None:
+    def _apply_operation(self, op: UpdateOperation, default_agent_scope: str = "global") -> None:
         """Apply a single update operation to the skillbook."""
         try:
             # Protect user-defined skills from modification (allow TAG only)
@@ -275,10 +288,11 @@ class LearningPipeline:
 
             if op.type == "ADD":
                 if op.section and op.content:
+                    # Always use code-provided agent_name (LLM doesn't know actual agent name)
                     skill = self._skillbook.add_skill(
                         section=op.section,
                         content=op.content,
-                        agent_scope=op.agent_scope or "global",
+                        agent_scope=default_agent_scope,
                     )
                     if skill:
                         logger.info(f"Added skill: {skill.id}")

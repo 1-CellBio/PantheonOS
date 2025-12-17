@@ -83,6 +83,8 @@ def create_learning_resources(
         learning_dir=_config["learning_dir"],
         cleanup_after_learning=_config.get("cleanup_after_learning", False),
         skills_dir=skills_dir if skills_dir.exists() else None,
+        min_confidence_threshold=_config.get("min_confidence_threshold", 0.3),
+        min_atomicity_score=_config.get("min_atomicity_score", 0.7),
     )
     
     logger.info(f"Learning enabled: {len(skillbook.skills())} skills loaded")

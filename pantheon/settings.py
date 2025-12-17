@@ -279,6 +279,9 @@ class Settings:
             "max_tool_output_length": learning.get("max_tool_output_length", 200),  # For learning trajectory
             "cleanup_after_learning": learning.get("cleanup_after_learning", False),
             "enable_agent_scope": learning.get("enable_agent_scope", False),
+            # Thresholds for quality control
+            "min_confidence_threshold": learning.get("min_confidence_threshold", 0.3),  # Skip reflection if below
+            "min_atomicity_score": learning.get("min_atomicity_score", 0.7),  # Reject ADD if below
         }
 
     def get_compression_config(self) -> Dict[str, Any]:

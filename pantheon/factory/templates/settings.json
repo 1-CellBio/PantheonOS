@@ -106,7 +106,6 @@
     "models": {
         // Provider priority order (first available provider with API key is used)
         // "provider_priority": ["openai", "anthropic", "google", "zai", "deepseek"],
-
         // Per-provider model configuration (optional - code has sensible defaults)
         // Quality levels map to model lists (fallback chains)
         // "provider_models": {
@@ -124,14 +123,12 @@
     },
     // ===== ACE (Agentic Context Engineering) Configuration =====
     // Learning is a long-term memory system that learns from conversation trajectories
-    // NOTE: ACE requires models that support structured output (response_format)
-    // such as OpenAI models. Set enable to true only if you have a compatible model.
     "learning": {
-        // Enable learning learning system (disabled by default - requires compatible model)
+        // Enable learning learning system (disabled by default)
         "enable": false,
-        // LLM model for reflection and skill management (null = use default)
-        // Must support structured output (response_format)
-        "learning_model": null,
+        // LLM model for reflection and skill management
+        // Uses quality level: "high", "normal", "low", or specific model name
+        "learning_model": "normal",
         // Skillbook file path (relative to .pantheon/learning/)
         "skillbook_path": "skillbook.json",
         // Learning data directory (relative to .pantheon/learning/)
@@ -149,7 +146,12 @@
         "cleanup_after_learning": true,
         // Enable agent-specific skill scope filtering
         // If false, all agents see all skills (recommended for simpler setups)
-        "enable_agent_scope": false
+        "enable_agent_scope": true,
+        // === Quality Control Thresholds ===
+        // Minimum confidence to process reflection (skip if below)
+        "min_confidence_threshold": 0.3,
+        // Minimum atomicity score for ADD operations (reject if below)
+        "min_atomicity_score": 0.7
     },
     // ===== Context Compression Configuration =====
     // Automatic context compression when approaching token limits
