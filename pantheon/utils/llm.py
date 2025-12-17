@@ -154,6 +154,13 @@ async def acompletion_litellm(
         "response_format": response_format,
         "stream": True,
     }
+    
+    # Only add stream_options for OpenAI-compatible models
+    # Other providers may not support this parameter
+    model_lower = model.lower()
+    if model_lower.startswith("openai/") or model_lower.startswith("gpt") or model_lower.startswith("o1") or model_lower.startswith("o3"):
+        kwargs["stream_options"] = {"include_usage": True}
+    
     if model_params:
         kwargs.update(**model_params)
 
@@ -175,6 +182,18 @@ async def acompletion_litellm(
             if hasattr(choice, "finish_reason") and choice.finish_reason == "stop":
                 await run_func(process_chunk, {"stop": True})
     complete_resp = litellm.stream_chunk_builder(response.chunks)
+    
+    # Calculate and attach cost information
+    try:
+        cost = litellm.completion_cost(completion_response=complete_resp)
+        if cost and cost > 0:
+            # Store cost in a way that count_tokens_in_messages can access
+            if not hasattr(complete_resp, '_hidden_params'):
+                complete_resp._hidden_params = {}
+            complete_resp._hidden_params['response_cost'] = cost
+    except Exception:
+        pass  # Silently ignore cost calculation errors
+    
     return complete_resp
 
 
@@ -622,10 +641,9 @@ def count_tokens_in_messages(
         )
         
         # calculate estimated cost for the current model
-        cost_per_token = model_info.get("input_cost_per_token", 0) or 0
-        current_cost = round(total_tokens * cost_per_token, 4)
-        total_session_cost = None
-
+        input_cost_per_token = model_info.get("input_cost_per_token", 0) or 0
+        output_cost_per_token = model_info.get("output_cost_per_token", 0) or 0
+        
         # Determine target message for cost tracking
         # Use explicit assistant_message if provided (Write Mode), 
         # otherwise find last assistant message in history (Read Mode)
@@ -633,6 +651,25 @@ def count_tokens_in_messages(
             (m for m in reversed(msgs_to_count) if m.get("role") == "assistant"), 
             None
         )
+
+        # Estimate input/output split
+        # msg_tokens is currently holding the token count of the last processed message
+        # If we have a target message (assistant response), its tokens are output tokens
+        # Everything else is considered input tokens
+        output_tokens = 0
+        if target_message:
+             # Recalculate/Get target message tokens
+             # Note: We don't have per-message tokens stored easily unless we re-count or captured it loop
+             # But we can approximate. 
+             # Better approach: We know total_tokens. We can subtract target_message tokens if we knew them.
+             # Actually, let's just use the simple heuristic: 
+             # If target_message is assistant, its content is output.
+             output_tokens = token_counter(model=model, messages=[target_message])
+        
+        input_tokens = max(0, total_tokens - output_tokens)
+        current_cost = round((input_tokens * input_cost_per_token) + (output_tokens * output_cost_per_token), 6)
+        
+        total_session_cost = None
 
         # Process cost tracking if we have a target message
         if target_message:
@@ -659,6 +696,10 @@ def count_tokens_in_messages(
                 # Persist updated cost info to metadata
                 meta["current_cost"] = current_cost
                 meta["total_cost"] = total_session_cost
+            
+            # Scenario A': Write Mode (No provider cost, store estimated cost)
+            elif "current_cost" not in meta and current_cost > 0:
+                meta["current_cost"] = current_cost
                 
             # Store token counts for compression to read (Always write this)
             meta["total_tokens"] = int(total_tokens)
@@ -671,6 +712,17 @@ def count_tokens_in_messages(
             elif "current_cost" in meta:
                 current_cost = meta["current_cost"]
                 total_session_cost = meta.get("total_cost")
+        
+        # Scenario C: Fallback estimation (no _debug_cost, no stored total_cost)
+        # Sum up current_cost from each assistant message's metadata
+        if total_session_cost is None:
+            accumulated = 0.0
+            for msg in msgs_to_count:
+                if msg.get("role") == "assistant":
+                    msg_cost = msg.get("_metadata", {}).get("current_cost", 0)
+                    accumulated += msg_cost
+            if accumulated > 0:
+                total_session_cost = round(accumulated, 4)
 
         return {
             "total": int(total_tokens),

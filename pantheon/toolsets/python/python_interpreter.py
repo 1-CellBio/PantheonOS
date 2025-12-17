@@ -9,9 +9,9 @@ from pathlib import Path
 
 from executor.engine import Engine, ProcessJob
 
-from ...toolset import tool, ToolSet
-from ...internal.package_runtime.context import build_context_env
-from ...utils.log import logger
+from pantheon.toolset import tool, ToolSet
+from pantheon.internal.package_runtime.context import build_context_env
+from pantheon.utils.log import logger
 
 
 class PythonInterpreterError(Exception):

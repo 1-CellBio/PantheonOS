@@ -11,7 +11,7 @@ import tempfile
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
 from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 from crawl4ai.content_scraping_strategy import LXMLWebScrapingStrategy
-from ...utils.log import logger
+from pantheon.utils.log import logger
 
 
 async def download_docs(
@@ -267,7 +267,7 @@ async def upload_to_huggingface(output_dir: str, repo_id: str = "NaNg/pantheon_r
     logger.info(f"Starting upload process for {output_dir} to {repo_id}")
     
     from huggingface_hub import login
-    from ...settings import get_settings
+    from pantheon.settings import get_settings
     TOKEN = get_settings().get_api_key("HUGGINGFACE_TOKEN")
     if not TOKEN:
         raise ValueError("HUGGINGFACE_TOKEN is not set in settings or environment")

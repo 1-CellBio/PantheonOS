@@ -4,9 +4,9 @@ import uuid
 from pathlib import Path
 
 from ._shell import AsyncShell
-from ...toolset import ToolSet, tool
-from ...utils.log import logger
-from ...internal.package_runtime.context import build_context_env
+from pantheon.toolset import ToolSet, tool
+from pantheon.utils.log import logger
+from pantheon.internal.package_runtime.context import build_context_env
 
 
 class ShellToolSet(ToolSet):

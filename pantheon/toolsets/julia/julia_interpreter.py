@@ -3,8 +3,8 @@ import os
 import base64
 
 from ._julia import AsyncJuliaInterpreter
-from ...toolset import ToolSet, tool
-from ...utils.log import logger
+from pantheon.toolset import ToolSet, tool
+from pantheon.utils.log import logger
 
 
 class JuliaInterpreterToolSet(ToolSet):

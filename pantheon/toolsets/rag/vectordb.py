@@ -9,8 +9,8 @@ import diskcache
 
 from .wrap import RAGWrapper
 from .text import smart_text_splitter
-from ...utils.llm import openai_embedding
-from ...utils.log import logger
+from pantheon.utils.llm import openai_embedding
+from pantheon.utils.log import logger
 
 
 class VectorDB(RAGWrapper):

@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from ...toolset import ToolSet, tool
-from ...utils.log import logger
+from pantheon.toolset import ToolSet, tool
+from pantheon.utils.log import logger
 from .task_state import ConversationState, ModeSemantics
 from .ephemeral import generate_ephemeral_message
 
@@ -50,7 +50,7 @@ class TaskToolSet(ToolSet):
     def _get_brain_dir(self, context: dict) -> str:
         """Get brain_dir path from context."""
         client_id = context.get("client_id", "default")
-        from ...settings import get_settings
+        from pantheon.settings import get_settings
         return str(get_settings().brain_dir / client_id)
     
     @tool

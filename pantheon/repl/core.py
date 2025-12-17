@@ -240,10 +240,9 @@ class Repl(ReplUI):
                     pass
             return False
         elif self._interrupt_count >= 2:
-            self._print_session_summary()
-            return True
-        elif self._interrupt_count >= 2:
-            self._print_session_summary()
+            # Simple sync summary (async version not available in signal handler)
+            self.console.print(f"\n[dim]Session: {self.message_count} messages[/dim]")
+            self.console.print("[dim]Goodbye![/dim]")
             return True
         return False
 
@@ -257,7 +256,7 @@ class Repl(ReplUI):
                 # Check for exit command first (handled here to stop processing)
                 if current_message.strip().lower() in ["exit", "quit", "q", "/exit", "/quit", "/q"]:
                      self.message_queue.task_done()
-                     self._print_session_summary()
+                     await self._print_session_summary()
                      # We can't easily break the main run wait, so we might need a signal or just let the input app exit
                      # Actually input app exit is handled by prompt_toolkit Exit exception usually.
                      # But here we are consuming from queue. 
@@ -280,7 +279,7 @@ class Repl(ReplUI):
                     if self.prompt_app:
                         self.prompt_app.stop_processing()
                         # Update token usage in status bar
-                        self._update_status_bar_token_usage()
+                        await self._update_status_bar_token_usage()
                     self.message_queue.task_done()
                     
             except asyncio.CancelledError:
@@ -427,18 +426,22 @@ class Repl(ReplUI):
         self.total_input_tokens += input_tokens
         self.total_output_tokens += output_tokens
 
-    def _update_status_bar_token_usage(self):
-        """Update token usage percentage in status bar."""
+    async def _update_status_bar_token_usage(self):
+        """Update token usage percentage in status bar (async).
+        
+        Uses get_detailed_token_stats to include system prompt and tools,
+        matching the /tokens command output.
+        """
         if not self.prompt_app:
             return
         try:
-            from .utils import get_token_stats
+            from .utils import get_detailed_token_stats
             fallback = {
                 "total_input_tokens": self.total_input_tokens,
                 "total_output_tokens": self.total_output_tokens,
                 "message_count": self.message_count,
             }
-            token_info = get_token_stats(self._chatroom, self._chat_id, self._team, fallback)
+            token_info = await get_detailed_token_stats(self._chatroom, self._chat_id, self._team, fallback)
             usage_pct = token_info.get("usage_percent", 0)
             total_cost = token_info.get("total_cost") or 0.0
             self.prompt_app.update_token_usage(usage_pct, total_cost)
@@ -566,7 +569,7 @@ class Repl(ReplUI):
 
         # Exit commands
         if cmd_lower in ["exit", "quit", "q", "/exit", "/quit", "/q"]:
-            self._print_session_summary()
+            await self._print_session_summary()
             # For prompt_toolkit app, we need to trigger app exit
             if self.prompt_app:
                 self.prompt_app.app.exit()

@@ -144,9 +144,10 @@ class Memory:
         for msg in filtered:
             msg_copy = deepcopy(msg)
 
-            # Remove _metadata before sending to LLM (save tokens)
-            if "_metadata" in msg_copy:
-                del msg_copy["_metadata"]
+            # Metadata is preserved here for cost tracking. 
+            # It will be removed by call_llm_provider before sending to API.
+            # if "_metadata" in msg_copy:
+            #    del msg_copy["_metadata"]
 
             if msg_copy.get("role") == "compression":
                 msg_copy["role"] = "user"

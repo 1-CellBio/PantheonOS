@@ -10,8 +10,8 @@ from datetime import datetime
 
 from PIL import Image
 
-from ...toolset import ToolSet, tool
-from ...utils.log import logger
+from pantheon.toolset import ToolSet, tool
+from pantheon.utils.log import logger
 from .apply_patch import execute_patch_operations
 from .grep_glob import grep_search, glob_search
 

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from ...utils.log import logger
+from pantheon.utils.log import logger
 
 
 # ===========================================================================
@@ -330,7 +330,7 @@ class Skillbook:
         # Add file reference for file-based skills (exclude SKILLS.md)
         if skill.source_path and not skill.source_path.endswith("SKILLS.md"):
             # Convert relative path (relative to skills_dir) to absolute
-            from ...settings import get_settings
+            from pantheon.settings import get_settings
             abs_path = get_settings().skills_dir / skill.source_path
             content = f"{content} (see `{abs_path}`)"
 

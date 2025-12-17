@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-from ...utils.log import logger
+from pantheon.utils.log import logger
 from .reflector import Reflector
 from .skill_loader import load_skills_into_skillbook
 from .skill_manager import SkillManager, UpdateOperation
@@ -66,7 +66,7 @@ def build_learning_input(
     Returns:
         LearningInput ready for submission to Reflector
     """
-    from ...utils.message_formatter import format_messages_to_text
+    from pantheon.utils.message_formatter import format_messages_to_text
     
     # Use unified function for formatting
     details_path = f"{learning_dir}/turn_{turn_id}.json" if learning_dir else None

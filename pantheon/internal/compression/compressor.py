@@ -7,8 +7,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from ...utils.log import logger
-from ...utils.message_formatter import format_messages_to_text
+from pantheon.utils.log import logger
+from pantheon.utils.message_formatter import format_messages_to_text
 from .prompts import (
     COMPRESSION_SYSTEM_PROMPT, 
     COMPRESSION_USER_PROMPT,
@@ -212,7 +212,7 @@ class ContextCompressor:
         
         # 6. Use temporary Agent to generate summary
         try:
-            from ...agent import Agent
+            from pantheon.agent import Agent
             
             compression_agent = Agent(
                 name="_compressor",

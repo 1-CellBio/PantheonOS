@@ -245,51 +245,6 @@ async def get_detailed_token_stats(chatroom, chat_id, team, fallback: dict) -> d
     }
 
 
-def get_token_stats(chatroom, chat_id, team, fallback: dict) -> dict:
-    """Gather token statistics from chatroom or fallback to local stats."""
-    from ..utils.llm import count_tokens_in_messages, process_messages_for_model
-    from ..utils.log import logger
-    
-    messages, raw_messages, model = [], [], "unknown"
-    
-    # Get model from team first (needed for processing)
-    if team and team.agents:
-        agent = list(team.agents.values())[0]
-        model = (agent.models[0] if isinstance(getattr(agent, 'models', None), list) 
-                 else getattr(agent, 'models', None) or getattr(agent, 'model', 'unknown'))
-    
-    # Try to get messages from chatroom via memory_manager
-    if chatroom and chat_id:
-        try:
-            if hasattr(chatroom, 'memory_manager'):
-                memory = chatroom.memory_manager.get_memory(chat_id)
-                if memory:
-                    raw_messages = memory.get_messages(None) or []
-                    messages = process_messages_for_model(raw_messages, model)
-        except Exception as e:
-            logger.warning(f"Failed to get messages for token stats: {e}")
-    
-    if messages:
-        try:
-            info = count_tokens_in_messages(
-                messages, 
-                model
-            )
-            info["model"] = model
-            return info
-        except Exception as e:
-            logger.warning(f"Failed to count tokens: {e}")
-    
-    # Fallback
-    total = fallback.get("total_input_tokens", 0) + fallback.get("total_output_tokens", 0)
-    return {
-        "total": total, "max_tokens": 200000, "remaining": 200000 - total,
-        "usage_percent": round(total / 200000 * 100, 1) if total else 0,
-        "by_role": {"user": fallback.get("total_input_tokens", 0), "assistant": fallback.get("total_output_tokens", 0)},
-        "message_counts": {"user": fallback.get("message_count", 0), "assistant": fallback.get("message_count", 0)},
-        "warning_90": False, "critical_95": False, "current_cost": 0, "model": model,
-    }
-
 
 def render_token_panel(console: Console, info: dict, session_start: datetime):
     """Render Claude Code-style token analysis panel."""
@@ -381,11 +336,8 @@ def render_token_panel(console: Console, info: dict, session_start: datetime):
     total_msgs = sum(msg_counts.values())
     console.print(f"{B}│[/] [dim]Messages:[/] {total_msgs} [dim]• Duration:[/] {dur}m [dim]• Model:[/] {model}")
     
-    if (total_c := info.get("total_cost")) is not None:
+    if (total_c := info.get("total_cost")) is not None and total_c > 0:
          console.print(f"{B}│[/] [dim]Total Cost:[/] ${total_c:.4f}")
-         
-    if (cost := info.get("current_cost", 0)) > 0:
-        console.print(f"{B}│[/] [dim]Est. Next Cost:[/] ${cost:.4f}")
     
     # Warning
     if info.get("warning_90") or info.get("critical_95"):

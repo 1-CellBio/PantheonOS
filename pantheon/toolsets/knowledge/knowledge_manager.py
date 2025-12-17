@@ -86,7 +86,7 @@ class KnowledgeToolSet(ToolSet):
             # 创建 LLM 实例的辅助函数（支持自定义 API base）
             def _create_llm():
                 from llama_index.llms.openai import OpenAI
-                from ...settings import get_settings
+                from pantheon.settings import get_settings
                 settings = get_settings()
 
                 llm_kwargs = {

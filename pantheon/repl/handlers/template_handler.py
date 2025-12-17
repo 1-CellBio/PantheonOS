@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 
 from .base import CommandHandler
-from ...utils.template import parse_items, load_template
+from pantheon.utils.template import parse_items, load_template
 
 if TYPE_CHECKING:
     from ..core import Repl

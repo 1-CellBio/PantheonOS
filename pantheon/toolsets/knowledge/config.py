@@ -58,7 +58,7 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     # 1. 尝试从 Settings 模块加载
     settings_knowledge_config = None
     try:
-        from ...settings import get_settings
+        from pantheon.settings import get_settings
         settings = get_settings()
         settings_knowledge_config = settings.get_knowledge_config()
     except Exception:

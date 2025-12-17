@@ -96,8 +96,9 @@ packages = {find = {}}
 
 [tool.setuptools.package-data]
 "pantheon.factory" = [
-    "templates/agents/*.md",
-    "templates/teams/*.md",
+    "templates/**/*.md",
+    "templates/**/*.json",
+    "templates/*.json",
 ]
 
 [tool.setuptools.dynamic]

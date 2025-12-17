@@ -14,7 +14,7 @@ from .renderers import (
     ToolCallRenderer,
     ToolResultRenderer,
 )
-from .utils import get_separator, format_tool_name, format_relative_time, CLAUDE_BOX, OutputAdapter, get_token_stats, get_detailed_token_stats, render_token_panel
+from .utils import get_separator, format_tool_name, format_relative_time, CLAUDE_BOX, OutputAdapter, get_detailed_token_stats, render_token_panel
 # Simple readline support for history
 try:
     import readline
@@ -573,7 +573,7 @@ class ReplUI:
             self.console.print(f"[dim]Input:[/dim] basic")
         self.console.print()
 
-    def _print_session_summary(self):
+    async def _print_session_summary(self):
         """Print a brief session summary before exit"""
         session_duration = datetime.now() - self.session_start
         duration_mins = int(session_duration.total_seconds() / 60)
@@ -584,7 +584,7 @@ class ReplUI:
             chat_id = getattr(self, '_chat_id', None)
             team = getattr(self, '_team', None)
 
-            token_info = get_token_stats(chatroom, chat_id, team, {})
+            token_info = await get_detailed_token_stats(chatroom, chat_id, team, {})
             total_tokens = token_info.get("total", 0)
             total_cost = token_info.get("total_cost", 0)
 

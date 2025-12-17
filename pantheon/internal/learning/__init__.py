@@ -48,8 +48,8 @@ def create_learning_resources(
     Returns:
         Tuple of (Skillbook, LearningPipeline) or (None, None)
     """
-    from ...settings import get_settings
-    from ...utils.log import logger
+    from pantheon.settings import get_settings
+    from pantheon.utils.log import logger
     
     settings = get_settings()
     _config = config or settings.get_learning_config()

@@ -526,10 +526,11 @@ def create_key_bindings(app_instance: "PantheonInputApp") -> KeyBindings:
     @kb.add('c-d')
     def _(event):
         """Ctrl+D to exit (EOF)."""
-        # Print session summary before exit
+        # Print simple session summary (sync - can't await in key binding)
         repl = app_instance.repl
-        if hasattr(repl, '_print_session_summary'):
-            repl._print_session_summary()
+        if hasattr(repl, 'console') and hasattr(repl, 'message_count'):
+            repl.console.print(f"\n[dim]Session: {repl.message_count} messages[/dim]")
+            repl.console.print("[dim]Goodbye![/dim]")
         # Signal app to exit
         event.app.exit(exception=EOFError())
 
@@ -922,7 +923,13 @@ class PantheonInputApp:
 
     def get_status_formatted_text(self) -> HTML:
         """Generate bottom status bar content (model/agent info) in muted gray."""
-        usage_display = f"ctx: {self._token_usage_pct:.0f}%" if self._token_usage_pct > 0 else "ctx: 0%"
+        # Show 1 decimal place for values < 1%, otherwise show integer
+        if self._token_usage_pct <= 0:
+            usage_display = "ctx: 0%"
+        elif self._token_usage_pct < 1:
+            usage_display = f"ctx: {self._token_usage_pct:.1f}%"
+        else:
+            usage_display = f"ctx: {self._token_usage_pct:.0f}%"
         if self._total_cost and self._total_cost > 0:
             usage_display += f" │ cost: ${self._total_cost:.4f}"
         status = "processing..." if self._is_processing else "ready"

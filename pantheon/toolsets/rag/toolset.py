@@ -1,5 +1,5 @@
-from ...toolset import ToolSet, tool
-from ...utils.log import logger
+from pantheon.toolset import ToolSet, tool
+from pantheon.utils.log import logger
 from .vectordb import VectorDB
 
 

@@ -17,8 +17,8 @@ import nats
 from nats.js.errors import NotFoundError, KeyNotFoundError
 from funcdesc import parse_func, Description
 
-from ...utils.log import logger
-from ...utils.misc import run_func
+from pantheon.utils.log import logger
+from pantheon.utils.misc import run_func
 from .base import (
     RemoteBackend,
     RemoteService,

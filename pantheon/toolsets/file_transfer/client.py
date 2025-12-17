@@ -1,4 +1,4 @@
-from ...remote import connect_remote
+from pantheon.remote import connect_remote
 
 
 class FileTransferClient:

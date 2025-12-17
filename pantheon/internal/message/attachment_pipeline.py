@@ -9,7 +9,7 @@ Also includes message processor for integration with the agent system.
 
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Any, Tuple
-from ...utils.log import logger
+from pantheon.utils.log import logger
 from .attachment_detection import (
     AttachmentType,
     AttachmentSourceType,
@@ -22,7 +22,7 @@ from .attachment_detection import (
 )
 
 
-from ...settings import get_settings
+from pantheon.settings import get_settings
 
 class AttachmentProcessingPipeline:
     """Pipeline for detecting and processing attachments in messages"""

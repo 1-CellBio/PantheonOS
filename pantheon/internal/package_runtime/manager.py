@@ -374,8 +374,8 @@ class PackageManager:
                     continue
                 
                 # Create MCPProvider for direct connection
-                from ...providers import MCPProvider
-                from ...endpoint.mcp import MCPServerConfig
+                from pantheon.providers import MCPProvider
+                from pantheon.endpoint.mcp import MCPServerConfig
                 
                 config = MCPServerConfig(
                     name=server_name,

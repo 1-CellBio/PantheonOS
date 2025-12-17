@@ -11,8 +11,8 @@ from typing import List, Literal, Optional, TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from ...agent import Agent
-from ...utils.log import logger
+from pantheon.agent import Agent
+from pantheon.utils.log import logger
 from .skillbook import Skillbook
 
 if TYPE_CHECKING:

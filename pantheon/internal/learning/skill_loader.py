@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import frontmatter
 
-from ...utils.log import logger
+from pantheon.utils.log import logger
 from .skillbook import Skill, Skillbook
 
 

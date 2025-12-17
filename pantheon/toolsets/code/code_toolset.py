@@ -6,7 +6,7 @@ using tree-sitter for multi-language AST parsing.
 
 from pathlib import Path
 
-from ...toolset import ToolSet, tool
+from pantheon.toolset import ToolSet, tool
 from .tree_sitter_parser import get_file_outline, get_code_item, detect_language
 
 

@@ -97,7 +97,7 @@ class VectorStoreBackend:
                 logger.info(f"Qdrant client initialized (local mode) at: {location}")
 
             # 2. 初始化 Embedding 模型
-            from ...settings import get_settings
+            from pantheon.settings import get_settings
             settings = get_settings()
             
             embed_kwargs = {

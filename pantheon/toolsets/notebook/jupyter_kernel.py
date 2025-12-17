@@ -25,7 +25,7 @@ from pantheon.remote.backend.base import RemoteBackend, StreamMessage, StreamTyp
 from pantheon.toolset import ToolSet, tool
 from pantheon.utils.log import logger
 from pantheon.utils.misc import run_func
-from ...internal.package_runtime.context import build_context_env
+from pantheon.internal.package_runtime.context import build_context_env
 
 # Terminal control character processing (nbclient-style)
 # Reference: https://github.com/jupyter/nbclient/blob/main/nbclient/client.py
