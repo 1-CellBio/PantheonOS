@@ -170,17 +170,49 @@ class Endpoint(FileTransferToolSet):
         logger.info("Phase 4: Starting Endpoint MCP server for package API access...")
         await self._start_endpoint_mcp_server()
 
+    def _find_free_port(self, start_port: int = 3100, max_attempts: int = 100) -> int:
+        """Find a free port starting from start_port.
+
+        Args:
+            start_port: Port number to start searching from.
+            max_attempts: Maximum number of ports to try.
+
+        Returns:
+            First available port number.
+
+        Raises:
+            RuntimeError: If no free port is found within the range.
+        """
+        import socket
+        for port in range(start_port, start_port + max_attempts):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(('127.0.0.1', port))
+                    return port
+            except OSError:
+                continue
+        raise RuntimeError(f"No free port found in range {start_port}-{start_port + max_attempts}")
+
     async def _start_endpoint_mcp_server(self):
         """Start Endpoint as MCP server for cross-process package API access.
-        
+
         This allows package API (running in separate Python/shell/Jupyter processes)
         to discover and access MCP servers managed by this Endpoint.
+
+        The server will automatically find an available port if the default port
+        (3100) or configured port is already in use.
         """
         import os
-        
-        self.endpoint_mcp_port = self.config.get("endpoint_mcp_port", 3100)
+
+        configured_port = self.config.get("endpoint_mcp_port", 3100)
+        # Find an available port starting from the configured port
+        self.endpoint_mcp_port = self._find_free_port(configured_port)
+
+        if self.endpoint_mcp_port != configured_port:
+            logger.info(f"Port {configured_port} in use, using port {self.endpoint_mcp_port} instead")
+
         mcp_server = self.to_mcp()
-        
+
         async def run_mcp():
             try:
                 await mcp_server.run_http_async(
@@ -192,13 +224,13 @@ class Endpoint(FileTransferToolSet):
                 )
             except Exception as e:
                 logger.error(f"Endpoint MCP server error: {e}")
-        
+
         self._endpoint_mcp_task = asyncio.create_task(run_mcp())
-        
+
         # Set ENDPOINT_MCP_URI env var for build_context_payload to pick up
         endpoint_mcp_uri = f"http://127.0.0.1:{self.endpoint_mcp_port}/mcp"
         os.environ["ENDPOINT_MCP_URI"] = endpoint_mcp_uri
-        
+
         logger.info(f"Endpoint MCP server started at {endpoint_mcp_uri}")
 
 
