@@ -84,10 +84,20 @@ async def _update_litellm_cost_map():
     """
     try:
         await asyncio.sleep(2)  # Wait for REPL to fully initialize
-        from litellm import get_model_cost_map
-        # This will fetch from GitHub since LITELLM_LOCAL_MODEL_COST_MAP=True
-        # only prevents the SYNCHRONOUS fetch on import
-        get_model_cost_map(url="https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")
+        import litellm
+        import aiohttp
+        
+        # Manually fetch the latest model metadata from GitHub using aiohttp.
+        # We fetch manually because litellm.get_model_cost_map filters some models,
+        # and litellm.register_model triggers interactive authentication prompts.
+        url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as response:
+                if response.status == 200:
+                    new_map = await response.json(content_type=None)
+                    if new_map:
+                        litellm.model_cost.update(new_map)
     except Exception:
         pass  # Silently ignore - this is a best-effort background update
 

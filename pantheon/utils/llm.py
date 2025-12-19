@@ -691,12 +691,12 @@ def count_tokens_in_messages(
         except Exception:
             model_info = {}  # Will use fallback defaults below
 
-        # Calculate usage metrics (use conservative defaults for unknown models)
-        max_input_tokens = (
-            model_info.get("max_input_tokens") or 2_00_000
-        )  # 200K default
+        # Calculate usage metrics (the context window usually refers to input tokens)
+        max_input_tokens = model_info.get("max_input_tokens") or 200_000  # 200K default
         max_output_tokens = model_info.get("max_output_tokens") or 32_000  # 32K default
-        max_tokens = max_input_tokens + max_output_tokens
+
+        # User concern: Max should reflect context window (input), not input + output
+        max_tokens = max_input_tokens
         remaining = max(0, max_tokens - total_tokens)
         usage_percent = (
             round((total_tokens / max_tokens * 100), 1) if max_tokens > 0 else 0

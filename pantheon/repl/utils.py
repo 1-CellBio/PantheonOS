@@ -172,10 +172,12 @@ class OutputAdapter:
 
 
 def format_token_count(count: int) -> str:
-    """Format token count with K/M units."""
-    if count >= 1_000_000: return f"{count/1_000_000:.1f}M"
-    if count >= 10_000: return f"{count/1_000:.1f}K"
-    return f"{count:,}" if count >= 1000 else str(count)
+    """Format token count with dynamic K/M units."""
+    if count >= 1_000_000:
+        return f"{count/1_000_000:.1f}M"
+    if count >= 1000:
+        return f"{count // 1000}K"
+    return str(count)
 
 
 
@@ -308,7 +310,7 @@ def render_token_panel(console: Console, info: dict, session_start: datetime):
     remaining_width = max(0, bar_w - actual_filled)
     bar += f"[dim]{'░' * remaining_width}[/]"
     
-    max_disp = f"{max_tok // 1000}K"
+    max_disp = format_token_count(max_tok)
     console.print(f"{B}│[/] {bar} {usage_pct}% of {max_disp}")
     console.print(f"{B}│[/] [dim]Used:[/] {format_token_count(total)} [dim]• Remaining:[/] {format_token_count(info.get('remaining', 0))}")
     
