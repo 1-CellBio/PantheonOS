@@ -24,6 +24,7 @@
     // List of MCP servers to auto-start when Endpoint starts
     "auto_start": [
         "context7"
+        // "biomcp"
     ],
     "servers": {
         // === Example 1: Local STDIO Server (Endpoint managed startup) ===

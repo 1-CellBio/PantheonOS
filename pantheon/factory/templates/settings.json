@@ -7,7 +7,7 @@
     // ===== MCP Tools Configuration =====
     // Whether to auto-inject MCP tools (from unified gateway) into agents
     // For mcp abilities, this is not necessary, Package APIs are sufficient for all mcp tools
-    "enable_mcp_tools": true,
+    "enable_mcp_tools": false,
     // ===== Endpoint Service Configuration =====
     "endpoint": {
         "service_name": "pantheon-chatroom-endpoint",
@@ -21,7 +21,14 @@
         // Local ToolSet execution mode:
         // - "direct": Execute in current thread (fast, for lightweight tasks)
         // - "thread": Execute in separate thread (isolated, for heavy tasks)
-        "local_toolset_execution_mode": "direct"
+        "local_toolset_execution_mode": "direct",
+        // === Tool Output Limits ===
+        // Maximum characters for tool output (used for smart truncation)
+        "max_tool_content_length": 10000,
+        // Maximum lines for file read operations
+        "max_file_read_lines": 800,
+        // Maximum results for glob/search operations
+        "max_glob_results": 100
     },
     // ===== Built-in Services Configuration =====
     // Service modes: Specify service runtime modes

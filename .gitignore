@@ -168,6 +168,7 @@ jetstream_storage/
 try/
 tmp/
 .executor/
+workdir**
 
 # Session metadata and task tracking
 .notebook_sessions_metadata.json

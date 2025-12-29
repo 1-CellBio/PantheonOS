@@ -54,7 +54,7 @@ def _slugify(name: str) -> str:
 
 
 def _build_execution_context_id(
-    parent_metadata: dict,
+    context_variables: dict,
     run_context,
     depth: int,
     target_name: str,
@@ -68,7 +68,8 @@ def _build_execution_context_id(
     """
 
     def _extract_root_token() -> str:
-        execution_context_id = parent_metadata.get("execution_context_id")
+        # P2: Read from context_variables top level (messages have it there)
+        execution_context_id = context_variables.get("execution_context_id")
         if execution_context_id and "|" in execution_context_id:
             return execution_context_id.split("|", 1)[0]
 
@@ -101,38 +102,49 @@ def _build_child_context_metadata(
         )
     parent_metadata = context_variables.get("_metadata") or {}
     parent_path = parent_metadata.get("chain_path")
+    
+    # P2: Build enhanced chain_path with agent:call_id format
+    enhanced_chain = []
     if parent_path:
-        chain_path = list(parent_path)
+        # Inherit parent's enhanced path
+        enhanced_chain = list(parent_path)
     else:
-        chain_path = [run_context.agent.name]
-    if target_agent.name in chain_path:
+        # Root agent (no call_id)
+        enhanced_chain = [run_context.agent.name]
+    
+    # Extract agent names for loop detection
+    agent_names = []
+    for entry in enhanced_chain:
+        agent_name = entry.split(":", 1)[0] if ":" in entry else entry
+        agent_names.append(agent_name)
+    
+    if target_agent.name in agent_names:
         raise RuntimeError(
             "Delegation loop detected: this agent already appears in the current chain."
         )
-    chain_path.append(target_agent.name)
-
-    child_depth = max(len(chain_path) - 1, 0)
+    
+    child_depth = max(len(enhanced_chain), 0)  # Depth is length of existing chain
     if child_depth > max_depth:
         raise RuntimeError("Delegation depth limit reached.")
 
     execution_context_id = _build_execution_context_id(
-        parent_metadata, run_context, child_depth, target_agent.name
+        context_variables, run_context, child_depth, target_agent.name
     )
 
     tool_call_id = context_variables.get("tool_call_id") or (
         "call_" + uuid.uuid4().hex[:12]
     )
+    
+    # P2: Add current agent with call_id to chain
+    enhanced_chain.append(f"{target_agent.name}:{tool_call_id}")
 
+    # P2: Simplified metadata - only chain_path
     metadata = {
-        "execution_context_id": execution_context_id,
-        "chain_path": chain_path,
-        "parent": {
-            "agent": run_context.agent.name,
-            "call_id": tool_call_id,
-        },
+        "chain_path": enhanced_chain,
     }
 
-    return metadata
+    # P2: Return execution_context_id separately (will be set at message top level)
+    return metadata, execution_context_id
 
 
 class PantheonTeam(Team):
@@ -387,16 +399,19 @@ class PantheonTeam(Team):
                 run_context = get_current_run_context()
 
                 context_variables = dict(context_variables or {})
-                child_metadata = _build_child_context_metadata(
+                
+                # P2: _build_child_context_metadata now returns (metadata, execution_context_id)
+                child_metadata, execution_context_id = _build_child_context_metadata(
                     run_context,
                     target_agent,
                     context_variables,
                     self.max_delegate_depth,
                 )
-                execution_context_id = child_metadata["execution_context_id"]
 
                 child_context_variables = dict(context_variables)
                 child_context_variables["_metadata"] = child_metadata
+                # P2: Set execution_context_id at top level for child agent
+                child_context_variables["execution_context_id"] = execution_context_id
 
                 # Build task message with optional history summary
                 task_message = await create_delegation_task_message(
@@ -413,16 +428,28 @@ class PantheonTeam(Team):
                 parent_chunk_hook = run_context.process_chunk
 
                 async def wrapped_step(step_message: dict):
-                    metadata = step_message.get("_metadata")
-                    if not metadata or "execution_context_id" not in metadata:
-                        step_message["_metadata"] = child_metadata
+                    # P2: Set execution_context_id at message top level
+                    if "execution_context_id" not in step_message:
+                        step_message["execution_context_id"] = execution_context_id
+                    
+                    # P0 FIX + P2: Merge metadata using setdefault chaining
+                    step_message.setdefault("_metadata", child_metadata).setdefault(
+                        "chain_path", child_metadata["chain_path"]
+                    )
+                    
                     if parent_step_hook is not None:
                         await run_func(parent_step_hook, step_message)
 
                 async def wrapped_chunk(chunk: dict):
-                    metadata = chunk.get("_metadata")
-                    if not metadata or "execution_context_id" not in metadata:
-                        chunk["_metadata"] = child_metadata
+                    # P2: Set execution_context_id at message top level
+                    if "execution_context_id" not in chunk:
+                        chunk["execution_context_id"] = execution_context_id
+                    
+                    # P0 FIX + P2: Merge metadata using setdefault chaining
+                    chunk.setdefault("_metadata", child_metadata).setdefault(
+                        "chain_path", child_metadata["chain_path"]
+                    )
+                    
                     if parent_chunk_hook is not None:
                         await run_func(parent_chunk_hook, chunk)
 

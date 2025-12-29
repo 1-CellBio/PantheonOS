@@ -15,15 +15,6 @@ agents:
   - single_cell/reporter
   - single_cell/system_manager
   - single_cell/browser_use
-leader:
-  id: leader
-  name: Omics Leader
-  description: |
-    Team leader for single-cell/spatial omics research. Orchestrates the team,
-    delegates analysis tasks, manages exploratory workflows, and synthesizes findings.
-  icon: 🧭
-  toolsets:
-    - file_manager
 ---
 
 # Single Cell Analysis Team

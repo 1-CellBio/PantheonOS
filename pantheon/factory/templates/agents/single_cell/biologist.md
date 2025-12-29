@@ -1,4 +1,5 @@
 ---
+id: biologist
 name: biologist
 description: |
   Biologist agent, thinking like a professional biologist,

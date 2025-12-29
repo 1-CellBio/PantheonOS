@@ -819,7 +819,24 @@ class JupyterKernelToolSet(ToolSet):
             # Improve error message for Empty exception (timeout) which has empty str()
             error_msg = str(e)
             if not error_msg:
-                error_msg = f"Kernel execution timeout after {self.execution_timeout}s (kernel may still be running). Consider increasing 'endpoint.local_toolset_timeout' in settings."
+                error_msg = f"""Kernel execution timeout after {self.execution_timeout}s.
+
+## Immediate Actions:
+1. `manage_kernel(action="interrupt")` - stop current cell
+2. `manage_kernel(action="restart")` - reset kernel (clears memory)
+3. `manage_kernel(action="status")` - check kernel health
+
+## Prevention Tips:
+1. Split long operations into multiple cells (load → preprocess → compute)
+2. Use parallel computing:
+   - scanpy: `sc.settings.n_jobs = -1`
+   - pandas: `df.parallel_apply()` (pandarallel)
+3. Subsample for testing: `adata_sample = adata[:10000, :]`
+4. Save checkpoints: `adata.write('checkpoint.h5ad')`
+5. Tune algorithm parameters:
+   - UMAP: `n_neighbors=15, min_dist=0.3`
+   - PCA: `n_comps=50`
+"""
             logger.error(f"Execute request failed for session {session_id}: {error_msg}")
             return {
                 "success": False,

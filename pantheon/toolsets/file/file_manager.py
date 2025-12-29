@@ -431,6 +431,9 @@ class FileManagerToolSet(FileManagerToolSetBase):
 
         Returns:
             dict: {success: bool, content: str, total_lines: int, format: str}
+        
+        Note:
+            Large files are limited to max_file_read_lines. Use start_line/end_line to paginate.
         """
         # Support both absolute and relative paths
         if os.path.isabs(file_path):
@@ -447,6 +450,10 @@ class FileManagerToolSet(FileManagerToolSetBase):
                 lines = f.readlines()
 
             total_lines = len(lines)
+            
+            # Get line limit from settings
+            from pantheon.settings import get_settings
+            max_lines = get_settings().max_file_read_lines
 
             # Handle line range
             if start_line is not None or end_line is not None:
@@ -472,7 +479,19 @@ class FileManagerToolSet(FileManagerToolSetBase):
 
                 content = "".join(lines[start_idx:end_idx])
             else:
-                content = "".join(lines)
+                # No range specified - apply line limit if file is large
+                if total_lines > max_lines:
+                    content = "".join(lines[:max_lines])
+                    return {
+                        "success": True,
+                        "content": content,
+                        "total_lines": total_lines,
+                        "format": target_path.suffix.lower(),
+                        "truncated": True,
+                        "hint": f"Showing first {max_lines} of {total_lines} lines. Use start_line/end_line to read more."
+                    }
+                else:
+                    content = "".join(lines)
 
             return {
                 "success": True,
@@ -1091,15 +1110,34 @@ class FileManagerToolSet(FileManagerToolSetBase):
 
             # Include gitignored files
             await glob("**/*.log", respect_git_ignore=False)
+        
+        Note:
+            Results capped at max_glob_results. Refine pattern for more specific matches.
         """
         # Run in thread pool to avoid blocking event loop
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             glob_search,
             pattern=pattern,
             workspace_root=self.path,
             path=path,
             respect_git_ignore=respect_git_ignore,
         )
+        
+        # Apply result limit from settings
+        if result.get("success") and result.get("files"):
+            from pantheon.settings import get_settings
+            max_results = get_settings().max_glob_results
+            
+            files = result["files"]
+            total = len(files)
+            
+            if total > max_results:
+                result["files"] = files[:max_results]
+                result["total"] = total
+                result["capped"] = True
+                result["message"] = f"Results capped at {max_results}. Total matches: {total}. Refine pattern to narrow results."
+        
+        return result
 
     @tool
     async def grep(

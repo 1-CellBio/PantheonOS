@@ -252,6 +252,95 @@ class Memory:
             if last_message["role"] == "tool":
                 break
 
+    def _fix_corrupted_messages(self):
+        """Remove corrupted messages (missing role and useless).
+        
+        Removes messages that only contain partial data (e.g. {'agent_name': ...})
+        resulting from failed model calls.
+        """
+        original_len = len(self._messages)
+        self._messages = [
+            msg for msg in self._messages 
+            if msg.get("role") is not None
+        ]
+        removed_count = original_len - len(self._messages)
+        if removed_count > 0:
+            logger.warning(
+                f"Removed {removed_count} corrupted messages (missing role) from memory '{self.name}'"
+            )
+            self._dirty = True
+
+    def _fix_orphaned_tool_calls(self):
+        """Add placeholder responses for orphaned tool_calls and fix context IDs.
+        
+        1. Inserts [INTERNAL_ERROR] tool responses for any tool_call that lacks
+           a corresponding tool message.
+        2. Updates existing placeholder messages to ensure they match key metadata
+           (execution_context_id, agent_name) of the parent assistant message.
+        """
+        import time
+        from copy import deepcopy
+        
+        # Helper to find tool message for a tool_call_id
+        tool_msgs_map = {
+            msg.get("tool_call_id"): msg
+            for msg in self._messages
+            if msg.get("role") == "tool" and msg.get("tool_call_id")
+        }
+        
+        insertions = []  # (index, placeholder_message)
+        
+        for i, msg in enumerate(self._messages):
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                parent_context_id = msg.get("execution_context_id")
+                parent_agent_name = msg.get("agent_name")
+                
+                # Check each tool call in this assistant message
+                for tc in msg["tool_calls"]:
+                    tc_id = tc.get("id")
+                    if not tc_id:
+                        continue
+                        
+                    existing_tool_msg = tool_msgs_map.get(tc_id)
+                    
+                    if existing_tool_msg:
+                        continue
+                    else:
+                        # Create Phase: Insert missing tool response
+                        placeholder = {
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "tool_name": tc.get("function", {}).get("name", "unknown"),
+                            "content": "[INTERNAL_ERROR] Session interrupted - tool execution incomplete",
+                            "id": str(uuid4()),
+                            "timestamp": time.time(),
+                            "_recovered": True,
+                        }
+                        # Propagate parent metadata
+                        if parent_context_id:
+                            placeholder["execution_context_id"] = parent_context_id
+                        if parent_agent_name:
+                            placeholder["agent_name"] = parent_agent_name
+                        
+                        # Use parent's metadata structure if useful (optional, but good for tracking)
+                        if "_metadata" in msg:
+                             # Minimal metadata copy if needed
+                             pass
+
+                        insertions.append((i + 1, placeholder))
+                        # Update map to prevent duplicates if multiple refs exist (unlikely)
+                        tool_msgs_map[tc_id] = placeholder
+        
+        # Insert in reverse order to maintain correct indices
+        for idx, placeholder in reversed(insertions):
+            self._messages.insert(idx, placeholder)
+        
+        if insertions:
+            logger.info(
+                f"Fixed memory '{self.name}': {len(insertions)} orphaned tool_call(s) inserted."
+            )
+            self._schedule_persist()
+
 
 DEFAULT_CHAT_NAME = "New Chat"
 
@@ -295,7 +384,13 @@ class MemoryManager:
         Args:
             id: The ID of the memory.
         """
-        return self.memory_store[id]
+        memory = self.memory_store[id]
+        # Lazy fix: repair orphaned tool_calls on first access
+        if not getattr(memory, '_orphans_fixed', False):
+            memory._fix_corrupted_messages()
+            memory._fix_orphaned_tool_calls()
+            memory._orphans_fixed = True
+        return memory
 
     def delete_memory(self, id: str):
         """

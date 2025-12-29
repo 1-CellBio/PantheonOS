@@ -1,4 +1,5 @@
 ---
+id: leader
 name: leader
 toolsets:
   - file_manager

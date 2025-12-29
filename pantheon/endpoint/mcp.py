@@ -365,7 +365,9 @@ class MCPManager:
 
         # mcp.json uses 'servers' key directly
         mcp_servers = config.get("servers", {})
+        logger.info(f"DEBUG: MCPManager.load_config called with servers: {list(mcp_servers.keys())}")
         if not mcp_servers:
+            logger.warning("DEBUG: mcp_servers is empty/None")
             return results
 
         for server_name, server_config in mcp_servers.items():

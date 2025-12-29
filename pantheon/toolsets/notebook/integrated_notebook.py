@@ -423,6 +423,12 @@ class IntegratedNotebookToolSet(ToolSet):
             - success: True if execution succeeded
             - output: Execution result/output
             - kernel_session_id: Kernel session ID
+        
+        Tips:
+            - Split long operations into multiple cells  (load → preprocess → compute)
+            - Use parallel computing when available (scanpy: n_jobs=-1 etc...)
+            - Use manage_kernel(action="interrupt") to stop long-running cells
+            - IMPORTANT: To install R packages, use `%%R install.packages('pkg')`. Shell `Rscript` installs may not be visible.
         """
         session_id = self.get_session_id()
         if not session_id:
@@ -534,6 +540,7 @@ class IntegratedNotebookToolSet(ToolSet):
 
             # Add context information only if context exists
             if result["success"]:
+                result.pop("file_path", None)
                 result["notebook_path"] = notebook_path
                 if context:
                     result["kernel_session_id"] = context.kernel_session_id
@@ -550,20 +557,32 @@ class IntegratedNotebookToolSet(ToolSet):
         notebook_path: str,
         cell_id: str,
         content: str,
+        old_content: Optional[str] = None,
     ) -> dict:
         """
-        Update the content of a cell.
+        Update cell content (supports full replacement or partial replacement).
 
         Args:
             notebook_path: Path to notebook file
             cell_id: Cell identifier
-            content: New cell content/source code
+            content: New cell content
+            old_content: Optional. If provided, will replace old_content with content.
+                        If None/empty, will replace entire cell content.
 
         Returns:
             dict with:
             - success: True if cell was updated
             - cell_id: The cell identifier
-            - notebook_path: Path to the notebook
+            - replacements: Number of replacements made (only when old_content provided)
+
+        Examples:
+            # Full replacement (replace entire cell)
+            update_cell(notebook_path, cell_id, content="import numpy as np\\nprint('new code')")
+
+            # Partial replacement (replace specific content - more token efficient)
+            update_cell(notebook_path, cell_id, 
+                       content="n_neighbors=30",
+                       old_content="n_neighbors=15")
         """
         session_id = self.get_session_id()
 
@@ -571,18 +590,48 @@ class IntegratedNotebookToolSet(ToolSet):
             # Get context if exists (don't create kernel for simple edit)
             context = self._get_context(notebook_path, session_id) if session_id else None
 
-            # Call notebook_contents API
+            # Partial replacement mode: replace old_content with content
+            if old_content:
+                # Read current cell content
+                cell_index, cell_data = await self._get_cell_by_id(notebook_path, cell_id)
+                if cell_index is None:
+                    return {"success": False, "error": f"Cell {cell_id} not found"}
+
+                # Get source
+                source = self.notebook_contents._format_source(cell_data.get("source", ""))
+
+                # Check if old_content exists
+                if old_content not in source:
+                    return {
+                        "success": False,
+                        "error": f"old_content not found in cell {cell_id}"
+                    }
+
+                # Count replacements
+                replacement_count = source.count(old_content)
+
+                # Perform replacement
+                new_source = source.replace(old_content, content)
+
+                # Update content variable for the actual update
+                content = new_source
+
+            # Call notebook_contents API with final content
             result = await self.notebook_contents.update_cell(
                 path=notebook_path,
                 cell_id=cell_id,
                 source=content,
             )
 
-            # Add context information only if context exists
+            # Add context information
             if result["success"]:
+                result.pop("file_path", None)
                 result["notebook_path"] = notebook_path
                 if context:
                     result["kernel_session_id"] = context.kernel_session_id
+
+                if old_content:
+                    result["replacements"] = replacement_count
 
             return result
 
@@ -623,6 +672,7 @@ class IntegratedNotebookToolSet(ToolSet):
 
             # Add context information only if context exists
             if result["success"]:
+                result.pop("file_path", None)
                 result["notebook_path"] = notebook_path
                 if context:
                     result["kernel_session_id"] = context.kernel_session_id
@@ -669,6 +719,7 @@ class IntegratedNotebookToolSet(ToolSet):
 
             # Add context information only if context exists
             if result["success"]:
+                result.pop("file_path", None)
                 result["notebook_path"] = notebook_path
                 if context:
                     result["kernel_session_id"] = context.kernel_session_id

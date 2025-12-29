@@ -589,6 +589,34 @@ class Settings:
         self._ensure_loaded()
         return self._settings.get("endpoint", {}).get("local_toolset_timeout", 3600)
 
+    @property
+    def max_tool_content_length(self) -> int:
+        """
+        Maximum characters for tool output content.
+        Used for smart truncation at agent level.
+        Defaults to 10000 (~5K tokens).
+        """
+        self._ensure_loaded()
+        return self._settings.get("endpoint", {}).get("max_tool_content_length", 10000)
+
+    @property
+    def max_file_read_lines(self) -> int:
+        """
+        Maximum lines for file read operations.
+        Defaults to 800 lines.
+        """
+        self._ensure_loaded()
+        return self._settings.get("endpoint", {}).get("max_file_read_lines", 800)
+
+    @property
+    def max_glob_results(self) -> int:
+        """
+        Maximum results for glob/search operations.
+        Defaults to 100 results.
+        """
+        self._ensure_loaded()
+        return self._settings.get("endpoint", {}).get("max_glob_results", 100)
+
 
     @property
     def settings(self) -> Dict[str, Any]:

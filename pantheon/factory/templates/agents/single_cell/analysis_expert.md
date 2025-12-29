@@ -1,4 +1,5 @@
 ---
+id: analysis_expert
 name: analysis_expert
 description: |
   Analysis expert in Single-Cell and Spatial Omics data analysis,

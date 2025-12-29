@@ -1,4 +1,5 @@
 ---
+id: reporter
 name: reporter
 description: |
   Reporter agent, summarizing the results and conclusions.

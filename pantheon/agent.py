@@ -413,7 +413,7 @@ class Agent:
         memory: Memory | None = None,
         tool_timeout: int | None = None,
         force_litellm: bool = False,
-        max_tool_content_length: int | None = 100000,
+        max_tool_content_length: int | None = None,
         description: str | None = None,
     ):
         self.id = uuid4()
@@ -460,7 +460,12 @@ class Agent:
         self.events_queue: asyncio.Queue = asyncio.Queue()
         self.force_litellm = force_litellm
         self.icon = icon
-        self.max_tool_content_length = max_tool_content_length
+        
+        # Tool content length: use provided value, or get from settings
+        if max_tool_content_length is not None:
+            self.max_tool_content_length = max_tool_content_length
+        else:
+            self.max_tool_content_length = get_settings().max_tool_content_length
 
         # Provider management (MCP, ToolSet, etc.)
         self.providers: dict[str, ToolProvider] = {}  # name -> ToolProvider instance
@@ -943,15 +948,19 @@ class Agent:
             end_timestamp = time.time()
             execution_duration = end_timestamp - start_time
 
+            # P1: Move timestamp fields to _metadata (except top-level timestamp for compatibility)
             tool_message = {
                 "role": "tool",
                 "tool_name": func_name,
+                "name": func_name,
                 "id": str(uuid4()),
                 "tool_call_id": tool_call_id,
-                "timestamp": end_timestamp,
-                "start_timestamp": start_time,
-                "end_timestamp": end_timestamp,
-                "execution_duration": execution_duration,
+                "timestamp": end_timestamp,  # Keep for backward compatibility
+                "_metadata": {
+                    "start_timestamp": start_time,
+                    "end_timestamp": end_timestamp,
+                    "execution_duration": execution_duration,
+                },
             }
 
             if isinstance(result, (Agent, RemoteAgent)):
@@ -963,15 +972,21 @@ class Agent:
                 )
             else:
                 processed_result = process_tool_result(result)
-                content = repr(processed_result)
+                
+                # Smart truncation (base64 already filtered in process_tool_result)
                 if self.max_tool_content_length is not None:
-                    content = content[: self.max_tool_content_length]
-                tool_message.update(
-                    {
-                        "raw_content": result,
-                        "content": content,
-                    }
-                )
+                    from .utils.truncate import smart_truncate_result
+                    content = smart_truncate_result(
+                        processed_result, 
+                        self.max_tool_content_length
+                    )
+                else:
+                    content = repr(processed_result)
+                
+                tool_message.update({
+                    "raw_content": result,
+                    "content": content,
+                })
 
             return tool_message
 

@@ -42,9 +42,43 @@ async def create_agent(
     mcp_server_added = []
     toolsets = list(toolsets or [])
     mcp_servers = list(mcp_servers or [])
+    
+    # ===== Parse toolsets to extract MCP specs =====
+    normal_toolsets = []
+    mcp_from_toolsets = []
+    
+    for spec in toolsets:
+        if spec == "mcp":
+            mcp_from_toolsets.append("mcp")  # Explicit "mcp" request
+        elif spec.startswith("mcp:"):
+            mcp_from_toolsets.append(spec[4:])  # Extract: "mcp:context7" -> "context7"
+        else:
+            normal_toolsets.append(spec)
+    
+    # Merge all MCP sources into one set
+    all_mcp_servers = set(mcp_servers + mcp_from_toolsets)
+    
+    # If enable_mcp=True, add "mcp" to the set (unified gateway)
+    if enable_mcp and get_settings().enable_mcp_tools:
+        all_mcp_servers.add("mcp")
+    
+    # Save specific servers before deduplication (for startup)
+    servers_to_start = [s for s in all_mcp_servers if s != "mcp"]
+    
+    # Optimization: If "mcp" (unified gateway) is present, remove specific servers
+    # because "mcp" already includes all MCP tools (would cause duplicates)
+    if "mcp" in all_mcp_servers:
+        specific_servers = all_mcp_servers - {"mcp"}
+        if specific_servers:
+            logger.info(
+                f"Agent '{name}': Unified MCP gateway includes all tools. "
+                f"Skipping specific servers {list(specific_servers)} to avoid duplicates."
+            )
+            all_mcp_servers = {"mcp"}
+    
     # ===== Add ToolSet providers from config =====
 
-    for toolset_name in toolsets:
+    for toolset_name in normal_toolsets:
         # Special handling: "task" toolset is local-only (not via Endpoint)
         if toolset_name == "task":
             try:
@@ -76,48 +110,76 @@ async def create_agent(
             logger.error(f"Agent '{name}': Failed to add toolset '{toolset_name}': {e}")
             agent.not_loaded_toolsets.append(toolset_name)
 
-    # ===== Add MCP provider from unified gateway =====
-    # All MCP servers are accessible via the unified gateway at /mcp
-    # with prefixed tool names (e.g., context7_resolve_library_id)
-
-    if enable_mcp and get_settings().enable_mcp_tools:
+    # ===== Add MCP providers =====
+    # Loop handles empty set naturally - no execution if set is empty
+    
+    # First, ensure all required MCP servers are started
+    if servers_to_start:
         try:
             from pantheon.utils.misc import call_endpoint_method
-            from pantheon.providers import MCPProvider
-
-            # Get unified gateway URI (special name="mcp" returns gateway info)
+            
+            logger.info(f"Agent '{name}': Ensuring MCP servers are started: {servers_to_start}")
             result = await call_endpoint_method(
                 endpoint_service,
                 endpoint_method_name="manage_service",
-                action="get",
+                action="start",
                 service_type="mcp",
-                name="mcp",  # Special: returns unified gateway URI
+                name=servers_to_start,
             )
-
             if not result.get("success"):
-                raise UserWarning(
-                    f"Failed to get unified gateway: {result.get('message', 'Unknown error')}"
+                logger.warning(
+                    f"Agent '{name}': Failed to start some MCP servers: {result.get('errors', [])}"
+                )
+            else:
+                logger.info(
+                    f"Agent '{name}': MCP servers ready: {result.get('started', [])}"
+                )
+        except Exception as e:
+            logger.warning(f"Agent '{name}': Error ensuring MCP servers: {e}")
+    
+    # Now add MCP providers
+    try:
+        from pantheon.utils.misc import call_endpoint_method
+        from pantheon.providers import MCPProvider
+
+        # Get unified gateway URI (only if we'll use it)
+        unified_uri = None
+        for server_name in all_mcp_servers:
+            # Get URI on first iteration
+            if unified_uri is None:
+                result = await call_endpoint_method(
+                    endpoint_service,
+                    endpoint_method_name="manage_service",
+                    action="get",
+                    service_type="mcp",
+                    name="mcp",
                 )
 
-            unified_uri = result.get("service", {}).get("uri")
-            if not unified_uri:
-                raise UserWarning("Unified gateway has no URI configured")
+                if not result.get("success"):
+                    raise UserWarning(
+                        f"Failed to get unified gateway: {result.get('message', 'Unknown error')}"
+                    )
 
-            # Use singleton MCPProvider for the unified gateway
-            mcp_provider = MCPProvider.get_instance(unified_uri)
-            await mcp_provider.initialize()
+                unified_uri = result.get("service", {}).get("uri")
+                if not unified_uri:
+                    raise UserWarning("Unified gateway has no URI configured")
 
-            # Add as single "mcp" provider (all tools accessible via prefix)
-            await agent.mcp("mcp", mcp_provider)
-            mcp_server_added.append("mcp")
-            logger.debug(
-                f"Agent '{name}': Connected to unified MCP gateway at {unified_uri}"
-            )
+            # Add provider for this MCP server
+            if server_name == "mcp":
+                # Unified gateway - no filtering
+                provider = MCPProvider.get_instance(unified_uri)
+            else:
+                # Specific server - filter by prefix
+                provider = MCPProvider.get_instance(unified_uri, filter_prefix=server_name)
 
-        except UserWarning as e:
-            logger.warning(f"Agent '{name}': {e}")
-        except Exception as e:
-            logger.error(f"Agent '{name}': Failed to add unified MCP provider: {e}")
+            await provider.initialize()
+            await agent.mcp(server_name, provider)
+            mcp_server_added.append(server_name)
+
+    except UserWarning as e:
+        logger.warning(f"Agent '{name}': {e}")
+    except Exception as e:
+        logger.error(f"Agent '{name}': Failed to add MCP provider: {e}")
 
     logger.info(
         f"Agent {name} added toolsets: {toolsets_added} mcp_servers: {mcp_server_added}"
