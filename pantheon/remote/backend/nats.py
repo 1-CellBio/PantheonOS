@@ -245,13 +245,20 @@ class NATSService(RemoteService):
         nc: nats.aio.client.Client,
         service_id: str,
         kv_store=None,
-        timeout: float = 30.0,
+        timeout: float | None = None,
         **kwargs,
     ):
         self.nc = nc
         self.service_id = service_id
         self.kv_store = kv_store
-        self.timeout = timeout
+        
+        # Use provided timeout or get from settings (unified with ToolSetManager and Kernel)
+        if timeout is not None:
+            self.timeout = timeout
+        else:
+            from pantheon.settings import get_settings
+            self.timeout = get_settings().tool_timeout
+            
         self.service_subject = f"pantheon.service.{service_id}"
         self._service_info = ServiceInfo(
             service_id=service_id,
@@ -374,7 +381,13 @@ class NATSRemoteWorker(RemoteWorker):
         self.kv_store = None
         self._service_name = service_name
         self._description = description
-        self.timeout = kwargs.get("timeout", 30.0)  # Default timeout for reverse calls
+        
+        # Use provided timeout or get from settings (unified with ToolSetManager and Kernel)
+        if "timeout" in kwargs:
+            self.timeout = kwargs["timeout"]
+        else:
+            from pantheon.settings import get_settings
+            self.timeout = get_settings().tool_timeout
 
         # Generate service ID using full hash for frontend compatibility
         id_hash = kwargs.get("id_hash")

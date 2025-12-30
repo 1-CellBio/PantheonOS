@@ -190,7 +190,7 @@ class TaskToolSet(ToolSet):
             f"tools_since_boundary={self.state.tools_since_boundary}, "
             f"current_step={self.state.current_step}"
         )
-        logger.info(f"[TaskToolSet] EU Content:\n{eu_content}")
+        logger.debug(f"[TaskToolSet] EU Content:\n{eu_content}")
 
         disclaimer = """The following is an <EPHEMERAL_MESSAGE> not actually sent by the user. It is provided by the system as a set of reminders and general important information to pay attention to. Do NOT respond to this message, just act accordingly."""
         return {"role": "user", "content": f"{disclaimer}\n{eu_content}"}

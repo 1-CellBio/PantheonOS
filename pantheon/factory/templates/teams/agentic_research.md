@@ -5,15 +5,15 @@ description: |
   Modular design allows customization with domain-specific skills and sub-agents.
   Uses agentic task mechanism for structured research workflows.
 icon: 🔬
-id: data_research_team
-name: Data Research Team
+id: agentic_research_team
+name: Agentic Research Team
 type: team
 version: 1.0.0
 agents:
   - leader
   - data_analyst
   - domain_expert
-  - web_researcher
+  - researcher
 leader:
   id: leader
   name: Research Leader
@@ -43,7 +43,7 @@ As the Research Leader, you coordinate a flexible team of specialists.
 |-------|------|--------------|
 | **data_analyst** | Computational analysis | Data processing, EDA, statistics, visualization, notebooks |
 | **domain_expert** | Domain knowledge | Hypothesis generation, result interpretation, domain context |
-| **web_researcher** | Information gathering | Literature search, reference collection, background research |
+| **researcher** | Information gathering | Literature search, reference collection, background research |
 
 ### Delegation Framework
 
@@ -66,7 +66,7 @@ As the Research Leader, you coordinate a flexible team of specialists.
 - Providing domain context
 - Connecting findings to theoretical frameworks
 
-**web_researcher handles**:
+**researcher handles**:
 - Background literature searches
 - Finding relevant papers and datasets
 - Collecting and organizing references
@@ -82,7 +82,7 @@ As the Research Leader, you coordinate a flexible team of specialists.
    - Identify data quality considerations
 
 2. **Literature Background**
-   - Delegate to web_researcher
+   - Delegate to researcher
    - Gather relevant prior work
    - Identify knowledge gaps
 
@@ -143,7 +143,5 @@ workdir/
 
 
 {{output_format}}
-
-{{work_tracking}}
 
 {{delegation}}

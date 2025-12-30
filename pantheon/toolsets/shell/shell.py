@@ -3,7 +3,7 @@ import shlex
 import uuid
 from pathlib import Path
 
-from ._shell import AsyncShell
+from ._shell import AsyncShell, ShellStatus
 from pantheon.toolset import ToolSet, tool
 from pantheon.utils.log import logger
 from pantheon.internal.package_runtime.context import build_context_env
@@ -26,9 +26,7 @@ class ShellToolSet(ToolSet):
         super().__init__(name, **kwargs)
         self.clientid_to_shellid = {}
         self.shells = {}
-        self.workdir = (
-            Path(workdir).expanduser().resolve() if workdir else Path.cwd()
-        )
+        self.workdir = Path(workdir).expanduser().resolve() if workdir else Path.cwd()
 
     def _prepare_shell_env(self) -> dict:
         return os.environ.copy()
@@ -92,6 +90,45 @@ class ShellToolSet(ToolSet):
         logger.info(f"[dim]Shell closed: {shell_id[:8]}[/dim]")
         return {"success": True, "shell_id": shell_id}
 
+    @tool
+    async def get_shell_output(
+        self,
+        shell_id: str,
+        timeout: int = 5,
+        max_output: int | None = None,
+    ) -> dict:
+        """Get output from a shell, used to check status of background commands.
+
+        When a command times out, it continues running in the background.
+        Use this tool with the shell_id returned from run_command to fetch
+        the remaining output and check if the command has completed.
+
+        Args:
+            shell_id: The shell ID returned from run_command when it timed out.
+            timeout: Seconds to wait for output. Default 5 seconds.
+            max_output: Optional maximum length for the output. If the output exceeds this,
+                it will be smartly truncated (head + tail).
+
+        Returns:
+            dict: {
+                "output": str,  # Command output since last read
+                "status": "completed" | "timeout"  # Whether command finished
+            }
+        """
+        result = await self.run_command_in_shell(
+            shell_id=shell_id,
+            command=None,
+            timeout=timeout,
+        )
+
+        if max_output and result.get("success") and result.get("output"):
+            output = result["output"]
+            if len(output) > max_output:
+                from pantheon.utils.truncate import truncate_string
+                result["output"] = truncate_string(output, max_output)
+
+        return result
+
     @tool(exclude=True)
     async def run_command_in_shell(
         self,
@@ -118,28 +155,31 @@ class ShellToolSet(ToolSet):
         status = "completed"
 
         try:
+
             def _handle_timeout(message: str) -> None:
                 nonlocal status, output
                 status = "timeout"
                 logger.info(f"[yellow]⚠️ {message}[/yellow]")
                 output += "\n[Warning] The execution of the command was interrupted because of the timeout. "
-                output += (
-                    "You can try to run run_command_in_shell without a command to get the remaining output of the shell."
-                )
 
             if command is not None:
                 await self._apply_context_to_shell(shell)
                 output, finished = await shell.run_command(command, timeout=timeout)
                 if timeout is not None and not finished:
                     _handle_timeout(
-                        f"Command timed out after {timeout}s - call run_command_in_shell without a command to fetch remaining output"
+                        f"Command timed out after {timeout}s - call run_command without a command to fetch remaining output"
                     )
             else:
-                output, finished = await shell.read_until_marker(timeout=timeout)
+                marker = shell.current_marker if shell.current_marker else None
+                output, finished = await shell.read_until_marker(
+                    marker, timeout=timeout
+                )
+                if finished and shell.current_marker:
+                    shell.status = ShellStatus.IDLE
+                    shell.current_marker = None
+
                 if timeout is not None and not finished:
-                    _handle_timeout(
-                        f"Reading shell output timed out after {timeout}s"
-                    )
+                    _handle_timeout(f"Reading shell output timed out after {timeout}s")
         except Exception as exc:
             return {"success": False, "error": str(exc), "shell_id": shell_id}
 
@@ -167,6 +207,17 @@ class ShellToolSet(ToolSet):
             return False
 
         return True
+
+    async def _get_available_shell(self) -> str:
+        """Get an available (idle) shell, creating a new one if necessary."""
+        # First, try to find an idle shell
+        for shell_id, shell in self.shells.items():
+            if shell.is_idle() and self._is_shell_alive(shell_id):
+                return shell_id
+
+        # No idle shell available, create a new one
+        result = await self.new_shell()
+        return result["shell_id"]
 
     async def _restart_shell(self, client_id: str) -> str:
         """Restart a shell for a given client_id."""
@@ -196,94 +247,125 @@ class ShellToolSet(ToolSet):
         self,
         command: str | None = None,
         shell_id: str | None = None,
-        shell_output: bool = False,
         timeout: int | None = None,
+        max_output: int | None = None,
     ):
         """Run a shell command and return the result.
-        
-        This tool automatically manages a shell session for you. Just provide the `command` 
-        to execute it in the current session.
+
+        This tool automatically manages shell sessions. Just provide the `command`
+        to execute. Environment variables and working directory are preserved
+        across commands in the same session.
+
+        **Timeout Behavior**: When a command times out, it continues running in
+        the background. The response includes a `shell_id` which you can use with
+        `get_shell_output` to check progress and retrieve the remaining output.
+
+        **Auto Shell Allocation**: If the current shell is busy (running a
+        background command), a new shell is automatically allocated.
 
         Args:
-            command: The command to run. Required unless `shell_output` is True.
-            timeout: Optional timeout in seconds.
-            shell_output: Set to True to fetch pending output without running a command.
-                Useful after a timeout or for checking long-running processes.
-            shell_id: Optional. Specify a particular shell ID to run the command in.
-                If not provided, the tool uses (and automatically creates if needed) 
-                the default shell for the current context. 
-                This allows you to continue working in the same session (preserving environment variables, etc).
+            command: The command to run.
+            timeout: Optional timeout in seconds. If the command doesn't complete
+                within this time, it continues running in the background.
+            shell_id: Optional. Specify a particular shell ID to use.
+                If not provided, automatically uses an available shell.
+            max_output: Optional. Max output characters (for verbose commands like
+                R package install, npm install). Use smaller values to save tokens.
 
         Returns:
-            dict: The execution result with the following structure:
-            {
-                "success": bool,       # True if the command executed successfully
-                "output": str,         # Combined stdout and stderr
-                "error": str | None,   # Error message if success is False
-                "shell_id": str,       # The ID of the shell session used
-                "status": str          # "completed" or "timeout"
-            }
-        """
-        if command is None and not shell_output:
-             return {
-                "success": False,
-                "error": "You must provide a command or set shell_output to True",
+            dict: {
+                "success": bool,       # True if executed successfully
+                "output": str,         # Command output (stdout + stderr)
+                "status": str,         # "completed" or "timeout"
+                "shell_id": str        # Shell ID (returned on timeout for follow-up)
             }
         
+        Note:
+            Large outputs are auto-truncated. Use max_output for early truncation.
+
+        Tips:
+            - You may want to limit the length of output for commands that usually rely on paging and may contain very long output (e.g. `ls -R`, `git log`, use `head -n 20` or `git log -n 5`).
+            - Use `max_output` parameter as a safety net.
+
+        Examples:
+            # Run a quick command
+            run_command(command="ls -la")
+
+            # Run a long task with timeout (becomes background)
+            run_command(command="npm run build", timeout=10)
+            # Returns: {"status": "timeout", "shell_id": "xxx", ...}
+
+            # Run verbose command with early truncation
+            run_command(command="R -e 'BiocManager::install(...)'", max_output=5000)
+        """
         # If shell_id is provided, use it directly (Manual Mode)
         if shell_id:
-            return await self.run_command_in_shell(
+            result = await self.run_command_in_shell(
                 shell_id=shell_id,
                 command=command,
                 timeout=timeout,
             )
+        else:
+            # Auto Mode (Client ID based)
+            context_dict = dict(self.get_context() or {})
+            client_id = context_dict.get("client_id")
+            if client_id is None:
+                client_id = "default"
+                logger.warning("No client id provided, using default client id.")
 
-        # Auto Mode (Client ID based)
-        context_dict = dict(self.get_context() or {})
-        client_id = context_dict.get("client_id")
-        if client_id is None:
-            client_id = "default"
-            logger.warning("No client id provided, using default client id.")
+            initial_output = ""
+            # Resolve shell_id from client_id mapping
+            _mapped_shell_id = self.clientid_to_shellid.get(client_id)
 
-        initial_output = ""
-        # Resolve shell_id from client_id mapping
-        _mapped_shell_id = self.clientid_to_shellid.get(client_id)
+            # Check if we need to create a new shell
+            if (_mapped_shell_id is None) or (_mapped_shell_id not in self.shells):
+                res = await self.new_shell()
+                _mapped_shell_id = res["shell_id"]
+                initial_output = res["initial_output"]
+                self.clientid_to_shellid[client_id] = _mapped_shell_id
 
-        # Check if we need to create a new shell
-        if (_mapped_shell_id is None) or (_mapped_shell_id not in self.shells):
-            res = await self.new_shell()
-            _mapped_shell_id = res["shell_id"]
-            initial_output = res["initial_output"]
-            self.clientid_to_shellid[client_id] = _mapped_shell_id
+            # Check if shell is still alive before running command
+            if not self._is_shell_alive(_mapped_shell_id):
+                _mapped_shell_id = await self._restart_shell(client_id)
+                initial_output = ""  # New shell will have its own initial output
 
-        # Check if shell is still alive before running command
-        if not self._is_shell_alive(_mapped_shell_id):
-            _mapped_shell_id = await self._restart_shell(client_id)
-            initial_output = ""  # New shell will have its own initial output
+            # If mapped shell is busy, get an available shell
+            mapped_shell = self.shells.get(_mapped_shell_id)
+            if mapped_shell and not mapped_shell.is_idle():
+                _mapped_shell_id = await self._get_available_shell()
 
-        result = await self.run_command_in_shell(
-            shell_id=_mapped_shell_id,
-            command=command,
-            timeout=timeout,
-        )
-
-        # If the shell crashed, restart it but do not rerun the command automatically
-        if not result.get("success") and self._should_restart(result.get("error")):
-            logger.warning(
-                f"Shell command failed for shell {_mapped_shell_id[:8]}: {result.get('error')}"
+            result = await self.run_command_in_shell(
+                shell_id=_mapped_shell_id,
+                command=command,
+                timeout=timeout,
             )
-            _mapped_shell_id = await self._restart_shell(client_id) # Update mapping
-            return result
 
-        if not result.get("success"):
-            return result
-        
-        # Prepend initial output from new shell creation if applicable
-        if initial_output and result.get("success"):
-            combined_output = result.get("output") or ""
-            result["output"] = (
-                f"{initial_output}\n{combined_output}" if combined_output else initial_output
-            )
+            # If the shell crashed, restart it but do not rerun the command automatically
+            if not result.get("success") and self._should_restart(result.get("error")):
+                logger.warning(
+                    f"Shell command failed for shell {_mapped_shell_id[:8]}: {result.get('error')}"
+                )
+                _mapped_shell_id = await self._restart_shell(client_id)  # Update mapping
+                return result
+
+            if not result.get("success"):
+                return result
+
+            # Prepend initial output from new shell creation if applicable
+            if initial_output and result.get("success"):
+                combined_output = result.get("output") or ""
+                result["output"] = (
+                    f"{initial_output}\n{combined_output}"
+                    if combined_output
+                    else initial_output
+                )
+
+        # Apply early truncation if max_output specified
+        if max_output and result.get("success") and result.get("output"):
+            output = result["output"]
+            if len(output) > max_output:
+                from pantheon.utils.truncate import truncate_string
+                result["output"] = truncate_string(output, max_output)
 
         return result
 

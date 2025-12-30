@@ -175,16 +175,36 @@ end
 
 
 async def test_shell_toolset():
+    """Test ShellToolSet locally without remote service dependency."""
     toolset = ShellToolSet("shell")
+    
+    # Test 1: Basic command execution
+    if sys.platform.startswith("win"):
+        command = "dir"
+    else:
+        command = "ls"
+    resp = await toolset.run_command(command=command)
+    assert resp["success"], f"Command should succeed: {resp}"
+    
+    # Test 2: Echo command
+    resp = await toolset.run_command(command="echo 'Hello, world!'")
+    assert resp["success"], f"Echo should succeed: {resp}"
+    assert "Hello, world!" in resp["output"], f"Output should contain message: {resp}"
+    
+    # Test 3: Timeout and background behavior
+    resp = await toolset.run_command(command="sleep 2 && echo done", timeout=1)
+    assert resp["status"] == "timeout", f"Should timeout: {resp}"
+    assert "shell_id" in resp, "Should return shell_id on timeout"
+    bg_shell_id = resp["shell_id"]
+    
+    # Test 4: get_shell_output to check background task
+    resp = await toolset.get_shell_output(shell_id=bg_shell_id, timeout=5)
+    assert resp["success"], f"get_shell_output should succeed: {resp}"
+    assert resp["status"] == "completed", f"Should complete: {resp}"
+    assert "done" in resp["output"], f"Output should contain 'done': {resp}"
+    
+    # Test 5: Shell should be idle now and reusable
+    resp = await toolset.run_command(command="echo reused", shell_id=bg_shell_id)
+    assert resp["success"], f"Reuse should succeed: {resp}"
+    assert "reused" in resp["output"], f"Output should contain 'reused': {resp}"
 
-    async with run_toolsets([toolset]):
-        s = await connect_remote(toolset.service_id)
-        if sys.platform.startswith("win"):
-            command = "dir"
-        else:
-            command = "ls"
-        resp = await s.invoke("run_command", {"command": command})
-        assert resp["success"]
-        resp = await s.invoke("run_command", {"command": "echo 'Hello, world!'"})
-        assert resp["success"]
-        assert "Hello, world!" in resp["output"]

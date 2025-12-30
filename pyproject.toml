@@ -59,6 +59,8 @@ toolsets = [
     "tree-sitter>=0.24.0",
     "tree-sitter-python>=0.24.0",
     "tree-sitter-javascript>=0.24.0",
+    # R language support for notebooks
+    "rpy2>=3.5.0",
 ]
 server = [
     "nats-server-bin>=2.10.0",

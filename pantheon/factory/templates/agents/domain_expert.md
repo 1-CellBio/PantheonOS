@@ -45,25 +45,4 @@ Include: thinking process, hypotheses/interpretations, supporting evidence.
 4. Identify implications and limitations
 5. Suggest follow-up analyses or experiments
 
-## Customization Note
-
-This is a **placeholder agent** for domain-specific expertise.
-To customize for a specific domain:
-
-1. Create a new agent file (e.g., `genomics_expert.md`, `climate_scientist.md`)
-2. Update the identity and description
-3. Add domain-specific:
-   - Terminology and concepts
-   - Common analysis patterns
-   - Interpretation frameworks
-   - Relevant databases and resources
-
-Example domains:
-- Bioinformatics: cell biology, gene regulation, pathways
-- Finance: market analysis, risk assessment, portfolio theory
-- Climate Science: atmospheric modeling, ecosystem dynamics
-- Social Science: behavioral patterns, demographic trends
-
-{{work_strategy}}
-
 {{output_format}}

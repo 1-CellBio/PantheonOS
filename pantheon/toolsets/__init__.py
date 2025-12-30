@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .task import TaskToolSet
     from .knowledge import KnowledgeToolSet
     from .evolution import EvolutionToolSet, EvaluatorToolSet
+    from .skillbook import SkillbookToolSet
 
 _TOOLSET_MAPPING = {
     "PythonInterpreterToolSet": ".python",
@@ -39,6 +40,7 @@ _TOOLSET_MAPPING = {
     "KnowledgeToolSet": ".knowledge",
     "EvolutionToolSet": ".evolution",
     "EvaluatorToolSet": ".evolution",
+    "SkillbookToolSet": ".skillbook",
 }
 
 __all__ = list(_TOOLSET_MAPPING.keys())

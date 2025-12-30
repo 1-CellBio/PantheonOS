@@ -439,28 +439,32 @@ def _is_prompt_path_reference(name: str) -> bool:
     """
     Check if a prompt reference is a path reference.
 
-    Path references contain '/' or end with '.md'.
+    Path references start with '/', './', '../' or end with '.md'.
+    Namespaced IDs like 'folder/name' are NOT path references.
     Examples:
         - './custom/prompt.md' -> True
         - '../shared/prompt.md' -> True
         - '/absolute/path/prompt.md' -> True
         - 'work_strategy' -> False (ID reference)
+        - 'skill_learning/reflector' -> False (namespaced ID)
     """
-    return "/" in name or name.endswith(".md")
+    return name.startswith(("/", "./", "../")) or name.endswith(".md")
 
 
 def _is_path_reference(entry: str) -> bool:
     """
     Check if an agent entry is a path reference.
 
-    Path references contain '/' or end with '.md'.
+    Path references start with '/', './', '../' or end with '.md'.
+    Namespaced IDs like 'folder/name' are NOT path references.
     Examples:
         - './custom/agent.md' -> True
         - '../shared/agent.md' -> True
         - '/absolute/path/agent.md' -> True
         - 'python_dev' -> False (ID reference)
+        - 'skill_learning/skill_manager' -> False (namespaced ID)
     """
-    return "/" in entry or entry.endswith(".md")
+    return entry.startswith(("/", "./", "../")) or entry.endswith(".md")
 
 
 class UnifiedMarkdownParser:

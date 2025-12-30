@@ -249,17 +249,25 @@ class ToolSet(ABC):
     def service_id(self):
         return self.worker.service_id if self.worker else None
 
-    def get_session_id(self) -> Optional[str]:
+    def get_session_id(self) -> str:
         """
         Get current session ID from context (similar to getting HTTP header in MCP)
 
         Returns:
-            Session ID if set in current context, None otherwise
+            Session ID if set in current context, 'default' otherwise
         """
         ctx = get_current_context_variables()
         if ctx:
-            return ctx.get("client_id")
-        return None
+            client_id = ctx.get("client_id")
+            if client_id:
+                return client_id
+        
+        # Fallback to default for single-user or testing scenarios
+        logger.warning(
+            f"No client_id in context for {self._service_name}, using 'default' session_id. "
+            "This is fine for single-user mode but may cause issues in multi-user scenarios."
+        )
+        return "default"
 
     def get_context(self) -> Optional[ExecutionContext]:
         """Get current execution context"""

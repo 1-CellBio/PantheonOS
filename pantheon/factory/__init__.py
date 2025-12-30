@@ -15,6 +15,7 @@ async def create_agent(
     toolsets: list[str] | None = None,
     mcp_servers: list[str] | None = None,
     description: str | None = None,
+    enable_mcp: bool = True,
     **kwargs,
 ) -> Agent:
     """Create an agent from a template with all providers (toolsets and MCP servers).
@@ -41,9 +42,43 @@ async def create_agent(
     mcp_server_added = []
     toolsets = list(toolsets or [])
     mcp_servers = list(mcp_servers or [])
+    
+    # ===== Parse toolsets to extract MCP specs =====
+    normal_toolsets = []
+    mcp_from_toolsets = []
+    
+    for spec in toolsets:
+        if spec == "mcp":
+            mcp_from_toolsets.append("mcp")  # Explicit "mcp" request
+        elif spec.startswith("mcp:"):
+            mcp_from_toolsets.append(spec[4:])  # Extract: "mcp:context7" -> "context7"
+        else:
+            normal_toolsets.append(spec)
+    
+    # Merge all MCP sources into one set
+    all_mcp_servers = set(mcp_servers + mcp_from_toolsets)
+    
+    # If enable_mcp=True, add "mcp" to the set (unified gateway)
+    if enable_mcp and get_settings().enable_mcp_tools:
+        all_mcp_servers.add("mcp")
+    
+    # Save specific servers before deduplication (for startup)
+    servers_to_start = [s for s in all_mcp_servers if s != "mcp"]
+    
+    # Optimization: If "mcp" (unified gateway) is present, remove specific servers
+    # because "mcp" already includes all MCP tools (would cause duplicates)
+    if "mcp" in all_mcp_servers:
+        specific_servers = all_mcp_servers - {"mcp"}
+        if specific_servers:
+            logger.info(
+                f"Agent '{name}': Unified MCP gateway includes all tools. "
+                f"Skipping specific servers {list(specific_servers)} to avoid duplicates."
+            )
+            all_mcp_servers = {"mcp"}
+    
     # ===== Add ToolSet providers from config =====
 
-    for toolset_name in toolsets:
+    for toolset_name in normal_toolsets:
         # Special handling: "task" toolset is local-only (not via Endpoint)
         if toolset_name == "task":
             try:
@@ -75,49 +110,76 @@ async def create_agent(
             logger.error(f"Agent '{name}': Failed to add toolset '{toolset_name}': {e}")
             agent.not_loaded_toolsets.append(toolset_name)
 
-    # ===== Add MCP provider from unified gateway =====
-    # All MCP servers are accessible via the unified gateway at /mcp
-    # with prefixed tool names (e.g., context7_resolve_library_id)
-
-    if get_settings().enable_mcp_tools:
+    # ===== Add MCP providers =====
+    # Loop handles empty set naturally - no execution if set is empty
+    
+    # First, ensure all required MCP servers are started
+    if servers_to_start:
         try:
             from pantheon.utils.misc import call_endpoint_method
-            from pantheon.providers import MCPProvider
-
-            # Get unified gateway URI (special name="mcp" returns gateway info)
+            
+            logger.info(f"Agent '{name}': Ensuring MCP servers are started: {servers_to_start}")
             result = await call_endpoint_method(
                 endpoint_service,
                 endpoint_method_name="manage_service",
-                action="get",
+                action="start",
                 service_type="mcp",
-                name="mcp",  # Special: returns unified gateway URI
+                name=servers_to_start,
             )
-
             if not result.get("success"):
-                raise UserWarning(
-                    f"Failed to get unified gateway: {result.get('message', 'Unknown error')}"
+                logger.warning(
+                    f"Agent '{name}': Failed to start some MCP servers: {result.get('errors', [])}"
+                )
+            else:
+                logger.info(
+                    f"Agent '{name}': MCP servers ready: {result.get('started', [])}"
+                )
+        except Exception as e:
+            logger.warning(f"Agent '{name}': Error ensuring MCP servers: {e}")
+    
+    # Now add MCP providers
+    try:
+        from pantheon.utils.misc import call_endpoint_method
+        from pantheon.providers import MCPProvider
+
+        # Get unified gateway URI (only if we'll use it)
+        unified_uri = None
+        for server_name in all_mcp_servers:
+            # Get URI on first iteration
+            if unified_uri is None:
+                result = await call_endpoint_method(
+                    endpoint_service,
+                    endpoint_method_name="manage_service",
+                    action="get",
+                    service_type="mcp",
+                    name="mcp",
                 )
 
-            unified_uri = result.get("service", {}).get("uri")
-            if not unified_uri:
-                raise UserWarning("Unified gateway has no URI configured")
+                if not result.get("success"):
+                    raise UserWarning(
+                        f"Failed to get unified gateway: {result.get('message', 'Unknown error')}"
+                    )
 
-            # Use singleton MCPProvider for the unified gateway
-            mcp_provider = MCPProvider.get_instance(unified_uri)
-            await mcp_provider.initialize()
+                unified_uri = result.get("service", {}).get("uri")
+                if not unified_uri:
+                    raise UserWarning("Unified gateway has no URI configured")
 
-            # Add as single "mcp" provider (all tools accessible via prefix)
-            await agent.mcp("mcp", mcp_provider)
-            mcp_server_added.append("mcp")
-            logger.info(
-                f"Agent '{name}': Connected to unified MCP gateway at {unified_uri}"
-            )
+            # Add provider for this MCP server
+            if server_name == "mcp":
+                # Unified gateway - no filtering
+                provider = MCPProvider.get_instance(unified_uri)
+            else:
+                # Specific server - filter by prefix
+                provider = MCPProvider.get_instance(unified_uri, filter_prefix=server_name)
 
-        except UserWarning as e:
-            logger.warning(f"Agent '{name}': {e}")
-        except Exception as e:
-            logger.error(f"Agent '{name}': Failed to add unified MCP provider: {e}")
+            await provider.initialize()
+            await agent.mcp(server_name, provider)
+            mcp_server_added.append(server_name)
 
+    except UserWarning as e:
+        logger.warning(f"Agent '{name}': {e}")
+    except Exception as e:
+        logger.error(f"Agent '{name}': Failed to add MCP provider: {e}")
 
     logger.info(
         f"Agent {name} added toolsets: {toolsets_added} mcp_servers: {mcp_server_added}"
@@ -125,12 +187,124 @@ async def create_agent(
     return agent
 
 
-async def create_agents_from_template(endpoint_service, agent_configs: dict) -> list:
+async def create_agents_from_template(
+    endpoint_service, agent_configs: dict, enable_mcp: bool = True
+) -> list:
     """Create agents from agent configs."""
     agents = []
 
     for agent_config in agent_configs.values():
-        agent = await create_agent(endpoint_service, **agent_config)
+        agent = await create_agent(
+            endpoint_service, enable_mcp=enable_mcp, **agent_config
+        )
         agents.append(agent)
 
     return agents
+
+
+async def create_team_from_template(
+    endpoint_service,
+    template_id: str,
+    learning_config: dict | None = None,
+    check_toolsets: bool = True,
+    enable_mcp: bool = True,
+):
+    """Create a PantheonTeam from a template.
+
+    This is the primary factory function for creating teams, suitable for:
+    - Benchmark testing
+    - Programmatic team creation
+    - Learning pipeline team initialization
+
+    Workflow:
+    1. Loads the team template by ID
+    2. Prepares agent configurations
+    3. Optionally checks toolset availability
+    4. Creates agents with endpoint connection
+    5. Optionally initializes ACE learning/injection resources
+    6. Returns a fully initialized PantheonTeam
+
+    Args:
+        endpoint_service: The endpoint service for toolset/MCP connections
+        template_id: Team template ID (e.g., "default", "data_research_team")
+        learning_config: Override for ACE configuration dict. Merged with settings.
+                        Keys: enable_learning, enable_injection, learning_model, etc.
+        check_toolsets: If True, warns about unavailable toolsets
+
+    Returns:
+        PantheonTeam: Fully initialized team ready to run
+
+    Raises:
+        ValueError: If template not found
+
+    Example (Pure Learning):
+        >>> team = await create_team_from_template(
+        ...     endpoint_service,
+        ...     "default",
+        ...     learning_config={"enable_learning": True, "enable_injection": False},
+        ... )
+
+    Example (Pure Injection):
+        >>> team = await create_team_from_template(
+        ...     endpoint_service,
+        ...     "default",
+        ...     learning_config={"enable_learning": False, "enable_injection": True},
+        ... )
+    """
+    from pantheon.team import PantheonTeam
+    from pantheon.utils.misc import call_endpoint_method
+
+    # 1. Build effective learning config
+    _config = get_settings().get_learning_config()
+    if learning_config:
+        _config.update(learning_config)
+
+    enable_learning = _config.get("enable_learning", False)
+    enable_injection = _config.get("enable_injection", enable_learning)
+
+    # 2. Load template
+    template_manager = get_template_manager()
+    team_config = template_manager.get_template(template_id)
+    if not team_config:
+        raise ValueError(f"Team template '{template_id}' not found")
+
+    # 3. Prepare team agents
+    (
+        agent_configs,
+        required_toolsets,
+        required_mcp_servers,
+    ) = template_manager.prepare_team(team_config)
+
+    # 4. Log required toolsets (auto-start handles missing ones on first use)
+    if check_toolsets and required_toolsets:
+        logger.debug(f"Team '{template_id}' requires toolsets: {required_toolsets}")
+
+    # 5. Create agents
+    agents = await create_agents_from_template(
+        endpoint_service, agent_configs, enable_mcp=enable_mcp
+    )
+
+    # 6. Initialize learning resources
+    skillbook = None
+    learning_pipeline = None
+
+    if enable_learning or enable_injection:
+        from pantheon.internal.learning import create_learning_resources
+
+        skillbook, learning_pipeline = create_learning_resources(config=_config)
+
+    # 7. Create and setup team
+    team = PantheonTeam(
+        agents=agents,
+        learning_pipeline=learning_pipeline,
+    )
+    await team.async_setup()
+
+    # 8. Inject skills externally (after team creation, before run)
+    if skillbook is not None and enable_injection:
+        from pantheon.internal.learning import inject_skills_to_team
+
+        await inject_skills_to_team(team, skillbook)
+
+    logger.info(f"Team '{template_id}' created with {len(agents)} agents")
+    return team

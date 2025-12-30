@@ -1,6 +1,10 @@
 import sys
 import warnings
 from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
 from loguru import logger as loguru_logger
 
 LEVEL_MAP = {
@@ -9,6 +13,9 @@ LEVEL_MAP = {
     "WARNING": 30,
     "ERROR": 40,
 }
+
+# Track file handler ID for management
+_file_handler_id: Optional[int] = None
 
 
 @contextmanager
@@ -45,17 +52,34 @@ _logging_disabled = False
 # Apply context-aware filter to all handlers
 # Remove default handler and add new one with our filter
 # Use stdout instead of stderr so it works with prompt_toolkit's patch_stdout
+# Track console handler ID for management
+_console_handler_id: Optional[int] = None
+
+# Apply context-aware filter to all handlers
+# Remove default handler and add new one with our filter
 loguru_logger.remove()
-loguru_logger.add(sys.stdout, filter=_context_aware_filter, level="WARNING")
+_console_handler_id = loguru_logger.add(sys.stdout, filter=_context_aware_filter, level="WARNING")
 
 
 def set_level(level: str):
-    """Set the logging level."""
-    global _logging_disabled
+    """Set the logging level for the console handler.
+
+    This safely replaces only the console handler, preserving other handlers
+    (like file handlers).
+    """
+    global _logging_disabled, _console_handler_id
     if _logging_disabled:
         return  # Don't re-enable if disabled
-    loguru_logger.remove()
-    loguru_logger.add(sys.stdout, filter=_context_aware_filter, level=level)
+
+    # Remove existing console handler if we have its ID
+    if _console_handler_id is not None:
+        try:
+            loguru_logger.remove(_console_handler_id)
+        except ValueError:
+            pass  # Handler might have been removed elsewhere
+
+    # Add new console handler
+    _console_handler_id = loguru_logger.add(sys.stdout, filter=_context_aware_filter, level=level)
 
 
 def disable_all():
@@ -64,6 +88,63 @@ def disable_all():
     _logging_disabled = True
     loguru_logger.remove()
     loguru_logger.disable("pantheon")
+
+
+def setup_file_logging(
+    log_dir: Optional[Path] = None,
+    level: str = "INFO",
+    session_name: str = "repl",
+) -> Path:
+    """Setup file logging to save logs to a file.
+    
+    This is useful in REPL mode where console logging is suppressed,
+    but you still want to capture logs for debugging.
+    
+    The file log level defaults to INFO, which captures INFO, WARNING, and ERROR
+    logs while avoiding verbose DEBUG output. This provides a good balance
+    between having useful diagnostic information and avoiding excessive log size.
+    
+    Args:
+        log_dir: Directory for log files. Defaults to settings.logs_dir (.pantheon/logs)
+        level: Log level for file handler (default: INFO - captures most useful logs)
+        session_name: Prefix for log file name (default: "repl")
+        
+    Returns:
+        Path to the created log file
+    """
+    global _file_handler_id
+    
+    # Import settings lazily to avoid circular imports
+    if log_dir is None:
+        from pantheon.settings import get_settings
+        log_dir = get_settings().logs_dir
+    
+    # Ensure log directory exists
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate timestamped log file name
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"{session_name}_{timestamp}.log"
+    
+    # Remove existing file handler if any
+    if _file_handler_id is not None:
+        try:
+            loguru_logger.remove(_file_handler_id)
+        except ValueError:
+            pass  # Handler already removed
+    
+    # Add new file handler - captures all logs regardless of console level
+    _file_handler_id = loguru_logger.add(
+        log_file,
+        level=level,
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name}:{function}:{line} - {message}",
+        rotation="10 MB",
+        retention="7 days",
+        encoding="utf-8",
+    )
+    
+    return log_file
 
 
 # =============================================================================

@@ -16,6 +16,7 @@ async def _start_endpoint_process(
     log_dir: Path,
 ) -> str:
     from pantheon.remote import connect_remote
+
     """
     Start Endpoint in independent subprocess.
 
@@ -283,7 +284,10 @@ async def start_services(
         # Using existing endpoint_service_id
         endpoint_mode = "process"
 
-    # ===== Step 2: Create ChatRoom =====
+    # ===== Step 2: Read learning config =====
+    enable_learning = settings.get_learning_config().get("enable_learning", False)
+    enable_injection = settings.get_learning_config().get("enable_injection", False)
+    # ===== Step 3: Create ChatRoom =====
     chat_room = ChatRoom(
         endpoint=endpoint if endpoint is not None else final_endpoint_service_id,
         memory_dir=memory_dir,
@@ -291,6 +295,10 @@ async def start_services(
         speech_to_text_model=speech_to_text_model,
         enable_nats_streaming=True,  # Enable NATS streaming for remote service
         enable_auto_chat_name=True,  # Enable auto chat name for UI mode
+        learning_config={
+            "enable_learning": enable_learning,
+            "enable_injection": enable_injection,
+        },
         **kwargs,
     )
 

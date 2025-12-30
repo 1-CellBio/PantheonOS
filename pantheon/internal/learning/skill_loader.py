@@ -80,7 +80,7 @@ def parse_skills_md(file_path: Path, skills_dir: Path) -> List[Skill]:
     
     Args:
         file_path: Path to SKILLS.md
-        skills_dir: Base skills directory (for source_path)
+        skills_dir: Base skills directory (for sources)
     
     Returns:
         List of Skill objects
@@ -129,7 +129,7 @@ def parse_skills_md(file_path: Path, skills_dir: Path) -> List[Skill]:
                 id=skill_id,
                 section=current_section,
                 content=content,
-                source_path=str(relative_path),
+                sources=[str(relative_path)],  # Use sources list
                 type="user",  # User-defined skill from SKILLS.md
             ))
     
@@ -176,6 +176,12 @@ def parse_skill_from_file(file_path: Path, skills_dir: Path) -> Optional[Skill]:
     Parse a skill file and create a Skill object from its front matter.
     
     Requires 'id' and 'description' in front matter.
+    
+    For file-based skills:
+    - content = description (short summary for skillbook.json and prompt)
+    - Full content stays in the file only (accessed via sources)
+    
+    This matches the auto-conversion logic: avoid storing long content in skillbook.
     """
     front_matter, _ = parse_front_matter(file_path)
     
@@ -190,12 +196,15 @@ def parse_skill_from_file(file_path: Path, skills_dir: Path) -> Optional[Skill]:
     
     relative_path = _get_relative_path(file_path, skills_dir)
     
+    # For file-based skills: content = description (short)
+    # Full content stays in file, accessed via sources
     return Skill(
         id=skill_id,
         section=front_matter.get("section", "workflows"),
-        content=description.strip(),  # Pure description, file ref added at runtime
-        type=front_matter.get("type", "user"),  # Default to user, allow override
-        source_path=str(relative_path),
+        content=description.strip(),  # Short description as content
+        description=description.strip(),  # Also set description field
+        type=front_matter.get("type", "user"),
+        sources=[str(relative_path)],
         tags=front_matter.get("tags", []),
         learned_from=front_matter.get("learned_from"),
         created_at=front_matter.get("created_at", ""),
@@ -231,7 +240,7 @@ class SkillLoader:
         for file_path in scan_skill_files(self.skills_dir):
             skill = parse_skill_from_file(file_path, self.skills_dir)
             if skill:
-                self._merge_skill(skill, is_user_defined=skill.is_user_defined())
+                self._merge_skill(skill)
                 self._loaded_skill_ids.add(skill.id)
                 loaded_count += 1
         
@@ -239,7 +248,7 @@ class SkillLoader:
         skills_md = self.skills_dir / "SKILLS.md"
         if skills_md.exists():
             for skill in parse_skills_md(skills_md, self.skills_dir):
-                self._merge_skill(skill, is_user_defined=True)
+                self._merge_skill(skill)
                 self._loaded_skill_ids.add(skill.id)
                 loaded_count += 1
         
@@ -252,25 +261,24 @@ class SkillLoader:
         logger.info(f"Loaded {loaded_count} skills from files")
         return loaded_count
     
-    def _merge_skill(self, skill: Skill, is_user_defined: bool = False) -> None:
+    def _merge_skill(self, skill: Skill) -> None:
         """
         Merge skill into skillbook.
         
-        For user-defined skills, clears system flag if overriding.
-        Always preserves existing ratings.
+        Updates content, description and metadata from file. Type is always taken from
+        the file's front matter, ensuring consistency.
+        Always preserves existing ratings (helpful/harmful/neutral).
         """
         existing = self.skillbook.get_skill(skill.id)
         
         if existing:
-            # Update content, preserve ratings
+            # Update content and metadata, preserve ratings
             existing.content = skill.content
+            existing.description = skill.description  # Sync description
             existing.section = skill.section
-            existing.source_path = skill.source_path
+            existing.sources = skill.sources
             existing.tags = skill.tags if skill.tags else existing.tags
-            
-            # Clear system flag if user overrides
-            if is_user_defined and existing.type == "system":
-                existing.type = None
+            existing.type = skill.type  # Always use file's type
         else:
             self._add_skill_to_skillbook(skill)
     
@@ -280,10 +288,18 @@ class SkillLoader:
         self.skillbook._sections.setdefault(skill.section, []).append(skill.id)
     
     def _cleanup_orphan_skills(self) -> int:
-        """Remove skills whose source files no longer exist."""
+        """Remove skills whose source files no longer exist.
+        
+        For skills with sources, the source files ARE the skill content -
+        the 'content' field is just a description. If source files are
+        deleted, the skill is considered invalid and should be removed.
+        
+        This applies to ALL skill types (system and user). Skills without
+        sources (e.g., simple system-learned strategies) are never affected.
+        """
         orphan_ids = [
             skill_id for skill_id, skill in self.skillbook._skills.items()
-            if skill.source_path and skill_id not in self._loaded_skill_ids
+            if skill.sources and skill_id not in self._loaded_skill_ids
         ]
         
         for skill_id in orphan_ids:

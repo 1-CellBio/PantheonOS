@@ -27,55 +27,54 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, TypedDict
 
 
-
-
 from pantheon.utils.log import logger
 
 
 def _patch_stdio_client_errlog():
     """Patch MCP SDK's stdio_client to redirect subprocess stderr to log file.
-    
+
     This redirects STDIO MCP server stderr (welcome messages, logs) to a dedicated
     log file instead of Python's sys.stderr, preventing noise in REPL interface
     while keeping logs accessible for debugging.
-    
+
     Log file location: {pantheon_dir}/logs/mcp_stdio.log
-    
+
     Must be called before any STDIO MCP servers are started.
     """
     try:
         import mcp.client.stdio as stdio_module
-        
+
         # Check if already patched
-        if getattr(stdio_module, '_errlog_patched', False):
+        if getattr(stdio_module, "_errlog_patched", False):
             return
-        
+
         # Store original function
         original_stdio_client = stdio_module.stdio_client
-        
+
         # Prepare log file
         from pantheon.settings import get_settings
+
         log_dir = get_settings().pantheon_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         mcp_log_file = log_dir / "mcp_stdio.log"
-        
+
         # Open log file in append mode (shared across all STDIO servers)
-        _mcp_errlog = open(mcp_log_file, 'a', buffering=1)  # Line buffered
-        
+        _mcp_errlog = open(mcp_log_file, "a", buffering=1)  # Line buffered
+
         # Store file handle to prevent GC
         stdio_module._mcp_errlog_file = _mcp_errlog
-        
+
         # Create patched version
         def patched_stdio_client(server, errlog=None):
             # Default to log file instead of sys.stderr
             if errlog is None:
                 errlog = _mcp_errlog
             return original_stdio_client(server, errlog=errlog)
-        
+
         # Apply patch
         stdio_module.stdio_client = patched_stdio_client
         stdio_module._errlog_patched = True
-        
+
         logger.debug(f"Patched MCP stdio_client to redirect stderr to {mcp_log_file}")
     except Exception as e:
         logger.warning(f"Failed to patch MCP stdio_client: {e}")
@@ -351,9 +350,7 @@ class MCPManager:
             Path(log_dir).mkdir(parents=True, exist_ok=True)
             logger.info(f"MCP servers log directory: {log_dir}")
 
-        logger.info(
-            f"MCP Manager initialized with unified gateway at {host}:{port}"
-        )
+        logger.info(f"MCP Manager initialized with unified gateway at {host}:{port}")
 
     async def load_config(self, config: MCPPoolConfig) -> Dict[str, Any]:
         """Load MCP server configurations from config dictionary
@@ -368,7 +365,9 @@ class MCPManager:
 
         # mcp.json uses 'servers' key directly
         mcp_servers = config.get("servers", {})
+        logger.info(f"DEBUG: MCPManager.load_config called with servers: {list(mcp_servers.keys())}")
         if not mcp_servers:
+            logger.warning("DEBUG: mcp_servers is empty/None")
             return results
 
         for server_name, server_config in mcp_servers.items():
@@ -590,7 +589,7 @@ class MCPManager:
             await self._gateway.mount_server(prefix, proxy, instance.stdio_client)
             instance.http_port = self.port  # All servers share gateway port
 
-            logger.info(
+            logger.debug(
                 f"Mounted STDIO server '{name}' to gateway with prefix '{prefix}'"
             )
 
@@ -608,7 +607,7 @@ class MCPManager:
             await self._gateway.mount_server(prefix, proxy, remote_client)
             instance.http_port = self.port
 
-            logger.info(
+            logger.debug(
                 f"Mounted HTTP server '{name}' to gateway with prefix '{prefix}'"
             )
 

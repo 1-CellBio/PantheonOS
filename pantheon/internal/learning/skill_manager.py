@@ -69,46 +69,28 @@ WHEN: Strategy proved effective (>80% success)
 → Consider edge case variants
 → Document success metrics
 
-## 🎯 ATOMIC STRATEGY PRINCIPLE
+## 🎯 SKILL TYPE HANDLING
 
-CRITICAL: Every strategy must represent ONE atomic concept.
+The Reflector classifies learnings into two types. Handle each appropriately:
 
-### Atomicity Scoring (0.0-1.0)
+### Type 1: ATOMIC (atomicity_score >= 0.85)
+- Single concept, short and focused
+- Section: strategies, patterns, mistakes
+- Standard atomicity validation applies
 
-**Scoring Factors**:
-- **Base Score**: 1.0
-- **Deductions**:
-  - Each "and/also/plus": -0.15
-  - Vague terms ("something", "various", "appropriate"): -0.20
-  - Meta phrases ("user said", "we discussed"): -0.40
-  - Over 15 words: -0.05 per extra word
+### Type 2: SYSTEMATIC (atomicity_score < 0.85)
+- Multi-step patterns, workflows, or complete methodologies
+- Section: patterns, workflows, **guidelines**
+- REQUIRED: `description` field for prompt display
+- NO length limit - accept any content length needed
+- Can use markdown formatting
 
-**Quality Levels**:
-- **0.95-1.0**: Single focused concept ✨ EXCELLENT
-- **0.85-0.95**: Mostly atomic ✓ GOOD - acceptable
-- **0.70-0.85**: Should be split ⚡ FAIR
-- **<0.70**: REJECT - too compound ❌
+### Type-Based Validation
 
-### Breaking Compound Reflections → Atomic Skills
-
-MANDATORY: Split compound reflections into multiple atomic strategies:
-
-**Reflection**: "Tool X worked in 4 steps with 95% accuracy"
-**Split into**:
-1. "Use Tool X for task type Y"
-2. "Tool X operations complete in ~4 steps"
-3. "Expect 95% accuracy from Tool X"
-
-**Reflection**: "Failed due to timeout after 30s using Method B"
-**Split into**:
-1. "Set 30-second timeout for Method B"
-2. "Method B may exceed standard timeouts"
-3. "Consider async execution for Method B"
-
-**Compound**: "Use pandas for data loading and visualization"
-**Split into**:
-1. "Use pandas.read_csv() for CSV file loading"
-2. "Use matplotlib/seaborn for data visualization"
+| Type | Atomicity | Length | Description Required |
+|------|-----------|--------|---------------------|
+| ATOMIC | >= 0.85 | Short | If > 100 chars |
+| SYSTEMATIC | Any | **Unlimited** | Always |
 
 ## ⚠️ PRE-ADD DEDUPLICATION CHECK (MANDATORY)
 
@@ -215,19 +197,27 @@ Strategies must be IMPERATIVE COMMANDS, not observations.
 ## 📊 OPERATION GUIDELINES
 
 ### ADD Operation
-**MANDATORY Requirements**:
-✓ Atomicity score > 70%
-✓ Genuinely novel (not paraphrase)
-✓ Based on specific execution details
-✓ Includes concrete example/procedure
-✓ Under 15 words when possible
+**Requirements by Skill Type**:
+
+**ATOMIC** (atomicity_score >= 0.85):
+- Section: strategies, patterns, mistakes
+- Description: required if content > 100 chars
+
+**SYSTEMATIC** (atomicity_score < 0.85):
+- Section: patterns, workflows, **guidelines**
+- Description: REQUIRED
+- NO length limit - can use markdown formatting
+
+**Reject if atomicity_score < 0.40**
 
 ```json
 {
   "type": "ADD",
-  "section": "strategies|mistakes|patterns|workflows",
-  "content": "<atomic strategy, <15 words, imperative>",
-  "atomicity_score": 0.95,
+  "skill_type": "atomic|systematic",
+  "section": "strategies|patterns|workflows|guidelines|mistakes",
+  "content": "<full content - use markdown for systematic>",
+  "description": "<REQUIRED for systematic. Max 20 words>",
+  "atomicity_score": 0.75,
   "pre_add_check": {
     "most_similar": "<skill_id: content> or NONE",
     "same_meaning": false,
@@ -373,8 +363,10 @@ class UpdateOperation(BaseModel):
     """Single update operation to apply to the Skillbook."""
 
     type: Literal["ADD", "UPDATE", "TAG", "REMOVE"]
+    skill_type: str = "atomic"  # atomic | compound | systematic
     section: Optional[str] = None  # For ADD
     content: Optional[str] = None  # For ADD, UPDATE
+    description: Optional[str] = None  # For ADD (short summary for long content)
     skill_id: Optional[str] = None  # For UPDATE, TAG, REMOVE
     agent_scope: Optional[str] = None  # For ADD, default "global"
     atomicity_score: Optional[float] = None  # For ADD
@@ -486,14 +478,20 @@ class SkillManager:
                     response.content, SkillManagerOutput, _default_output
                 )
                 
-                # Filter out low-atomicity ADD operations
+                # Filter ADD operations based on skill type
                 operations = []
                 for op in parsed.operations:
-                    if op.type == "ADD" and (op.atomicity_score or 0) < min_atomicity_score:
-                        logger.warning(
-                            f"Rejected low-atomicity ADD: {op.content} (score: {op.atomicity_score})"
-                        )
-                        continue
+                    if op.type == "ADD":
+                        score = op.atomicity_score or 0
+                        skill_type = getattr(op, 'skill_type', 'atomic')
+                        
+                        # Only check atomicity for ATOMIC type
+                        if skill_type == "atomic" and score < min_atomicity_score:
+                            logger.warning(
+                                f"Rejected low-atomicity ATOMIC: {op.content[:50]}... (score: {score})"
+                            )
+                            continue
+                        # SYSTEMATIC: no atomicity check at all
                     operations.append(op)
                 return operations
             else:

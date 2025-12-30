@@ -38,9 +38,9 @@ from pantheon.internal.learning import (
 from pantheon.internal.learning.reflector import ReflectorOutput, SkillTag, ExtractedLearning
 from pantheon.internal.learning.skill_manager import UpdateOperation
 
-# Test model - using gpt-4o-mini which supports structured output (response_format)
-# Note: zai/glm-4-flash does not support response_format parameter
-TEST_MODEL = "gpt-4o-mini"
+# Test model - use normal model from settings (defined in .pantheon/settings.json)
+from pantheon.utils.model_selector import get_model_selector
+TEST_MODEL = get_model_selector().resolve_model("normal")[0]
 
 
 # ===========================================================================
@@ -58,8 +58,16 @@ def temp_dir():
 @pytest.fixture
 def skillbook(temp_dir):
     """Create a fresh Skillbook for testing."""
-    sb = Skillbook(max_skills_per_section=10, max_content_length=500)
-    sb._path = os.path.join(temp_dir, "skillbook.json")
+    skills_dir = Path(temp_dir) / "skills"
+    skills_dir.mkdir()
+    skillbook_path = Path(temp_dir) / "skillbook.json"
+    sb = Skillbook(
+        skills_dir=skills_dir,
+        skillbook_path=skillbook_path,
+        max_skills_per_section=10,
+        max_content_length=500,
+        auto_load=False,  # Don't auto-load in tests
+    )
     return sb
 
 
@@ -208,15 +216,28 @@ class TestSkillbook:
         skillbook.save(path)
 
         # Load into new skillbook
-        new_sb = Skillbook()
-        new_sb.load(path)
+        skills_dir2 = Path(temp_dir) / "skills2"
+        skills_dir2.mkdir()
+        new_sb = Skillbook(
+            skills_dir=skills_dir2,
+            skillbook_path=Path(path),
+            auto_load=True,
+        )
 
         assert len(new_sb.skills()) == 2
         assert any(s.content == "Strategy 1" for s in new_sb.skills())
 
     def test_max_skills_eviction(self, temp_dir):
         """Test eviction when max skills per section reached."""
-        sb = Skillbook(max_skills_per_section=3, max_content_length=500)
+        skills_dir = Path(temp_dir) / "skills_eviction"
+        skills_dir.mkdir()
+        sb = Skillbook(
+            skills_dir=skills_dir,
+            skillbook_path=Path(temp_dir) / "eviction.json",
+            max_skills_per_section=3,
+            max_content_length=500,
+            auto_load=False,
+        )
 
         # Add 3 skills
         s1 = sb.add_skill("strategies", "Skill 1")
@@ -239,11 +260,12 @@ class TestSkillbook:
         ]
         assert len(active_strategies) == 3
 
-    def test_content_length_limit(self, skillbook):
-        """Test content length enforcement."""
+    def test_content_length_no_limit(self, skillbook):
+        """Test that content has no length limit (unified structure)."""
         long_content = "x" * 600
         skill = skillbook.add_skill("strategies", long_content)
-        assert len(skill.content) == 500
+        # Content is now stored without truncation
+        assert len(skill.content) == 600
 
 
 # ===========================================================================
@@ -371,13 +393,17 @@ tags: [example]
 ---
 
 # Detailed content
+This is the full content body that stays in the file only.
 """)
 
         skill = parse_skill_from_file(skill_file, skills_dir)
         
         assert skill is not None
         assert skill.id == "my-workflow"
-        assert "A workflow for doing X" in skill.content
+        # For file-based skills: content = description (short summary)
+        # Full content stays in file only, accessed via sources
+        assert skill.content == "A workflow for doing X"
+        assert skill.description == "A workflow for doing X"
         assert skill.section == "workflows"
         assert skill.tags == ["example"]
         assert skill.is_user_defined()
@@ -449,7 +475,7 @@ description: Second workflow
             id="existing-skill",
             section="strategies",
             content="Old content",
-            source_path="skills/existing.md",
+            sources=["skills/existing.md"],
             helpful=10,
             harmful=2,
         )
@@ -470,9 +496,11 @@ section: strategies
         loader.load_and_merge(cleanup_orphans=False)
 
         # Verify content was updated but ratings preserved
+        # For file-based skills: content = description
         skill = skillbook.get_skill("existing-skill")
         assert skill is not None
-        assert "Updated content" in skill.content
+        assert skill.content == "Updated content"
+        assert skill.description == "Updated content"
         assert skill.helpful == 10
         assert skill.harmful == 2
 
@@ -486,12 +514,12 @@ section: strategies
             id="orphan-skill",
             section="strategies",
             content="This file was deleted",
-            source_path="skills/deleted.md",
+            sources=["skills/deleted.md"],
         )
         skillbook._skills[orphan.id] = orphan
         skillbook._sections.setdefault(orphan.section, []).append(orphan.id)
 
-        # Add a pure content skill (no source_path) - should NOT be cleaned up
+        # Add a pure content skill (no sources) - should NOT be cleaned up
         pure_content = Skill(
             id="str-00001",
             section="strategies",
@@ -530,7 +558,7 @@ description: This exists
             id="orphan-skill",
             section="strategies",
             content="This file was deleted",
-            source_path="skills/deleted.md",
+            sources=["skills/deleted.md"],
         )
         skillbook._skills[orphan.id] = orphan
         skillbook._sections.setdefault(orphan.section, []).append(orphan.id)
@@ -586,37 +614,8 @@ class TestLearningInput:
 
         assert li.turn_id == "test-123"
         assert li.agent_name == "test_agent"
-        assert "How do I read a CSV file" in li.question
-        assert "[USER]" in li.trajectory
-        assert "[ASSISTANT]" in li.trajectory
-        assert "[TOOL_CALL:" in li.trajectory
-        assert "[TOOL_RESULT]" in li.trajectory
-        assert "DataFrame" in li.final_answer
-        assert "str-00001" in li.skill_ids_cited
-
-    def test_trajectory_truncation(self, temp_dir):
-        """Test that long tool results are truncated."""
-        messages = [
-            {"role": "user", "content": "Test question"},
-            {
-                "role": "tool",
-                "tool_call_id": "call_1",
-                "content": "x" * 500,  # Long result
-            },
-            {"role": "assistant", "content": "Done"},
-        ]
-
-        li = build_learning_input(
-            turn_id="test",
-            agent_name="agent",
-            messages=messages,
-            learning_dir=temp_dir,
-            max_tool_arg_length=100,
-            max_tool_output_length=100,
-        )
-
-        # Unified format uses "... [N chars, see details_path]"
-        assert "... [" in li.trajectory and "chars" in li.trajectory
+        assert li.details_path.endswith(".json")
+        assert os.path.exists(li.details_path)
 
     def test_details_saved(self, sample_messages, temp_dir):
         """Test that full details are saved to file."""
@@ -636,19 +635,15 @@ class TestLearningInput:
         assert "messages" in data
         assert len(data["messages"]) == 4
 
-    def test_skill_citation_extraction(self, temp_dir):
-        """Test extraction of skill IDs from messages."""
-        messages = [
-            {"role": "user", "content": "Do something"},
-            {
-                "role": "assistant",
-                "content": "Using [str-00001] and [pat-00002] strategies...",
-            },
-        ]
-
-        li = build_learning_input("test", "agent", messages, temp_dir)
-        assert "str-00001" in li.skill_ids_cited
-        assert "pat-00002" in li.skill_ids_cited
+    def test_agent_name_fallback(self, sample_messages, temp_dir):
+        """Test that empty agent_name falls back to 'global'."""
+        li = build_learning_input(
+            turn_id="test",
+            agent_name="",
+            messages=sample_messages,
+            learning_dir=temp_dir,
+        )
+        assert li.agent_name == "global"
 
 
 # ===========================================================================
@@ -904,20 +899,28 @@ class TestLearningPipeline:
     @pytest.mark.asyncio
     async def test_pipeline_skip_short_trajectory(self, temp_dir):
         """Test that short trajectories are skipped."""
-        skillbook = Skillbook()
+        skills_dir = Path(temp_dir) / "skills_skip"
+        skills_dir.mkdir()
+        skillbook = Skillbook(
+            skills_dir=skills_dir,
+            skillbook_path=Path(temp_dir) / "skip_test.json",
+            auto_load=False,
+        )
         pipeline = LearningPipeline(
             skillbook=skillbook,
             reflector=Reflector(model=TEST_MODEL),
             skill_manager=SkillManager(model=TEST_MODEL),
             learning_dir=temp_dir,
         )
-
+        # Create a short messages file (too short to process)
+        short_messages = [{"role": "user", "content": "Hi"}]
+        short_file = Path(temp_dir) / "short_messages.json"
+        short_file.write_text(json.dumps({"messages": short_messages}))
+        
         short_input = LearningInput(
             turn_id="short",
             agent_name="agent",
-            question="Hi",
-            trajectory="[USER]\nHi",  # Too short
-            final_answer="Hello",
+            details_path=str(short_file),
         )
 
         await pipeline.start()
@@ -941,7 +944,7 @@ class TestLearningIntegration:
     async def test_create_learning_resources(self, temp_dir):
         """Test factory function for creating ACE resources."""
         config = {
-            "enable": True,
+            "enable_learning": True,
             "skillbook_path": os.path.join(temp_dir, "skillbook.json"),
             "learning_model": TEST_MODEL,
             "learning_dir": temp_dir,
@@ -949,7 +952,7 @@ class TestLearningIntegration:
             "max_content_length": 400,
         }
 
-        skillbook, pipeline = create_learning_resources(enable=True, config=config)
+        skillbook, pipeline = create_learning_resources(config=config)
 
         assert skillbook is not None
         assert pipeline is not None
@@ -959,7 +962,9 @@ class TestLearningIntegration:
     @pytest.mark.asyncio
     async def test_create_learning_resources_disabled(self):
         """Test that disabled ACE returns None resources."""
-        skillbook, pipeline = create_learning_resources(enable=False)
+        skillbook, pipeline = create_learning_resources(
+            config={"enable_learning": False, "enable_injection": False}
+        )
 
         assert skillbook is None
         assert pipeline is None
@@ -969,14 +974,14 @@ class TestLearningIntegration:
         """Test complete learning cycle: messages -> learning -> skills."""
         # Setup
         config = {
-            "enable": True,
+            "enable_learning": True,
             "skillbook_path": os.path.join(temp_dir, "skillbook.json"),
             "learning_model": TEST_MODEL,
             "learning_dir": temp_dir,
             "max_skills_per_section": 30,
             "max_content_length": 500,
         }
-        skillbook, pipeline = create_learning_resources(enable=True, config=config)
+        skillbook, pipeline = create_learning_resources(config=config)
 
         # Start pipeline
         await pipeline.start()
@@ -1047,14 +1052,14 @@ class TestPantheonTeamLearning:
     def learning_resources(self, temp_dir):
         """Create ACE resources for testing."""
         config = {
-            "enable": True,
+            "enable_learning": True,
             "skillbook_path": os.path.join(temp_dir, "skillbook.json"),
             "learning_model": TEST_MODEL,
             "learning_dir": temp_dir,
             "max_skills_per_section": 30,
             "max_content_length": 500,
         }
-        skillbook, pipeline = create_learning_resources(enable=True, config=config)
+        skillbook, pipeline = create_learning_resources(config=config)
         return skillbook, pipeline
 
     @pytest.mark.asyncio
@@ -1088,12 +1093,11 @@ class TestPantheonTeamLearning:
         # Create team with ACE
         team = PantheonTeam(
             agents=[agent],
-            skillbook=skillbook,
             learning_pipeline=pipeline,
         )
         
         # Manually trigger skill injection (normally happens on first run)
-        team._inject_skillbook_to_agents()
+        await pipeline.inject_to_team(team)
         team._skills_injected = True
         
         # Verify skillbook was injected - check for new header format
@@ -1126,7 +1130,6 @@ class TestPantheonTeamLearning:
         # Create team with ACE
         team = PantheonTeam(
             agents=[agent],
-            skillbook=skillbook,
             learning_pipeline=pipeline,
         )
         
@@ -1185,7 +1188,6 @@ class TestPantheonTeamLearning:
         # Create team with ACE
         team = PantheonTeam(
             agents=[agent],
-            skillbook=skillbook,
             learning_pipeline=pipeline,
         )
         
@@ -1237,7 +1239,6 @@ class TestPantheonTeamLearning:
         # Create team with ACE
         team = PantheonTeam(
             agents=[agent],
-            skillbook=skillbook,
             learning_pipeline=pipeline,
         )
         
@@ -1280,7 +1281,6 @@ class TestPantheonTeamLearning:
         # Create team without ACE
         team = PantheonTeam(
             agents=[agent],
-            skillbook=None,  # No ACE
             learning_pipeline=None,  # No ACE
         )
         
@@ -1337,12 +1337,11 @@ class TestPantheonTeamLearning:
         # Create team
         team = PantheonTeam(
             agents=[python_agent],
-            skillbook=skillbook,
             learning_pipeline=pipeline,
         )
         
         # Manually trigger skill injection (normally happens on first run)
-        team._inject_skillbook_to_agents()
+        await pipeline.inject_to_team(team)
         team._skills_injected = True
         
         # Verify correct skills were injected
@@ -1394,7 +1393,6 @@ Always be specific about what you learned.""",
         # Create team with ACE
         team = PantheonTeam(
             agents=[agent],
-            skillbook=skillbook,
             learning_pipeline=pipeline,
         )
         
@@ -1492,7 +1490,6 @@ Please acknowledge that you understand this rule and will apply it.
         # Create team with ACE
         team = PantheonTeam(
             agents=[agent],
-            skillbook=skillbook,
             learning_pipeline=pipeline,
         )
         
@@ -1570,7 +1567,7 @@ class TestLearningPersistence:
         
         # Create ACE resources with real paths
         config = {
-            "enable": True,
+            "enable_learning": True,
             "skillbook_path": str(test_skillbook_path),
             "learning_model": TEST_MODEL,
             "learning_dir": str(test_learning_dir),
@@ -1578,7 +1575,7 @@ class TestLearningPersistence:
             "max_content_length": 500,
         }
         
-        skillbook, pipeline = create_learning_resources(enable=True, config=config)
+        skillbook, pipeline = create_learning_resources(config=config)
         
         # Start pipeline
         await pipeline.start()
@@ -1593,7 +1590,6 @@ class TestLearningPersistence:
         # Create team with ACE
         team = PantheonTeam(
             agents=[agent],
-            skillbook=skillbook,
             learning_pipeline=pipeline,
         )
         
@@ -1672,7 +1668,14 @@ class TestLearningPersistence:
         print(f"Test path: {test_path}")
         
         # Create skillbook and add skills
-        sb1 = Skillbook(max_skills_per_section=30)
+        test_skills_dir = learning_dir / "reload_skills"
+        test_skills_dir.mkdir(parents=True, exist_ok=True)
+        sb1 = Skillbook(
+            skills_dir=test_skills_dir,
+            skillbook_path=test_path,
+            max_skills_per_section=30,
+            auto_load=False,
+        )
         sb1.add_skill("strategies", "Test skill 1: Use pytest for testing")
         sb1.add_skill("patterns", "Test skill 2: Follow PEP8 style guide")
         sb1.tag_skill(sb1.skills()[0].id, "helpful", 3)
@@ -1685,9 +1688,14 @@ class TestLearningPersistence:
         assert test_path.exists(), "Skillbook file should exist after save"
         print(f"File size: {test_path.stat().st_size} bytes")
         
-        # Create new skillbook and load
-        sb2 = Skillbook()
-        sb2.load(str(test_path))
+        # Create new skillbook and load (with different empty skills_dir)
+        test_skills_dir2 = learning_dir / "reload_skills2"
+        test_skills_dir2.mkdir(parents=True, exist_ok=True)
+        sb2 = Skillbook(
+            skills_dir=test_skills_dir2,
+            skillbook_path=test_path,
+            auto_load=True,
+        )
         
         print(f"Loaded skillbook with {len(sb2.skills())} skills")
         

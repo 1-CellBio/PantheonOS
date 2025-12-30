@@ -57,13 +57,16 @@ def start(
     """
     # Load settings for defaults (CLI > Settings > code defaults)
     from pantheon.settings import get_settings
+
     settings = get_settings()
 
     # Apply defaults: CLI > Settings > code defaults
-    memory_dir = memory_dir or settings.get("chatroom.memory_dir", str(settings.memory_dir))
+    memory_dir = memory_dir or settings.get(
+        "chatroom.memory_dir", str(settings.memory_dir)
+    )
     quiet = quiet if quiet is not None else settings.get("repl.quiet", False)
     log_level = log_level or settings.get("repl.log_level", "ERROR")
-    
+
     asyncio.run(
         _start_async(
             template=template,
@@ -78,7 +81,7 @@ def start(
 
 async def _update_litellm_cost_map():
     """Background task to update litellm model cost map.
-    
+
     This runs after startup to fetch the latest model pricing data
     from GitHub without blocking the UI.
     """
@@ -86,12 +89,12 @@ async def _update_litellm_cost_map():
         await asyncio.sleep(2)  # Wait for REPL to fully initialize
         import litellm
         import aiohttp
-        
+
         # Manually fetch the latest model metadata from GitHub using aiohttp.
         # We fetch manually because litellm.get_model_cost_map filters some models,
         # and litellm.register_model triggers interactive authentication prompts.
         url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=10) as response:
                 if response.status == 200:
@@ -111,9 +114,10 @@ async def _start_async(
     quiet: bool = False,
 ):
     """Async implementation of start."""
+    from pantheon.settings import get_settings
+
     # Ensure memory_dir has a default
     if memory_dir is None:
-        from pantheon.settings import get_settings
         memory_dir = str(get_settings().memory_dir)
     # Import modules first (this triggers utils/log.py which sets up default logging)
     from .core import Repl
@@ -132,14 +136,14 @@ async def _start_async(
     else:
         # Default to WARNING level
         set_level("WARNING")
-    
+
     # Suppress FastMCP and Uvicorn logs unless explicitly debugging
     # Must be set BEFORE ChatRoom/Endpoint initialization starts MCP servers
     if log_level != "DEBUG":
         # FastMCP uses its own global settings for logging
         # Set via environment variable to avoid importing fastmcp here
         os.environ.setdefault("FASTMCP_LOG_LEVEL", "WARNING")
-        
+
         # Also set Python logging for uvicorn
         logging.getLogger("FastMCP").setLevel(logging.WARNING)
         logging.getLogger("uvicorn").setLevel(logging.WARNING)
@@ -150,6 +154,11 @@ async def _start_async(
     if workspace is None:
         workspace = _ORIGINAL_CWD
 
+    # Read learning config from settings
+    enable_learning = get_settings().get_learning_config().get("enable_learning", False)
+    enable_injection = (
+        get_settings().get_learning_config().get("enable_injection", False)
+    )
     if template:
         # Load team from template file
         template_path = Path(template)
@@ -163,6 +172,10 @@ async def _start_async(
             memory_dir=memory_dir,
             workspace_path=workspace,
             enable_nats_streaming=False,
+            learning_config={
+                "enable_learning": enable_learning,
+                "enable_injection": enable_injection,
+            },
         )
 
         # Setup ChatRoom (including auto-created Endpoint)
@@ -180,7 +193,9 @@ async def _start_async(
         # Create chat with template
         result = await chatroom.create_chat("repl-session")
         chat_id = result["chat_id"]
-        await chatroom.setup_team_for_chat(chat_id, team_config.to_dict(), save_to_memory=False)
+        await chatroom.setup_team_for_chat(
+            chat_id, team_config.to_dict(), save_to_memory=False
+        )
 
         repl = Repl(
             chatroom=chatroom,
@@ -193,6 +208,10 @@ async def _start_async(
             memory_dir=memory_dir,
             workspace_path=workspace,
             enable_nats_streaming=False,
+            learning_config={
+                "enable_learning": enable_learning,
+                "enable_injection": enable_injection,
+            },
         )
         # Note: run_setup() is called in repl.run() AFTER UI display
         repl = Repl(
@@ -203,24 +222,32 @@ async def _start_async(
     # Suppress CancelledError traceback from uvicorn during REPL shutdown
     # This is a benign error that occurs when uvicorn's lifespan is cancelled
     if log_level != "DEBUG":
+
         class _SuppressCancelledErrorFilter(logging.Filter):
             def filter(self, record: logging.LogRecord) -> bool:
                 # Check exc_info
-                if record.exc_info and isinstance(record.exc_info[1], asyncio.CancelledError):
+                if record.exc_info and isinstance(
+                    record.exc_info[1], asyncio.CancelledError
+                ):
                     return False
                 # Check message content (traceback may be formatted as message)
-                msg = record.getMessage() if hasattr(record, 'getMessage') else str(getattr(record, 'msg', ''))
-                if 'CancelledError' in msg:
+                msg = (
+                    record.getMessage()
+                    if hasattr(record, "getMessage")
+                    else str(getattr(record, "msg", ""))
+                )
+                if "CancelledError" in msg:
                     return False
                 return True
+
         logging.getLogger("uvicorn.error").addFilter(_SuppressCancelledErrorFilter())
 
     # Disable logging unless explicitly set to DEBUG
     disable_logging = quiet and log_level != "DEBUG"
-    
+
     # Start background task to update litellm cost map (non-blocking)
     asyncio.create_task(_update_litellm_cost_map())
-    
+
     await repl.run(disable_logging=disable_logging)
 
 

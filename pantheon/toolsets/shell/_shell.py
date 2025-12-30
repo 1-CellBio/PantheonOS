@@ -3,6 +3,13 @@ import asyncio
 import sys
 import os
 import uuid
+from enum import Enum
+
+
+class ShellStatus(Enum):
+    """Shell status for tracking availability."""
+    IDLE = "idle"
+    BUSY = "busy"
 
 
 class AsyncCommandLineInterpreter(abc.ABC):
@@ -155,6 +162,14 @@ class AsyncShell(AsyncCommandLineInterpreter):
             self.env["PS1"] = ""
         else:
             self.env = None
+        
+        # Status and marker tracking for background command support
+        self.status: ShellStatus = ShellStatus.IDLE
+        self.current_marker: str | None = None
+    
+    def is_idle(self) -> bool:
+        """Check if the shell is idle and available for new commands."""
+        return self.status == ShellStatus.IDLE
     
     def _get_default_shell(self) -> str:
         """Get default shell path with environment variable support"""
@@ -183,7 +198,10 @@ class AsyncShell(AsyncCommandLineInterpreter):
         Returns:
             A tuple containing (output, finished) where finished indicates if the marker was found.
         """
+        # Mark shell as busy and save marker for background command support
+        self.status = ShellStatus.BUSY
         marker = f"__COMMAND_END_{uuid.uuid4().hex}__"
+        self.current_marker = marker
         
         # Handle heredoc and multi-line commands properly
         if "<<" in command:
@@ -196,7 +214,15 @@ class AsyncShell(AsyncCommandLineInterpreter):
         
         self.process.stdin.write(full_command.encode(self.encoding))
         await self.process.stdin.drain()
-        return await self.read_until_marker(marker, timeout)
+        
+        output, finished = await self.read_until_marker(marker, timeout)
+        
+        # Update status based on completion
+        if finished:
+            self.status = ShellStatus.IDLE
+            self.current_marker = None
+        
+        return output, finished
 
     async def close(self):
         """Closes the shell process gracefully."""

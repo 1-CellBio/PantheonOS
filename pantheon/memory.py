@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -22,11 +23,17 @@ class Memory:
         extra_data: The extra data of the memory.
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, file_path: str | None = None, persist_delay: float = 2.0):
         self.name = name
         self.id = str(uuid4())
         self._messages: list[dict] = []
         self.extra_data: dict[str, object] = {}
+        
+        # Debounced persistence (opt-in: only when file_path is set)
+        self._file_path: str | None = file_path
+        self._persist_delay = persist_delay
+        self._persist_task: asyncio.Task | None = None
+        self._dirty: bool = False
 
     def __getitem__(self, key: int | slice):
         """Get a message or slice of messages from the memory."""
@@ -91,6 +98,58 @@ class Memory:
         """
         messages = process_messages_for_store(messages)
         self._messages.extend(messages)
+        self._schedule_persist()  # Trigger debounced auto-persistence
+
+    def _schedule_persist(self):
+        """Schedule debounced persistence (non-blocking).
+        
+        Only schedules if file_path is set (opt-in behavior).
+        Uses debounce window to batch multiple writes.
+        """
+        if not self._file_path:
+            return
+        
+        self._dirty = True
+        
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop running, skip auto-persist
+            # (Will be persisted by MemoryManager.save() later)
+            return
+        
+        # Cancel existing scheduled task (debounce)
+        if self._persist_task and not self._persist_task.done():
+            self._persist_task.cancel()
+        
+        async def _delayed_persist():
+            await asyncio.sleep(self._persist_delay)
+            self._do_persist()
+        
+        self._persist_task = loop.create_task(_delayed_persist())
+
+    def _do_persist(self):
+        """Actually write memory to disk."""
+        if self._file_path and self._dirty:
+            try:
+                self.save(self._file_path)
+                self._dirty = False
+                logger.debug(f"Memory '{self.name}' auto-persisted to {self._file_path}")
+            except Exception as e:
+                logger.error(f"Failed to auto-persist memory '{self.name}': {e}")
+
+    async def flush(self):
+        """Force immediate persistence, cancel any pending debounce.
+        
+        Use this for graceful shutdown to ensure all data is saved.
+        """
+        if self._persist_task and not self._persist_task.done():
+            self._persist_task.cancel()
+            try:
+                await self._persist_task
+            except asyncio.CancelledError:
+                pass
+        self._do_persist()
 
     def get_messages(self, execution_context_id=_ALL_CONTEXTS, for_llm: bool = True) -> list[dict]:
         """
@@ -193,6 +252,95 @@ class Memory:
             if last_message["role"] == "tool":
                 break
 
+    def _fix_corrupted_messages(self):
+        """Remove corrupted messages (missing role and useless).
+        
+        Removes messages that only contain partial data (e.g. {'agent_name': ...})
+        resulting from failed model calls.
+        """
+        original_len = len(self._messages)
+        self._messages = [
+            msg for msg in self._messages 
+            if msg.get("role") is not None
+        ]
+        removed_count = original_len - len(self._messages)
+        if removed_count > 0:
+            logger.warning(
+                f"Removed {removed_count} corrupted messages (missing role) from memory '{self.name}'"
+            )
+            self._dirty = True
+
+    def _fix_orphaned_tool_calls(self):
+        """Add placeholder responses for orphaned tool_calls and fix context IDs.
+        
+        1. Inserts [INTERNAL_ERROR] tool responses for any tool_call that lacks
+           a corresponding tool message.
+        2. Updates existing placeholder messages to ensure they match key metadata
+           (execution_context_id, agent_name) of the parent assistant message.
+        """
+        import time
+        from copy import deepcopy
+        
+        # Helper to find tool message for a tool_call_id
+        tool_msgs_map = {
+            msg.get("tool_call_id"): msg
+            for msg in self._messages
+            if msg.get("role") == "tool" and msg.get("tool_call_id")
+        }
+        
+        insertions = []  # (index, placeholder_message)
+        
+        for i, msg in enumerate(self._messages):
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                parent_context_id = msg.get("execution_context_id")
+                parent_agent_name = msg.get("agent_name")
+                
+                # Check each tool call in this assistant message
+                for tc in msg["tool_calls"]:
+                    tc_id = tc.get("id")
+                    if not tc_id:
+                        continue
+                        
+                    existing_tool_msg = tool_msgs_map.get(tc_id)
+                    
+                    if existing_tool_msg:
+                        continue
+                    else:
+                        # Create Phase: Insert missing tool response
+                        placeholder = {
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "tool_name": tc.get("function", {}).get("name", "unknown"),
+                            "content": "[INTERNAL_ERROR] Session interrupted - tool execution incomplete",
+                            "id": str(uuid4()),
+                            "timestamp": time.time(),
+                            "_recovered": True,
+                        }
+                        # Propagate parent metadata
+                        if parent_context_id:
+                            placeholder["execution_context_id"] = parent_context_id
+                        if parent_agent_name:
+                            placeholder["agent_name"] = parent_agent_name
+                        
+                        # Use parent's metadata structure if useful (optional, but good for tracking)
+                        if "_metadata" in msg:
+                             # Minimal metadata copy if needed
+                             pass
+
+                        insertions.append((i + 1, placeholder))
+                        # Update map to prevent duplicates if multiple refs exist (unlikely)
+                        tool_msgs_map[tc_id] = placeholder
+        
+        # Insert in reverse order to maintain correct indices
+        for idx, placeholder in reversed(insertions):
+            self._messages.insert(idx, placeholder)
+        
+        if insertions:
+            logger.info(
+                f"Fixed memory '{self.name}': {len(insertions)} orphaned tool_call(s) inserted."
+            )
+            self._schedule_persist()
+
 
 DEFAULT_CHAT_NAME = "New Chat"
 
@@ -225,6 +373,8 @@ class MemoryManager:
             name = DEFAULT_CHAT_NAME
         memory = Memory(name)
         self.memory_store[memory.id] = memory
+        # Enable auto-persistence for managed memories
+        memory._file_path = str(self.path / f"{memory.id}.json")
         return memory
 
     def get_memory(self, id: str) -> Memory:
@@ -234,7 +384,13 @@ class MemoryManager:
         Args:
             id: The ID of the memory.
         """
-        return self.memory_store[id]
+        memory = self.memory_store[id]
+        # Lazy fix: repair orphaned tool_calls on first access
+        if not getattr(memory, '_orphans_fixed', False):
+            memory._fix_corrupted_messages()
+            memory._fix_orphaned_tool_calls()
+            memory._orphans_fixed = True
+        return memory
 
     def delete_memory(self, id: str):
         """
@@ -273,6 +429,8 @@ class MemoryManager:
         for file in self.path.glob("*.json"):
             try:
                 memory = Memory.load(str(file))
+                # Enable auto-persistence for managed memories
+                memory._file_path = str(file)
                 logger.debug(f"Loaded memory: {memory.name} from {file}")
                 self.memory_store[memory.id] = memory
                 if memory.extra_data.get("running"):

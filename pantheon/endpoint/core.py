@@ -309,6 +309,51 @@ class Endpoint(FileTransferToolSet):
             names = [name] if isinstance(name, str) else (name if name else [])
             config = config or {}
 
+            # ===== Parse mcp:* patterns for "start" action =====
+            if action == "start" and service_type == "toolset":
+                toolset_names = []
+                mcp_names = []
+
+                for svc in names:
+                    if svc == "mcp":
+                        # "mcp" is any/unified gateway, handled separately or already running.
+                        # Just ensure it doesn't fall into toolset_names.
+                        pass
+                    elif svc.startswith("mcp:"):
+                        mcp_names.append(svc[4:])  # Extract: "mcp:context7" -> "context7"
+                    else:
+                        toolset_names.append(svc)
+
+                # Start both toolsets and MCP servers
+                results = {"success": True, "started": [], "errors": []}
+
+                if toolset_names:
+                    ts_result = await self.toolset_manager.start_services(toolset_names)
+                    if not ts_result.get("success"):
+                        results["success"] = False
+                    results["started"].extend(ts_result.get("started", []))
+                    results["errors"].extend(ts_result.get("errors", []))
+
+                if mcp_names:
+                    mcp_result = await self.mcp_manager.start_services(mcp_names)
+                    
+                    # If start failed because service not found, try reloading config and retry
+                    # This supports dynamic addition of services to mcp.json without restarting everything
+                    if not mcp_result.get("success") and any("not found" in e for e in mcp_result.get("errors", [])):
+                        logger.info("Some MCP services not found, attempting to reload config...")
+                        mcp_config = get_settings().get_mcp_config()
+                        await self.mcp_manager.load_config(mcp_config)
+                        
+                        # Retry start
+                        mcp_result = await self.mcp_manager.start_services(mcp_names)
+
+                    if not mcp_result.get("success"):
+                        results["success"] = False
+                    results["started"].extend(mcp_result.get("started", []))
+                    results["errors"].extend(mcp_result.get("errors", []))
+
+                return results
+
             # Get the appropriate manager
             manager = (
                 self.mcp_manager if service_type == "mcp" else self.toolset_manager

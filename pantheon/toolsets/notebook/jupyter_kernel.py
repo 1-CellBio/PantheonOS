@@ -470,10 +470,18 @@ class JupyterKernelToolSet(ToolSet):
         name: str,
         workdir: str | None = None,
         use_unified_listener: bool = True,
+        execution_timeout: int | None = None,
         **kwargs,
     ):
         super().__init__(name, **kwargs)
         self.workdir = workdir or os.getcwd()
+
+        # Execution timeout: use provided value, or get from settings
+        if execution_timeout is not None:
+            self.execution_timeout = execution_timeout
+        else:
+            from pantheon.settings import get_settings
+            self.execution_timeout = get_settings().tool_timeout
 
         # Event bus will be set by parent toolset during setup
         self.event_bus: Optional[IOPubEventBus] = None
@@ -494,7 +502,7 @@ class JupyterKernelToolSet(ToolSet):
         self.unified_listener: Optional[KernelListener] = None
         if self.use_unified_listener:
             self.unified_listener = KernelListener()
-            logger.debug("Initialized unified kernel listener")
+            logger.debug(f"Initialized unified kernel listener (execution_timeout={self.execution_timeout}s)")
 
     def _current_context_dict(self) -> dict:
         ctx = self.get_context()
@@ -622,6 +630,18 @@ class JupyterKernelToolSet(ToolSet):
             if self.event_bus:
                 await self._setup_iopub_monitoring(kernel_session_id, km, kc)
 
+            # Execute context prefix code once during kernel initialization
+            # This sets up PANTHEON_CONTEXT environment variable in the kernel
+            # Moved here from execute_request to avoid conflicts with magic commands (%%R, etc.)
+            if context_prefix := self._context_prefix_code():
+                await self.execute_request(
+                    context_prefix,
+                    kernel_session_id,
+                    silent=True,
+                    store_history=False,
+                    execution_metadata={"operated_by": "system"},
+                )
+
             logger.info(f"Created Jupyter kernel session: {kernel_session_id}")
 
             return {
@@ -655,9 +675,8 @@ class JupyterKernelToolSet(ToolSet):
 
         client = self.clients[session_id]
         session_info = self.sessions[session_id]
-        context_prefix = self._context_prefix_code()
-        if context_prefix:
-            code = f"{context_prefix}\n{code}" if code else context_prefix
+        # Note: context_prefix is now executed once in create_session()
+        # to avoid conflicts with magic commands (%%R, etc.)
 
         try:
             # Update kernel status
@@ -682,13 +701,13 @@ class JupyterKernelToolSet(ToolSet):
 
             # Wait for execution reply - handle both sync and async versions
             try:
-                reply = client.get_shell_msg(timeout=60)
+                reply = client.get_shell_msg(timeout=self.execution_timeout)
                 # If get_shell_msg is async, it returns a coroutine
                 if hasattr(reply, "__await__"):
                     reply = await reply
             except TypeError:
                 # Fallback to async version
-                reply = await client.get_shell_msg(timeout=60)
+                reply = await client.get_shell_msg(timeout=self.execution_timeout)
 
             # Update execution count
             if store_history and reply["content"].get("status") == "ok":
@@ -797,10 +816,31 @@ class JupyterKernelToolSet(ToolSet):
 
         except Exception as e:
             session_info.status = KernelStatus.IDLE
-            logger.error(f"Execute request failed for session {session_id}: {e}")
+            # Improve error message for Empty exception (timeout) which has empty str()
+            error_msg = str(e)
+            if not error_msg:
+                error_msg = f"""Kernel execution timeout after {self.execution_timeout}s.
+
+## Immediate Actions:
+1. `manage_kernel(action="interrupt")` - stop current cell
+2. `manage_kernel(action="restart")` - reset kernel (clears memory)
+3. `manage_kernel(action="status")` - check kernel health
+
+## Prevention Tips:
+1. Split long operations into multiple cells (load → preprocess → compute)
+2. Use parallel computing:
+   - scanpy: `sc.settings.n_jobs = -1`
+   - pandas: `df.parallel_apply()` (pandarallel)
+3. Subsample for testing: `adata_sample = adata[:10000, :]`
+4. Save checkpoints: `adata.write('checkpoint.h5ad')`
+5. Tune algorithm parameters:
+   - UMAP: `n_neighbors=15, min_dist=0.3`
+   - PCA: `n_comps=50`
+"""
+            logger.error(f"Execute request failed for session {session_id}: {error_msg}")
             return {
                 "success": False,
-                "error": str(e),
+                "error": error_msg,
                 "outputs": [],
                 "execution_count": None,
             }

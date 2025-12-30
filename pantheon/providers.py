@@ -31,36 +31,41 @@ class MCPProvider(ToolProvider):
     Configuration is read from settings module automatically.
     """
 
-    # Singleton instances per URI
-    _instances: dict[str, "MCPProvider"] = {}
+    # Singleton instances per (URI, filter_prefix)
+    _instances: dict[tuple[str, str | None], "MCPProvider"] = {}
     _instances_lock = Lock()
 
-    def __init__(self, uri: str):
+    def __init__(self, uri: str, filter_prefix: str | None = None):
         """Initialize MCPProvider (use get_instance() for singleton access).
 
         Args:
             uri: MCP server URI
+            filter_prefix: Optional prefix to filter tools (e.g., "context7")
         """
         self.uri = uri
+        self.filter_prefix = filter_prefix
         self._client: Optional[Client] = None
         self._tools_cache: Optional[list[ToolInfo]] = None
         self._cache_time: float = 0
 
     @classmethod
-    def get_instance(cls, uri: str) -> "MCPProvider":
-        """Get or create a singleton MCPProvider for the given URI.
+    def get_instance(cls, uri: str, filter_prefix: str | None = None) -> "MCPProvider":
+        """Get or create a singleton MCPProvider.
 
         Args:
             uri: MCP server URI
+            filter_prefix: Optional prefix to filter tools
 
         Returns:
-            MCPProvider instance (singleton per URI)
+            MCPProvider instance (singleton per uri+filter combination)
         """
+        key = (uri, filter_prefix)
         with cls._instances_lock:
-            if uri not in cls._instances:
-                cls._instances[uri] = cls(uri)
-                logger.debug(f"Created MCPProvider singleton for {uri}")
-            return cls._instances[uri]
+            if key not in cls._instances:
+                cls._instances[key] = cls(uri, filter_prefix)
+                prefix_info = f" (filter: {filter_prefix})" if filter_prefix else ""
+                logger.debug(f"Created MCPProvider singleton for {uri}{prefix_info}")
+            return cls._instances[key]
 
     @classmethod
     def clear_instances(cls):
@@ -231,6 +236,10 @@ class MCPProvider(ToolProvider):
 
                 tool_infos = []
                 for tool in tools_response:
+                    # Apply filter if specified
+                    if self.filter_prefix and not tool.name.startswith(f"{self.filter_prefix}_"):
+                        continue
+                    
                     params = tool.inputSchema if hasattr(tool, "inputSchema") else {}
 
                     function_schema = {
@@ -250,8 +259,9 @@ class MCPProvider(ToolProvider):
                 # Update cache with timestamp
                 self._tools_cache = tool_infos
                 self._cache_time = now
+                prefix_info = f" (filtered by '{self.filter_prefix}')" if self.filter_prefix else ""
                 logger.debug(
-                    f"MCPProvider '{self.uri}': refreshed cache with {len(tool_infos)} tools"
+                    f"MCPProvider '{self.uri}': cached {len(tool_infos)} tools{prefix_info}"
                 )
 
                 return tool_infos
@@ -486,21 +496,24 @@ class ToolSetProvider(ToolProvider):
         return self.toolset_proxy.toolset_name
 
     async def initialize(self):
-        """Initialize the provider"""
-        try:
-            # Cache tool descriptions for parameter filtering
-            tools_response = await self.toolset_proxy.list_tools()
+        """Initialize the provider (no-op, lazy loading enabled)."""
+        # Tool descriptions are lazily loaded on first list_tools/call_tool call
+        # This avoids calling list_tools during Agent creation
+        pass
 
-            # ToolsetProxy always returns dict format
+    async def _ensure_tool_descriptions(self):
+        """Lazily load tool descriptions for parameter filtering."""
+        if self._tool_descriptions:
+            return  # Already loaded
+        
+        try:
+            tools_response = await self.toolset_proxy.list_tools()
             tools_list = tools_response.get("tools", [])
             for tool in tools_list:
                 if isinstance(tool, dict):
                     self._tool_descriptions[tool.get("name", "")] = tool
-
         except Exception as e:
-            logger.error(f"Failed to initialize ToolSetProvider: {e}")
-            # Don't fail initialization, continue anyway
-            logger.warning("Continuing without cached tool descriptions")
+            logger.warning(f"Failed to load tool descriptions: {e}")
 
     async def list_tools(self) -> list[ToolInfo]:
         """List all available tools from the ToolSet"""
@@ -562,6 +575,9 @@ class ToolSetProvider(ToolProvider):
         """Call a tool on the ToolSet"""
         try:
             logger.debug(f"Calling ToolSet tool '{name}'")
+
+            # Lazy load tool descriptions if not already loaded
+            await self._ensure_tool_descriptions()
 
             # Parameter filtering (extract remote parameters)
             # Only pass parameters that the remote tool expects

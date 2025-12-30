@@ -15,7 +15,37 @@ from pantheon.utils.misc import run_func
 from .base import Team
 
 if TYPE_CHECKING:
-    from pantheon.internal.learning import LearningPipeline, Skillbook
+    from pantheon.internal.learning import LearningPipeline
+
+
+LIST_AGENTS_DOC = """List all available agents and their capabilities.
+
+Returns a list of agent names and descriptions. Use this to:
+- Discover agents you can delegate to via call_agent()
+- Choose the right agent for specific task types and then
+  call_agent() to delegate the task.
+
+Call this before delegating if unsure which agent handles a task."""
+
+CALL_AGENT_DOC = """Delegate a task to another agent in the team.
+
+Args:
+    agent_name: Name of the target agent (use list_agents() to discover).
+    instruction: Task description with the following structure:
+        - **Goal**: What needs to be accomplished and why it matters.
+        - **Context**: All background the agent needs (files, data, constraints).
+          Assume the agent has no memory of prior conversation.
+        - **Expected Outcome**: Format, files, or deliverables expected.
+
+Returns:
+    Response content from the target agent.
+
+Example instruction:
+    'Goal: Analyze gene expression patterns in the PBMC dataset.\\n\\n'
+    'Context: Dataset at /data/pbmc.h5ad, already preprocessed. '
+    'Focus on T cell subpopulations.\\n\\n'
+    'Expected Outcome: Report with UMAP visualization and marker genes.'"""
+
 
 
 def _slugify(name: str) -> str:
@@ -24,7 +54,7 @@ def _slugify(name: str) -> str:
 
 
 def _build_execution_context_id(
-    parent_metadata: dict,
+    context_variables: dict,
     run_context,
     depth: int,
     target_name: str,
@@ -38,7 +68,8 @@ def _build_execution_context_id(
     """
 
     def _extract_root_token() -> str:
-        execution_context_id = parent_metadata.get("execution_context_id")
+        # P2: Read from context_variables top level (messages have it there)
+        execution_context_id = context_variables.get("execution_context_id")
         if execution_context_id and "|" in execution_context_id:
             return execution_context_id.split("|", 1)[0]
 
@@ -71,38 +102,49 @@ def _build_child_context_metadata(
         )
     parent_metadata = context_variables.get("_metadata") or {}
     parent_path = parent_metadata.get("chain_path")
+    
+    # P2: Build enhanced chain_path with agent:call_id format
+    enhanced_chain = []
     if parent_path:
-        chain_path = list(parent_path)
+        # Inherit parent's enhanced path
+        enhanced_chain = list(parent_path)
     else:
-        chain_path = [run_context.agent.name]
-    if target_agent.name in chain_path:
+        # Root agent (no call_id)
+        enhanced_chain = [run_context.agent.name]
+    
+    # Extract agent names for loop detection
+    agent_names = []
+    for entry in enhanced_chain:
+        agent_name = entry.split(":", 1)[0] if ":" in entry else entry
+        agent_names.append(agent_name)
+    
+    if target_agent.name in agent_names:
         raise RuntimeError(
             "Delegation loop detected: this agent already appears in the current chain."
         )
-    chain_path.append(target_agent.name)
-
-    child_depth = max(len(chain_path) - 1, 0)
+    
+    child_depth = max(len(enhanced_chain), 0)  # Depth is length of existing chain
     if child_depth > max_depth:
         raise RuntimeError("Delegation depth limit reached.")
 
     execution_context_id = _build_execution_context_id(
-        parent_metadata, run_context, child_depth, target_agent.name
+        context_variables, run_context, child_depth, target_agent.name
     )
 
     tool_call_id = context_variables.get("tool_call_id") or (
         "call_" + uuid.uuid4().hex[:12]
     )
+    
+    # P2: Add current agent with call_id to chain
+    enhanced_chain.append(f"{target_agent.name}:{tool_call_id}")
 
+    # P2: Simplified metadata - only chain_path
     metadata = {
-        "execution_context_id": execution_context_id,
-        "chain_path": chain_path,
-        "parent": {
-            "agent": run_context.agent.name,
-            "call_id": tool_call_id,
-        },
+        "chain_path": enhanced_chain,
     }
 
-    return metadata
+    # P2: Return execution_context_id separately (will be set at message top level)
+    return metadata, execution_context_id
 
 
 class PantheonTeam(Team):
@@ -121,8 +163,7 @@ class PantheonTeam(Team):
         agents: list[Agent | RemoteAgent],
         use_summary: bool = False,
         max_delegate_depth: int | None = 5,
-        allow_transfer: bool = True,
-        skillbook: Optional["Skillbook"] = None,
+        allow_transfer: bool = False,
         learning_pipeline: Optional["LearningPipeline"] = None,
     ):
         """Initialize PantheonTeam with unified agent architecture.
@@ -133,12 +174,13 @@ class PantheonTeam(Team):
                          when delegating tasks.
             max_delegate_depth: Maximum depth for nested call_agent calls.
             allow_transfer: If True, add transfer_to_agent tool to agents.
-            skillbook: Optional Skillbook for long-term memory.
-            learning_pipeline: Optional learning pipeline.
+            learning_pipeline: Optional learning pipeline (handles trajectory learning).
 
         Note:
             All agents are equal - the first one is used as the default
             entry point but receives no special treatment.
+
+            Skill injection is handled externally via inject_skills_to_team().
         """
         if not agents:
             raise ValueError("Team must have at least one agent")
@@ -147,12 +189,10 @@ class PantheonTeam(Team):
         self.use_summary = use_summary
         self.max_delegate_depth = max_delegate_depth
         self.allow_transfer = allow_transfer
-        
-        # Long-term memory
-        self._skillbook = skillbook
+
+        # Learning pipeline handles trajectory learning
         self._learning_pipeline = learning_pipeline
-        self._skills_injected = False  # Track if skills are already injected
-        
+
         # Context compression
         self._compressor = self._init_compressor()
 
@@ -160,122 +200,114 @@ class PantheonTeam(Team):
 
         # Keep triage reference for backward compatibility (first agent)
         self.triage = self.team_agents[0]
-        # Note: Skillbook injection moved to first run() call for cache-friendly behavior
-    
+
     def _init_compressor(self):
         """Initialize context compressor from settings."""
         from pantheon.settings import get_settings
         from pantheon.internal.compression import CompressionConfig, ContextCompressor
-        
+
         settings = get_settings()
         compression_config = settings.get_compression_config()
-        
+
         if not compression_config.get("enable", False):
             return None
-        
+
         config = CompressionConfig(
             enable=True,
             threshold=compression_config.get("threshold", 0.8),
-            preserve_recent_messages=compression_config.get("preserve_recent_messages", 5),
+            preserve_recent_messages=compression_config.get(
+                "preserve_recent_messages", 5
+            ),
             max_tool_arg_length=compression_config.get("max_tool_arg_length", 2000),
-            max_tool_output_length=compression_config.get("max_tool_output_length", 5000),
+            max_tool_output_length=compression_config.get(
+                "max_tool_output_length", 5000
+            ),
             retry_after_messages=compression_config.get("retry_after_messages", 10),
         )
-        
+
         # Use first agent's model for compression
         model = self.team_agents[0].models[0] if self.team_agents else "low"
-        
+
         return ContextCompressor(config, model)
 
-    def _inject_skillbook_to_agents(self) -> None:
-        """Inject relevant skillbook content into all agent instructions."""
-        for agent in self.team_agents:
-            self._inject_skillbook_to_agent(agent)
-
-    def _inject_skillbook_to_agent(self, agent) -> None:
-        """Inject skillbook content into a single agent's instructions."""
-        if not self._skillbook:
-            return
-        
-        # Check for any skillbook header to avoid duplicate injection
-        if "📌 User Rules" in agent.instructions or "📚 Learned" in agent.instructions:
-            return
-        
-        skills_prompt = self._skillbook.as_prompt(agent.name)
-        if skills_prompt:
-            agent.instructions += f"\n\n{skills_prompt}"
-            logger.debug(f"Injected skillbook into agent: {agent.name}")
+    # Note: Skillbook injection is now handled by LearningPipeline.inject_to_team()
+    # The _inject_skillbook_to_agents and _inject_skillbook_to_agent methods have been removed.
 
     def _submit_learning(
         self,
         agent_name: str,
         messages: List[dict],
+        chat_id: str = "",
         parent_question: Optional[str] = None,
     ) -> None:
         """Submit learning data to learning pipeline.
-        
+
         Args:
             agent_name: Name of the agent that produced the trajectory
             messages: List of messages from the conversation
+            chat_id: Original chat/memory ID for grouping learning files
             parent_question: For sub_agent, the delegation instruction
         """
         from pantheon.internal.learning.pipeline import build_learning_input
         from pantheon.settings import get_settings
-        
+
         settings = get_settings()
         learning_config = settings.get_learning_config()
-        
+
         turn_id = str(uuid.uuid4())
         learning_input = build_learning_input(
             turn_id=turn_id,
             agent_name=agent_name,
             messages=messages,
             learning_dir=learning_config["learning_dir"],
-            max_tool_arg_length=learning_config["max_tool_arg_length"],
-            max_tool_output_length=learning_config["max_tool_output_length"],
+            chat_id=chat_id,
         )
-        
+
         # For sub_agent, use delegation instruction as question
         if parent_question:
             learning_input.question = parent_question
-        
+
         self._learning_pipeline.submit(learning_input)
-        logger.debug(f"Submitted learning for {agent_name}, turn_id={turn_id}")
+        logger.debug(
+            f"Submitted learning for {agent_name}, turn_id={turn_id}, chat_id={chat_id[:8] if chat_id else 'N/A'}"
+        )
 
     async def _perform_compression(self, memory: Memory) -> None:
         """Perform context compression on the memory.
-        
+
         Args:
             memory: Memory instance to compress
         """
         from pantheon.settings import get_settings
-        
+
         settings = get_settings()
         # Use ace/learning directory for unified management with ACE learning data
         learning_config = settings.get_learning_config()
         compression_dir = learning_config["learning_dir"]
-        
+
         result = await self._compressor.compress(
             messages=memory._messages,
             compression_dir=compression_dir,
         )
-        
+
         if result.compression_message:
             # Get compression range to know which messages to replace
-            compress_start, compress_end = self._compressor._get_compression_range(memory._messages)
-            
+            compress_start, compress_end = self._compressor._get_compression_range(
+                memory._messages
+            )
+
             # Non-destructive compression: Insert compression message AFTER the compressed block
             # This preserves raw messages for UI/History while allowing get_messages(for_llm=True)
             # to filter them out based on the checkpoint position.
-            
+
             # Insert at compress_end (the index immediately following the compressed block)
             new_messages = (
-                memory._messages[:compress_end] +
-                [result.compression_message] +
-                memory._messages[compress_end:]
+                memory._messages[:compress_end]
+                + [result.compression_message]
+                + memory._messages[compress_end:]
             )
             memory._messages = new_messages
-            
+
             logger.info(
                 f"Context compression checkpoint inserted at index {compress_end}. "
                 f"Compressed {compress_end - compress_start} messages ({result.original_tokens} -> {result.new_tokens} tokens)."
@@ -336,14 +368,8 @@ class PantheonTeam(Team):
 
             list_agents_func = make_list_agents(caller_slug)
             list_agents_func.__name__ = "list_agents"
-            list_agents_func.__doc__ = (
-                "List all available agents and their capabilities.\n\n"
-                "Returns a list of agent names and descriptions. Use this to:\n"
-                "- Discover agents you can delegate to via call_agent()\n"
-                "- Transfer control to via transfer_to_agent()\n"
-                "- Choose the right agent for specific task types\n\n"
-                "Call this before delegating if unsure which agent handles a task."
-            )
+            list_agents_func.__name__ = "list_agents"
+            list_agents_func.__doc__ = LIST_AGENTS_DOC
 
             await run_func(agent.tool, list_agents_func)
 
@@ -373,16 +399,19 @@ class PantheonTeam(Team):
                 run_context = get_current_run_context()
 
                 context_variables = dict(context_variables or {})
-                child_metadata = _build_child_context_metadata(
+                
+                # P2: _build_child_context_metadata now returns (metadata, execution_context_id)
+                child_metadata, execution_context_id = _build_child_context_metadata(
                     run_context,
                     target_agent,
                     context_variables,
                     self.max_delegate_depth,
                 )
-                execution_context_id = child_metadata["execution_context_id"]
 
                 child_context_variables = dict(context_variables)
                 child_context_variables["_metadata"] = child_metadata
+                # P2: Set execution_context_id at top level for child agent
+                child_context_variables["execution_context_id"] = execution_context_id
 
                 # Build task message with optional history summary
                 task_message = await create_delegation_task_message(
@@ -399,23 +428,35 @@ class PantheonTeam(Team):
                 parent_chunk_hook = run_context.process_chunk
 
                 async def wrapped_step(step_message: dict):
-                    metadata = step_message.get("_metadata")
-                    if not metadata or "execution_context_id" not in metadata:
-                        step_message["_metadata"] = child_metadata
+                    # P2: Set execution_context_id at message top level
+                    if "execution_context_id" not in step_message:
+                        step_message["execution_context_id"] = execution_context_id
+                    
+                    # P0 FIX + P2: Merge metadata using setdefault chaining
+                    step_message.setdefault("_metadata", child_metadata).setdefault(
+                        "chain_path", child_metadata["chain_path"]
+                    )
+                    
                     if parent_step_hook is not None:
                         await run_func(parent_step_hook, step_message)
 
                 async def wrapped_chunk(chunk: dict):
-                    metadata = chunk.get("_metadata")
-                    if not metadata or "execution_context_id" not in metadata:
-                        chunk["_metadata"] = child_metadata
+                    # P2: Set execution_context_id at message top level
+                    if "execution_context_id" not in chunk:
+                        chunk["execution_context_id"] = execution_context_id
+                    
+                    # P0 FIX + P2: Merge metadata using setdefault chaining
+                    chunk.setdefault("_metadata", child_metadata).setdefault(
+                        "chain_path", child_metadata["chain_path"]
+                    )
+                    
                     if parent_chunk_hook is not None:
                         await run_func(parent_chunk_hook, chunk)
 
                 child_memory = Memory(
                     name=f"{target_agent.name}-{execution_context_id}"
                 )
-                
+
                 response = await target_agent.run(
                     task_message,
                     memory=child_memory,
@@ -430,9 +471,16 @@ class PantheonTeam(Team):
 
                 # Submit sub_agent learning (child_memory is the complete conversation)
                 if self._learning_pipeline:
+                    # Use parent memory's id for consistent chat grouping
+                    parent_chat_id = (
+                        getattr(run_context.memory, "id", "")
+                        if run_context.memory
+                        else ""
+                    )
                     self._submit_learning(
                         agent_name=target_agent.name,
                         messages=child_memory._messages,
+                        chat_id=parent_chat_id,
                         parent_question=instruction,
                     )
 
@@ -440,23 +488,8 @@ class PantheonTeam(Team):
                 return content
 
             call_agent.__name__ = "call_agent"
-            call_agent.__doc__ = (
-                "Delegate a task to another agent in the team.\n\n"
-                "Args:\n"
-                "    agent_name: Name of the target agent (use list_agents() to discover).\n"
-                "    instruction: Task description with the following structure:\n"
-                "        - **Goal**: What needs to be accomplished and why it matters.\n"
-                "        - **Context**: All background the agent needs (files, data, constraints).\n"
-                "          Assume the agent has no memory of prior conversation.\n"
-                "        - **Expected Outcome**: Format, files, or deliverables expected.\n\n"
-                "Returns:\n"
-                "    Response content from the target agent.\n\n"
-                "Example instruction:\n"
-                "    'Goal: Analyze gene expression patterns in the PBMC dataset.\\n\\n'\n"
-                "    'Context: Dataset at /data/pbmc.h5ad, already preprocessed. '\n"
-                "    'Focus on T cell subpopulations.\\n\\n'\n"
-                "    'Expected Outcome: Report with UMAP visualization and marker genes.'"
-            )
+            call_agent.__name__ = "call_agent"
+            call_agent.__doc__ = CALL_AGENT_DOC
 
             await run_func(calling_agent.tool, call_agent)
 
@@ -511,23 +544,22 @@ class PantheonTeam(Team):
         await self.async_setup()
         if memory is None:
             memory = Memory(name="pantheon-team")
-        
-        # Inject skillbook on first run (cache-friendly: avoids re-injection)
-        if self._skillbook and not self._skills_injected:
-            self._inject_skillbook_to_agents()
-            self._skills_injected = True
-            logger.debug("Skillbook injected into agents on first run")
-        
+
+        # Note: Skill injection is now handled externally before run()
+        # via inject_skills_to_team(team, skillbook)
+
         # Record turn start for learning
         turn_start_index = len(memory._messages)
-        
+
         while True:
             active_agent = self.get_active_agent(memory)
-            
+
             # Check and perform compression if needed
-            if self._compressor and self._compressor.should_compress(memory._messages, active_agent.models[0]):
+            if self._compressor and self._compressor.should_compress(
+                memory._messages, active_agent.models[0]
+            ):
                 await self._perform_compression(memory)
-            
+
             resp = await active_agent.run(msg, memory=memory, **kwargs)
             if isinstance(resp, AgentTransfer):
                 transfer_call_id = resp.tool_call_id
@@ -548,13 +580,15 @@ class PantheonTeam(Team):
                 # Submit main agent learning (exclude sub_agent messages)
                 if self._learning_pipeline:
                     current_messages = [
-                        m for m in memory._messages[turn_start_index:]
+                        m
+                        for m in memory._messages[turn_start_index:]
                         if m.get("execution_context_id") is None
                     ]
                     if current_messages:
                         self._submit_learning(
                             agent_name=active_agent.name,
                             messages=current_messages,
+                            chat_id=memory.id or "",
                         )
                 return resp
 
@@ -577,8 +611,7 @@ class PantheonTeam(Team):
 
         if agent_name not in all_agents:
             raise ValueError(
-                f"Agent '{agent_name}' not found. "
-                f"Available: {list(all_agents.keys())}"
+                f"Agent '{agent_name}' not found. Available: {list(all_agents.keys())}"
             )
 
         if not instruction or not instruction.strip():

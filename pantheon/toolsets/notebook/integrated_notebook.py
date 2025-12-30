@@ -36,6 +36,20 @@ from .jupyter_kernel import (
 from .notebook_contents import NotebookContentsToolSet
 
 
+# rpy2 initialization code - executed once per kernel session when first %%R cell is detected
+RPY2_INIT_CODE = '''
+try:
+    import rpy2
+    get_ipython().run_line_magic('load_ext', 'rpy2.ipython')
+    # Preset CRAN mirror to avoid interactive selection during package installation
+    get_ipython().run_cell_magic('R', '', 'options(repos = c(CRAN = "https://cloud.r-project.org"))')
+except ImportError:
+    print("⚠️ rpy2 not installed. Run: pip install rpy2")
+except Exception as e:
+    print(f"⚠️ rpy2 init failed: {e}")
+'''
+
+
 @dataclass
 class NotebookContext:
     """Internal context for notebook operations"""
@@ -47,7 +61,7 @@ class NotebookContext:
     notebook_title: str
     kernel_spec: str = "python3"
     notebook_is_new: bool = True
-    kernel_is_new: bool = False
+    rpy2_initialized: bool = False  # Runtime state: whether rpy2 extension is loaded
 
 
 class IntegratedNotebookToolSet(ToolSet):
@@ -228,7 +242,6 @@ class IntegratedNotebookToolSet(ToolSet):
                 notebook_title="New Notebook",
                 kernel_spec="python3",
                 notebook_is_new=notebook_file_is_new,
-                kernel_is_new=True,
             )
 
             # 4. Persist
@@ -261,6 +274,9 @@ class IntegratedNotebookToolSet(ToolSet):
                     )
                     logger.error(error_msg)
                     raise Exception(error_msg)
+
+                # Reset rpy2 initialization state (new kernel doesn't have extension loaded)
+                context.rpy2_initialized = False
 
                 logger.info(
                     f"✅ Successfully restored kernel session {context.kernel_session_id[:8]} "
@@ -391,6 +407,13 @@ class IntegratedNotebookToolSet(ToolSet):
         """
         Execute a cell's existing content.
 
+        Supported syntax in code cells:
+        - Python code (default)
+        - R language: `%%R` (cell) or `%R` (line) magic
+          - Pass data: `%%R -i py_var` (Python→R), `%%R -o r_var` (R→Python)
+        - Shell commands: `%%bash` or `%%sh`
+        - Other magics: `%%time`, `%%html`, `%matplotlib inline`, etc.
+
         Args:
             notebook_path: Path to notebook file
             cell_id: Cell identifier
@@ -400,6 +423,12 @@ class IntegratedNotebookToolSet(ToolSet):
             - success: True if execution succeeded
             - output: Execution result/output
             - kernel_session_id: Kernel session ID
+        
+        Tips:
+            - Split long operations into multiple cells  (load → preprocess → compute)
+            - Use parallel computing when available (scanpy: n_jobs=-1 etc...)
+            - Use manage_kernel(action="interrupt") to stop long-running cells
+            - IMPORTANT: To install R packages, use `%%R install.packages('pkg')`. Shell `Rscript` installs may not be visible.
         """
         session_id = self.get_session_id()
         if not session_id:
@@ -420,6 +449,30 @@ class IntegratedNotebookToolSet(ToolSet):
                 code = self.notebook_contents._format_source(cell_data["source"])
             else:
                 code = ""
+
+            # Detect R magic and auto-initialize rpy2 if needed
+            code_stripped = code.strip()
+            needs_rpy2 = (
+                code_stripped.startswith("%%R") or
+                code_stripped.startswith("%R ") or
+                code_stripped.startswith("%R\n") or
+                "\n%R " in code
+            )
+
+            if needs_rpy2 and not context.rpy2_initialized:
+                logger.info(f"Detected R magic, initializing rpy2 for session {context.kernel_session_id[:8]}")
+                init_result = await self.kernel_toolset.execute_request(
+                    RPY2_INIT_CODE,
+                    context.kernel_session_id,
+                    silent=True,
+                    store_history=False,
+                    execution_metadata={"operated_by": "system"},
+                )
+                if init_result.get("success"):
+                    context.rpy2_initialized = True
+                    logger.info("rpy2 initialized successfully")
+                else:
+                    logger.warning(f"rpy2 initialization failed: {init_result.get('error')}")
 
             # Execute with cell_id (not cell_index for stability)
             exec_result = await self._execute_and_update(
@@ -453,7 +506,10 @@ class IntegratedNotebookToolSet(ToolSet):
 
         Args:
             notebook_path: Path to notebook file
-            cell_type: Type of cell: "code", "markdown", or "raw" (default: "code")
+            cell_type: Type of cell:
+                - "code": Executable code (Python, R via %%R, shell via %%bash, etc.)
+                - "markdown": Rich text with Markdown, LaTeX math ($...$)
+                - "raw": Unformatted text
             content: Cell content/source code
             cell_id: Optional cell identifier (auto-generated if not provided)
             position: Insertion position.
@@ -484,6 +540,7 @@ class IntegratedNotebookToolSet(ToolSet):
 
             # Add context information only if context exists
             if result["success"]:
+                result.pop("file_path", None)
                 result["notebook_path"] = notebook_path
                 if context:
                     result["kernel_session_id"] = context.kernel_session_id
@@ -500,20 +557,32 @@ class IntegratedNotebookToolSet(ToolSet):
         notebook_path: str,
         cell_id: str,
         content: str,
+        old_content: Optional[str] = None,
     ) -> dict:
         """
-        Update the content of a cell.
+        Update cell content (supports full replacement or partial replacement).
 
         Args:
             notebook_path: Path to notebook file
             cell_id: Cell identifier
-            content: New cell content/source code
+            content: New cell content
+            old_content: Optional. If provided, will replace old_content with content.
+                        If None/empty, will replace entire cell content.
 
         Returns:
             dict with:
             - success: True if cell was updated
             - cell_id: The cell identifier
-            - notebook_path: Path to the notebook
+            - replacements: Number of replacements made (only when old_content provided)
+
+        Examples:
+            # Full replacement (replace entire cell)
+            update_cell(notebook_path, cell_id, content="import numpy as np\\nprint('new code')")
+
+            # Partial replacement (replace specific content - more token efficient)
+            update_cell(notebook_path, cell_id, 
+                       content="n_neighbors=30",
+                       old_content="n_neighbors=15")
         """
         session_id = self.get_session_id()
 
@@ -521,18 +590,48 @@ class IntegratedNotebookToolSet(ToolSet):
             # Get context if exists (don't create kernel for simple edit)
             context = self._get_context(notebook_path, session_id) if session_id else None
 
-            # Call notebook_contents API
+            # Partial replacement mode: replace old_content with content
+            if old_content:
+                # Read current cell content
+                cell_index, cell_data = await self._get_cell_by_id(notebook_path, cell_id)
+                if cell_index is None:
+                    return {"success": False, "error": f"Cell {cell_id} not found"}
+
+                # Get source
+                source = self.notebook_contents._format_source(cell_data.get("source", ""))
+
+                # Check if old_content exists
+                if old_content not in source:
+                    return {
+                        "success": False,
+                        "error": f"old_content not found in cell {cell_id}"
+                    }
+
+                # Count replacements
+                replacement_count = source.count(old_content)
+
+                # Perform replacement
+                new_source = source.replace(old_content, content)
+
+                # Update content variable for the actual update
+                content = new_source
+
+            # Call notebook_contents API with final content
             result = await self.notebook_contents.update_cell(
                 path=notebook_path,
                 cell_id=cell_id,
                 source=content,
             )
 
-            # Add context information only if context exists
+            # Add context information
             if result["success"]:
+                result.pop("file_path", None)
                 result["notebook_path"] = notebook_path
                 if context:
                     result["kernel_session_id"] = context.kernel_session_id
+
+                if old_content:
+                    result["replacements"] = replacement_count
 
             return result
 
@@ -573,6 +672,7 @@ class IntegratedNotebookToolSet(ToolSet):
 
             # Add context information only if context exists
             if result["success"]:
+                result.pop("file_path", None)
                 result["notebook_path"] = notebook_path
                 if context:
                     result["kernel_session_id"] = context.kernel_session_id
@@ -619,6 +719,7 @@ class IntegratedNotebookToolSet(ToolSet):
 
             # Add context information only if context exists
             if result["success"]:
+                result.pop("file_path", None)
                 result["notebook_path"] = notebook_path
                 if context:
                     result["kernel_session_id"] = context.kernel_session_id
@@ -650,7 +751,9 @@ class IntegratedNotebookToolSet(ToolSet):
         Returns:
             dict with cell list and notebook info. Each cell includes:
             - Always: cell_id, cell_index, cell_type, execution_count, execution_status, output_mime_types
+            - When include_details=False (default): source_preview (first 60 chars)
             - When include_details=True: source, outputs
+            - When execution_status="error": error_summary (ename, evalue)
 
         Example:
             # Get all cells with execution status only
@@ -670,6 +773,9 @@ class IntegratedNotebookToolSet(ToolSet):
 
         Note:
             For kernel variables, use manage_kernel(action="variables") instead.
+            For advanced JSON queries on notebook files, use jq via shell:
+              jq '.cells[] | select(.id=="abc123")' notebook.ipynb  # Get cell by id
+              jq '.cells[] | select(.cell_type=="code") | .source' notebook.ipynb
         """
         session_id = self.get_session_id()
 
@@ -721,9 +827,34 @@ class IntegratedNotebookToolSet(ToolSet):
 
             return sorted(list(mime_types))
 
+        # Helper: Get source preview (first N characters)
+        def get_source_preview(cell: dict, max_length: int = 60) -> str:
+            """Extract source preview (first N characters)"""
+            source = cell.get("source", "")
+            if isinstance(source, list):
+                source = "".join(source)
+            source = source.strip()
+            if len(source) > max_length:
+                return source[:max_length] + "..."
+            return source
+
+        # Helper: Get error summary from cell outputs
+        def get_error_summary(cell: dict) -> dict | None:
+            """Extract error name and value from cell outputs"""
+            outputs = cell.get("outputs", [])
+            for output in outputs:
+                if output.get("output_type") == "error":
+                    return {
+                        "ename": output.get("ename", "Unknown"),
+                        "evalue": output.get("evalue", "")[:200],  # Limit error message length
+                    }
+            return None
+
         # Build cell info list with enhanced fields
         cells_info = []
         for idx, cell in enumerate(notebook.get("cells", [])):
+            execution_status = get_execution_status(cell)
+
             # Basic cell info (always included)
             cell_info = {
                 "cell_id": cell.get("id"),
@@ -731,9 +862,15 @@ class IntegratedNotebookToolSet(ToolSet):
                 "cell_type": cell.get("cell_type"),
                 "execution_count": cell.get("execution_count"),
                 "has_output": len(cell.get("outputs", [])) > 0,
-                "execution_status": get_execution_status(cell),
+                "execution_status": execution_status,
                 "output_mime_types": get_output_mime_types(cell),
             }
+
+            # Add error summary for failed cells
+            if execution_status == "error":
+                error_summary = get_error_summary(cell)
+                if error_summary:
+                    cell_info["error_summary"] = error_summary
 
             # Add language for code cells
             if cell.get("cell_type") == "code":
@@ -742,15 +879,17 @@ class IntegratedNotebookToolSet(ToolSet):
                 language_info = metadata.get("language_info", {})
                 cell_info["language"] = language_info.get("name", "python")
 
-            # Optionally include complete cell data (like read_cell)
+            # Include either preview or full content
             if include_details:
-                # Format source code (handle both string and list formats)
+                # Full source and outputs
                 source = cell.get("source", "")
                 if isinstance(source, list):
                     source = "".join(source)
-
                 cell_info["source"] = source
                 cell_info["outputs"] = cell.get("outputs", [])
+            else:
+                # Only preview (no full content)
+                cell_info["source_preview"] = get_source_preview(cell)
 
 
             cells_info.append(cell_info)
@@ -760,6 +899,11 @@ class IntegratedNotebookToolSet(ToolSet):
             cell_ids_set = set(cell_ids)
             cells_info = [c for c in cells_info if c["cell_id"] in cell_ids_set]
 
+        # Safely get kernel status (session may have been shutdown/deleted)
+        kernel_status = None
+        if context and context.kernel_session_id in self.kernel_toolset.sessions:
+            kernel_status = self.kernel_toolset.sessions[context.kernel_session_id].status.value
+
         # Base response
         result = {
             "success": True,
@@ -767,11 +911,7 @@ class IntegratedNotebookToolSet(ToolSet):
             "has_context": context is not None,
             "cell_count": len(cells_info),
             "cells": cells_info,
-            "kernel_status": self.kernel_toolset.sessions[
-                context.kernel_session_id
-            ].status.value
-            if context
-            else None,
+            "kernel_status": kernel_status,
             "kernel_session_id": context.kernel_session_id if context else None,
         }
 
@@ -880,19 +1020,13 @@ class IntegratedNotebookToolSet(ToolSet):
 
         try:
             if action == "restart":
-                # If context was just created, skip restart (kernel already running)
-                if context.kernel_is_new:
-                    return {
-                        "success": True,
-                        "action": "restart",
-                        "notebook_path": notebook_path,
-                        "kernel_session_id": context.kernel_session_id,
-                    }
-
-                # Otherwise, restart existing kernel
+                # Restart existing kernel
                 result = await self.kernel_toolset.restart_session(
                     context.kernel_session_id
                 )
+
+                # Reset rpy2 initialization state (extension needs to be reloaded after restart)
+                context.rpy2_initialized = False
 
                 # Clear completion context
                 self.completion_service.clear_session_context(context.kernel_session_id)

@@ -24,70 +24,88 @@ from .reflector import (
 from .skill_loader import SkillLoader, load_skills_into_skillbook
 from .skill_manager import SkillManager, SkillManagerOutput, UpdateOperation
 from .skillbook import Skill, Skillbook
+from .skill_injector import inject_skills_to_team, load_skill_prompt
+from pantheon.toolsets.skillbook import SkillbookToolSet
 
 
 def create_learning_resources(
-    enable: Optional[bool] = None,
     config: Optional[dict] = None,
 ) -> Tuple[Optional[Skillbook], Optional[LearningPipeline]]:
     """
     Factory function to create ACE resources.
     
-    Reads configuration from settings if not provided.
-    Returns (None, None) if ACE is disabled.
+    Reads configuration from settings, optionally merged with provided config.
+    Returns (None, None) if both learning and injection are disabled.
     
-    Loading order:
-    1. Load skillbook.json (base data + ratings)
-    2. Scan skills/*.md files and merge (user skills have priority)
-    3. Save updated skillbook.json
+    Config keys:
+    - enable_learning: Controls trajectory learning (LearningPipeline creation)
+    - enable_injection: Controls skill injection (Skillbook creation)
+    
+    Note: Injection is handled externally via inject_skills_to_team().
+    If enable_injection=True, a Skillbook is returned for use with
+    inject_skills_to_team(team, skillbook).
     
     Args:
-        enable: Override for enable flag (None = use config)
-        config: Override for ACE config (None = read from settings)
+        config: Override for ACE config (merged with settings.get_learning_config())
     
     Returns:
-        Tuple of (Skillbook, LearningPipeline) or (None, None)
+        Tuple of (Skillbook, LearningPipeline)
+        - Skillbook: Created if either feature is enabled
+        - LearningPipeline: Created only if enable_learning=True
     """
     from pantheon.settings import get_settings
     from pantheon.utils.log import logger
     
     settings = get_settings()
-    _config = config or settings.get_learning_config()
-    _enable = enable if enable is not None else _config["enable"]
+    # Start with defaults from settings
+    _config = settings.get_learning_config().copy()
     
-    if not _enable:
-        logger.info("Learning disabled")
+    # Merge provided config override if present
+    if config:
+        _config.update(config)
+    
+    # Determine feature flags from config
+    _enable_learning = _config.get("enable_learning", False)
+    _enable_injection = _config.get("enable_injection", _enable_learning)
+    
+    # If both disabled, return early
+    if not _enable_learning and not _enable_injection:
+        logger.info("Learning and injection both disabled")
         return None, None
     
-    # Create skillbook and load from JSON
+    # Create skillbook (shared by both features)
     skillbook = Skillbook(
+        skills_dir=settings.skills_dir,
+        skillbook_path=_config["skillbook_path"],
         max_skills_per_section=_config["max_skills_per_section"],
         max_content_length=_config["max_content_length"],
         enable_agent_scope=_config.get("enable_agent_scope", False),
-    )
-    skillbook.load(_config["skillbook_path"])
-    
-    # Load and merge skills from files
-    skills_dir = settings.skills_dir
-    if skills_dir.exists():
-        loaded = load_skills_into_skillbook(skills_dir, skillbook)
-        if loaded > 0:
-            skillbook.save()  # Save merged skills
-            logger.info(f"Merged {loaded} skills from {skills_dir}")
-    
-    # Create learning pipeline (with skills_dir for async reload)
-    pipeline = LearningPipeline(
-        skillbook=skillbook,
-        reflector=Reflector(model=_config["learning_model"]),
-        skill_manager=SkillManager(model=_config["learning_model"]),
-        learning_dir=_config["learning_dir"],
-        cleanup_after_learning=_config.get("cleanup_after_learning", False),
-        skills_dir=skills_dir if skills_dir.exists() else None,
-        min_confidence_threshold=_config.get("min_confidence_threshold", 0.5),
-        min_atomicity_score=_config.get("min_atomicity_score", 0.85),
+        auto_load=True,  # Automatically loads JSON + merges files
     )
     
-    logger.info(f"Learning enabled: {len(skillbook.skills())} skills loaded")
+    # Create learning pipeline (only if learning enabled)
+    pipeline = None
+    if _enable_learning:
+        pipeline = LearningPipeline(
+            skillbook=skillbook,
+            reflector=Reflector(model=_config["learning_model"]),
+            skill_manager=SkillManager(model=_config["learning_model"]),
+            learning_dir=_config["learning_dir"],
+            cleanup_after_learning=_config.get("cleanup_after_learning", False),
+            min_confidence_threshold=_config.get("min_confidence_threshold", 0.5),
+            min_atomicity_score=_config.get("min_atomicity_score", 0.85),
+            mode=_config.get("mode", "pipeline"),  # "pipeline" or "team"
+            team_id=_config.get("team_id", "skill_learning_team"),
+        )
+    
+    # Logging
+    features = []
+    if _enable_learning:
+        features.append(f"learning({_config.get('mode', 'pipeline')})")
+    if _enable_injection:
+        features.append("injection")
+    logger.info(f"ACE enabled [{', '.join(features)}]: {len(skillbook.skills())} skills loaded")
+    
     return skillbook, pipeline
 
 
@@ -97,6 +115,7 @@ __all__ = [
     # Skillbook
     "Skill",
     "Skillbook",
+    "SkillbookToolSet",
     # SkillLoader
     "SkillLoader",
     "load_skills_into_skillbook",
@@ -114,6 +133,9 @@ __all__ = [
     "UpdateOperation",
     # Pipeline
     "LearningPipeline",
+    # Injection utilities
+    "inject_skills_to_team",
+    "load_skill_prompt",
     # Prompt Constants
     "SKILLBOOK_USAGE_INSTRUCTIONS",
     "SKILLBOOK_HEADER",
@@ -128,3 +150,4 @@ from .skillbook import (
     USER_RULES_HEADER,
     SKILL_LOADING_GUIDANCE,
 )
+

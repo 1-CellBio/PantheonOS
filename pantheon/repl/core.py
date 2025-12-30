@@ -473,11 +473,24 @@ class Repl(ReplUI):
         # This runs after UI is shown, so user sees REPL immediately
         asyncio.create_task(self._chatroom.run_setup())
 
-    async def run(self, message: str | dict | None = None, disable_logging: bool = True):
-        """Main REPL loop."""
+    async def run(self, message: str | dict | None = None, disable_logging: bool = True, log_to_file: bool = True):
+        """Main REPL loop.
+        
+        Args:
+            message: Optional initial message to process
+            disable_logging: If True, suppress console logging (only show ERROR)
+            log_to_file: If True, save all logs to .pantheon/logs/ (even when console logging is suppressed)
+        """
+        # Setup file logging FIRST (before suppressing console output)
+        # This ensures all logs are captured to file for debugging
+        if log_to_file:
+            from pantheon.utils.log import setup_file_logging
+            log_file = setup_file_logging(session_name="repl")
+            self._log_file = log_file  # Store for reference
+        
         if disable_logging:
             from pantheon.utils.log import set_level
-            set_level("ERROR")  # Only show ERROR level, hide DEBUG/INFO/WARNING
+            set_level("ERROR")  # Only show ERROR level on console, file still captures all
 
         # Initialize
         await self._setup()
@@ -540,9 +553,9 @@ class Repl(ReplUI):
                       
                      # Reconfigure loguru to use patched stdout
                      # This ensures log output doesn't break the REPL rendering
-                     from loguru import logger as loguru_logger
-                     loguru_logger.remove()
-                     loguru_logger.add(sys.stdout, level="WARNING")
+                     # Use set_level instead of remove() to preserve file logging
+                     from pantheon.utils.log import set_level
+                     set_level("WARNING")
 
                      # Create background processing task
                      processing_task = asyncio.create_task(self._processing_loop())

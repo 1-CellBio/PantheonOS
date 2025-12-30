@@ -68,6 +68,21 @@ Approaches for annotating cell types in single-cell data.
 
 ---
 
+### Trajectory Inference
+
+Pseudotime analysis and trajectory inference for cell differentiation,
+neurogenesis, and lineage tracing studies.
+
+**Skill file**: [trajectory_inference.md](file:///trajectory_inference.md)
+
+**When to use**:
+- Studying cell differentiation paths (e.g., stem cell → mature cell)
+- Neurogenesis analysis (neural progenitors → neurons)
+- Comparing developmental trajectories between conditions
+- RNA velocity analysis for directional dynamics
+
+---
+
 ## Using Skills
 
 1. **Before analysis**: Scan this index for relevant skills

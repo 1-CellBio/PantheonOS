@@ -143,6 +143,19 @@ class ToolSetManager:
 
             service_info = await self.get_service(toolset_name)
 
+            # Auto-start if toolset not found (lazy initialization)
+            if not service_info:
+                logger.info(f"Auto-starting toolset '{toolset_name}'...")
+                try:
+                    result = await self.start_services([toolset_name])
+                    if result.get("success"):
+                        service_info = await self.get_service(toolset_name)
+                        logger.info(f"Auto-started toolset '{toolset_name}' successfully")
+                    else:
+                        logger.warning(f"Failed to auto-start '{toolset_name}': {result.get('errors', [])}")
+                except Exception as start_error:
+                    logger.warning(f"Auto-start failed for '{toolset_name}': {start_error}")
+
             if not service_info:
                 raise Exception(
                     f"Toolset '{toolset_name}' not found in endpoint services"

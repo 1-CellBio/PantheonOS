@@ -59,7 +59,6 @@ class ChatRoom(ToolSet):
         check_before_chat: Callable | None = None,
         enable_nats_streaming: bool = False,
         default_team: "PantheonTeam | None" = None,
-        enable_learning: bool | None = None,
         learning_config: dict | None = None,
         enable_auto_chat_name: bool = False,
         **kwargs,
@@ -141,7 +140,7 @@ class ChatRoom(ToolSet):
         self._enable_auto_chat_name = enable_auto_chat_name
 
         # ACE (Agentic Context Engineering) long-term memory
-        self._init_learning(enable_learning, learning_config)
+        self._init_learning(learning_config)
 
     async def _get_endpoint_service(self):
         """Get endpoint service object (instance or RemoteService)."""
@@ -167,15 +166,14 @@ class ChatRoom(ToolSet):
             endpoint_service, endpoint_method_name=endpoint_method_name, **kwargs
         )
 
-    def _init_learning(
-        self, enable_learning: bool | None = None, learning_config: dict | None = None
-    ) -> None:
-        """Initialize Long-term memory resources."""
-        from pantheon.internal.learning import create_learning_resources
-
-        self._skillbook, self._learning_pipeline = create_learning_resources(
-            enable=enable_learning, config=learning_config
-        )
+    def _init_learning(self, learning_config: dict | None = None) -> None:
+        """Initialize learning config (lazy creation).
+        
+        Actual resources are created in background during run_setup().
+        """
+        self._learning_config = learning_config
+        self._skillbook = None
+        self._learning_pipeline = None
 
     async def run(self, log_level: str | None = None, remote: bool = True):
         return await super().run(log_level=log_level, remote=remote)
@@ -221,10 +219,41 @@ class ChatRoom(ToolSet):
         else:
             logger.info("ChatRoom: NATS streaming disabled")
 
-        # Start learning pipeline
-        if self._learning_pipeline is not None:
-            await self._learning_pipeline.start()
-            logger.info("ChatRoom: learning pipeline started")
+        # Start learning resources initialization in background (non-blocking warmup)
+        if self._learning_config:
+            task = asyncio.create_task(self._ensure_learning_resources())
+            self._background_tasks.add(task)
+
+    async def _ensure_learning_resources(self) -> "Skillbook | None":
+        """Lazily initialize learning resources (idempotent).
+        
+        Creates skillbook and pipeline on first call, starts pipeline.
+        Called in background during run_setup for warmup, and awaited
+        before team creation to ensure resources are ready.
+        """
+        if self._skillbook is not None:
+            return self._skillbook
+        
+        if not self._learning_config:
+            return None
+        
+        try:
+            from pantheon.internal.learning import create_learning_resources
+            
+            self._skillbook, self._learning_pipeline = create_learning_resources(
+                config=self._learning_config
+            )
+            
+            # Start pipeline if created
+            if self._learning_pipeline is not None:
+                endpoint_service = await self._get_endpoint_service()
+                await self._learning_pipeline.initialize_team(endpoint_service)
+                await self._learning_pipeline.start()
+                logger.info("ChatRoom: learning resources initialized")
+        except Exception as e:
+            logger.error(f"ChatRoom: Failed to initialize learning resources: {e}")
+        
+        return self._skillbook
 
     async def cleanup(self) -> None:
         """Clean up ChatRoom resources before exit.
@@ -394,13 +423,20 @@ class ChatRoom(ToolSet):
         all_agents = await create_agents_from_template(endpoint_service, agent_configs)
         logger.info(f"Created {len(all_agents)} agents")
 
-        # ===== STEP 4: Create and setup team =====
+        # ===== STEP 4: Ensure learning resources are ready =====
+        await self._ensure_learning_resources()
+        
+        # ===== STEP 5: Create and setup team =====
         team = PantheonTeam(
             agents=all_agents,
-            skillbook=self._skillbook,
             learning_pipeline=self._learning_pipeline,
         )
         await team.async_setup()
+
+        # ===== STEP 6: Inject skills externally (after team creation) =====
+        if self._skillbook is not None:
+            from pantheon.internal.learning import inject_skills_to_team
+            await inject_skills_to_team(team, self._skillbook)
 
         # Store source path for template persistence
         team._source_path = team_config.source_path

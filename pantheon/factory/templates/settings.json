@@ -7,7 +7,7 @@
     // ===== MCP Tools Configuration =====
     // Whether to auto-inject MCP tools (from unified gateway) into agents
     // For mcp abilities, this is not necessary, Package APIs are sufficient for all mcp tools
-    "enable_mcp_tools": true,
+    "enable_mcp_tools": false,
     // ===== Endpoint Service Configuration =====
     "endpoint": {
         "service_name": "pantheon-chatroom-endpoint",
@@ -16,12 +16,19 @@
         "log_level": "INFO",
         // Whether to allow file transfer through Endpoint
         "allow_file_transfer": true,
-        // Local ToolSet call timeout (seconds)
-        "local_toolset_timeout": 600,
+        // Local ToolSet call timeout (seconds) - unified for Agent, ToolSetManager, and Kernel
+        "local_toolset_timeout": 1800,
         // Local ToolSet execution mode:
         // - "direct": Execute in current thread (fast, for lightweight tasks)
         // - "thread": Execute in separate thread (isolated, for heavy tasks)
-        "local_toolset_execution_mode": "direct"
+        "local_toolset_execution_mode": "direct",
+        // === Tool Output Limits ===
+        // Maximum characters for tool output (used for smart truncation)
+        "max_tool_content_length": 10000,
+        // Maximum lines for file read operations
+        "max_file_read_lines": 800,
+        // Maximum results for glob/search operations
+        "max_glob_results": 100
     },
     // ===== Built-in Services Configuration =====
     // Service modes: Specify service runtime modes
@@ -145,29 +152,32 @@
     // ===== ACE (Agentic Context Engineering) Configuration =====
     // Learning is a long-term memory system that learns from conversation trajectories
     "learning": {
-        // Enable learning learning system (disabled by default)
-        "enable": false,
-        // LLM model for reflection and skill management
-        // Uses quality level: "high", "normal", "low", or specific model name
+        // Enable learning system (extract skills from trajectories of each user request/response run)
+        "enable_learning": false,
+        // Enable skill injection into agent prompts (defaults to enable_learning if omitted)
+        "enable_injection": false,
+        // Learning mode: "pipeline" (default, lightweight) or "team" (multi-agent)
+        "mode": "team",
+        // Team ID for team mode (uses skill_learning_team template)
+        "team_id": "skill_learning_team_v3",
+        // Enable agent-specific skill scope filtering, If false, all agents see all skills (recommended for simpler setups)
+        "enable_agent_scope": true,
+        // LLM model for reflection and skill management, Uses quality level: "high", "normal", "low", or specific model name
         "learning_model": "normal",
         // Skillbook file path (relative to .pantheon/learning/)
         "skillbook_path": "skillbook.json",
         // Learning data directory (relative to .pantheon/learning/)
-        "learning_dir": "learning",
+        "learning_dir": "tmp",
         // Max skills per section (auto-evicts low-score skills when exceeded)
         "max_skills_per_section": 30,
         // Max characters for single skill content (Skillbook limit)
         "max_content_length": 500,
         // Max length for tool argument values in learning trajectory
-        "max_tool_arg_length": 200,
+        "max_tool_arg_length": 100,
         // Max length for tool output in learning trajectory
-        "max_tool_output_length": 200,
-        // Delete learning trajectory files after processing
-        // Set to true in production for privacy/disk space
-        "cleanup_after_learning": true,
-        // Enable agent-specific skill scope filtering
-        // If false, all agents see all skills (recommended for simpler setups)
-        "enable_agent_scope": true,
+        "max_tool_output_length": 150,
+        // Delete learning trajectory files after processing, Set to true in production for privacy/disk space
+        "cleanup_after_learning": false,
         // === Quality Control Thresholds ===
         // Minimum confidence to process reflection (skip if below)
         "min_confidence_threshold": 0.5,
