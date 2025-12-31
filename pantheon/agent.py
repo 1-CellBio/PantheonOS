@@ -1165,13 +1165,11 @@ class Agent:
         model: str | list[str] | None = None,
         context_variables: dict | None = None,
     ):
-        """Try multiple models with fallback, with retry for rate limits."""
-        from pantheon.utils.retry import (
-            retry_on_condition,
-            is_rate_limit_error,
-            RATE_LIMIT_RETRY_CONFIG,
-        )
+        """Try multiple models with fallback.
         
+        LiteLLM's num_retries handles retries for each individual model.
+        This method handles switching between models when all retries fail.
+        """
         # Prepare model list
         if model is None:
             models = self.models
@@ -1194,24 +1192,15 @@ class Agent:
                 )
             
             try:
-                # Define completion function for retry
-                async def _do_completion():
-                    return await self._acompletion(
-                        history,
-                        model=model_name,
-                        tool_use=tool_use,
-                        response_format=response_format,
-                        process_chunk=process_chunk,
-                        allow_transfer=allow_transfer,
-                        context_variables=context_variables,
-                    )
-                
-                # Use retry utility for rate limit errors
-                message = await retry_on_condition(
-                    _do_completion,
-                    config=RATE_LIMIT_RETRY_CONFIG,
-                    should_retry=is_rate_limit_error,
-                    log_prefix=f"[{model_name}] ",
+                # LiteLLM's num_retries will handle retries for this model
+                message = await self._acompletion(
+                    history,
+                    model=model_name,
+                    tool_use=tool_use,
+                    response_format=response_format,
+                    process_chunk=process_chunk,
+                    allow_transfer=allow_transfer,
+                    context_variables=context_variables,
                 )
                 
                 return message
@@ -1220,9 +1209,11 @@ class Agent:
                 raise
             except Exception as e:
                 last_error = e
-                if is_rate_limit_error(e):
+                # Check if it's a rate limit error for better logging
+                error_type = type(e).__name__
+                if "RateLimitError" in error_type or "rate" in str(e).lower():
                     logger.error(
-                        f"Rate limit exceeded for {model_name} after retries: {e}"
+                        f"Rate limit exceeded for {model_name} after LiteLLM retries: {e}"
                     )
                 else:
                     logger.error(f"Error completing with model {model_name}: {e}")

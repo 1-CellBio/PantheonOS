@@ -143,6 +143,7 @@ async def acompletion_litellm(
     process_chunk: Callable | None = None,
     base_url: str | None = None,
     model_params: dict | None = None,
+    num_retries: int = 3,
 ):
     litellm = import_litellm()
 
@@ -155,6 +156,8 @@ async def acompletion_litellm(
         "stream": True,
         # Enable usage tracking for all models - LiteLLM automatically handles provider compatibility
         "stream_options": {"include_usage": True},
+        # Enable LiteLLM's built-in retry mechanism with exponential backoff
+        "num_retries": num_retries,
     }
 
     if model_params:

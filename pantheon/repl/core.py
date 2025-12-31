@@ -144,8 +144,10 @@ class Repl(ReplUI):
         self._setup_signal_handlers()
 
         # Command handlers
+        from .handlers.builtin.view import ViewCommandHandler
         self.handlers: list[CommandHandler] = [
             BashCommandHandler(self.console, self),
+            ViewCommandHandler(self.console, self),
         ]
 
         # prompt_toolkit application for enhanced input
@@ -165,6 +167,9 @@ class Repl(ReplUI):
         self._is_processing = False
         self._status_update_requested = False
         self._last_status_update = 0.0
+        
+        # Pending user approval for notify_user with interrupt=True
+        self._pending_approval: dict | None = None
 
     def _create_chatroom_from_agent(
         self, agent: Agent | Team, memory_dir: str
@@ -1051,6 +1056,10 @@ class Repl(ReplUI):
                                         "interrupt": args.get("BlockedOnUser", False)
                                     }
                                     self.notify_ui_renderer.render_notification(notification_data)
+                                    
+                                    # Save pending approval for interactive dialog (shown after chat completes)
+                                    if notification_data.get("interrupt"):
+                                        self._pending_approval = notification_data
                                 else:
                                     # Add tool to recent activity (skip notify_user - has its own UI)
                                     self.task_ui_renderer.add_tool_call(tool_name, args=args, is_running=True)
@@ -1215,6 +1224,67 @@ class Repl(ReplUI):
                 except Exception:
                     self.console.print(full_content.lstrip('\n'))
                 self.console.print()
+        
+        # Handle pending approval (notify_user with interrupt=True)
+        if self._pending_approval:
+            await self._handle_pending_approval()
+    
+    async def _handle_pending_approval(self):
+        """Handle pending user approval with interactive dialog.
+        
+        Shows an interactive dialog for notify_user with interrupt=True,
+        allowing users to review files and approve/continue.
+        """
+        from prompt_toolkit.application.run_in_terminal import in_terminal
+        from .viewers.notify_dialog import (
+            InteractiveNotifyDialog,
+            NotifyAction,
+        )
+        
+        approval_data = self._pending_approval
+        self._pending_approval = None  # Clear immediately
+        
+        if not approval_data:
+            return
+        
+        message = approval_data.get("message", "")
+        paths = approval_data.get("paths", [])
+        # Note: InteractiveNotifyDialog handles path parsing robustly
+        
+        try:
+            # Show interactive dialog using in_terminal to suspend REPL UI
+            if self.prompt_app and hasattr(self.prompt_app, 'app') and self.prompt_app.app.is_running:
+                async with in_terminal():
+                    dialog = InteractiveNotifyDialog(message, paths)
+                    result = await dialog.run_async()
+            else:
+                # No active prompt app, run directly
+                dialog = InteractiveNotifyDialog(message, paths)
+                result = await dialog.run_async()
+            
+            # Handle result
+            if result.action == NotifyAction.APPROVE:
+                self.console.print("[green]✓ Approved[/green]")
+                # Put approval message in queue - this simulates user input
+                # and goes through the normal processing flow with all callbacks
+                if self.message_queue:
+                    await self.message_queue.put("Approved. Please proceed.")
+                else:
+                    # Fallback: direct call (won't render properly)
+                    await self._chatroom.chat(
+                        chat_id=self._chat_id,
+                        message="Approved. Please proceed.",
+                    )
+            elif result.action == NotifyAction.REJECT:
+                self.console.print("[yellow]→ Rejected[/yellow]")
+                if result.feedback and self.message_queue:
+                    await self.message_queue.put(f"Rejected: {result.feedback}")
+            else:  # CONTINUE PLANNING
+                # Don't send any message, just continue silently
+                pass
+        
+        except Exception as e:
+            self.console.print(f"[red]Error in approval dialog: {e}[/red]")
 
     # ===== Chat management commands =====
 

@@ -584,19 +584,22 @@ class NotifyUIRenderer:
         
         content = "\n".join(content_parts)
         
-        # Footer with actions (only if blocked)
+        # Panel styling - simpler for blocked notifications (interactive dialog follows)
         if blocked:
-            footer = "\n" + "─" * 50 + "\n"
-            footer += "[bold][A][/bold] Approve  [bold][R][/bold] Reject/Feedback  [bold][Enter][/bold] Continue"
-            content += footer
-        
-        # Panel styling
-        panel = Panel(
-            content,
-            title=f"[bold magenta]📬 Agent Notification[/bold magenta]",
-            border_style="magenta",
-            padding=(0, 1)
-        )
+            # Just show a minimal notification, interactive dialog will follow
+            panel = Panel(
+                content,
+                title="[bold cyan]📋 Review Required[/bold cyan]",
+                border_style="cyan",
+                padding=(0, 1)
+            )
+        else:
+            panel = Panel(
+                content,
+                title="[bold dim]📬 Notification[/bold dim]",
+                border_style="dim",
+                padding=(0, 1)
+            )
         self.console.print(panel)
         
         return blocked
