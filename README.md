@@ -1,7 +1,7 @@
 <div align="center">
   <h1> Pantheon </h1>
 
-  <p> A framework for building distributed LLM based multi-agent system. </p>
+  <p> A framework for building distributed LLM-based multi-agent systems. </p>
 
   <p>
     <a href="https://github.com/aristoteleo/pantheon-agents/actions/workflows/test.yml">
@@ -16,29 +16,87 @@
   </p>
 </div>
 
+## Features
 
-**Work In Progress**
-
+- **Multi-Agent Teams**: PantheonTeam, Sequential, Swarm, MoA, and AgentAsToolTeam patterns
+- **Rich Toolsets**: File operations, Python/Shell execution, Jupyter notebooks, Web browsing, RAG
+- **Interactive REPL**: Full-screen file viewer, syntax highlighting, approval workflows
+- **MCP Integration**: Native Model Context Protocol support
+- **Learning System**: Skillbook-based agent improvement
+- **Distributed Architecture**: NATS-based communication for scalable deployments
 
 ## Installation
 
 ```bash
-git clone https://github.com/aristoteleo/pantheon-agents.git
-cd pantheon-agents
-pip install -e ".[toolsets]"
+# Basic installation
+pip install pantheon-agents
+
+# With all toolsets
+pip install pantheon-agents[toolsets]
 ```
 
-## Pantheon REPL
+## Quick Start
 
-The easiest way to start using Pantheon is through the CLI interface:
+### Using the REPL
+
+The easiest way to start:
 
 ```bash
-# Start with default settings
 python -m pantheon.repl
 ```
 
+### Creating an Agent
+
+```python
+import asyncio
+from pantheon import Agent
+
+async def main():
+    agent = Agent(
+        name="assistant",
+        instructions="You are a helpful assistant.",
+        model="gpt-4o-mini"
+    )
+    await agent.chat()
+
+asyncio.run(main())
+```
+
+### Using Toolsets
+
+```python
+from pantheon import Agent
+from pantheon.toolsets import FileManagerToolSet, ShellToolSet
+
+agent = Agent(
+    name="developer",
+    instructions="You are a developer assistant.",
+    model="gpt-4o",
+    tools=[FileManagerToolSet(), ShellToolSet()]
+)
+```
+
+### Creating Teams
+
+```python
+from pantheon import Agent
+from pantheon.team import PantheonTeam
+
+researcher = Agent(name="researcher", instructions="Research topics.")
+writer = Agent(name="writer", instructions="Write content.")
+
+team = PantheonTeam([researcher, writer])
+await team.chat()
+```
+
+## Documentation
+
+See the [docs](docs/) folder for detailed documentation.
 
 ## Examples
 
-See the [examples](examples) folder for more advanced usage patterns and custom implementations.
+See the [examples](examples/) folder for usage patterns and implementations.
 
+## License
+
+MIT License

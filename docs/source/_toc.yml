@@ -3,45 +3,97 @@ root: index
 title: Home
 
 chapters:
-- file: installation
-- file: quickstart  
-- file: concepts
-- file: architecture
+# Getting Started (Easy)
+- file: getting-started/index
+  sections:
+  - file: getting-started/installation
+  - file: getting-started/first-steps
+  - file: getting-started/5min-tutorial
 
-- title: Components
-  entries:
-  - file: agent/index
+# Interfaces (Three Entry Points)
+- file: interfaces/index
+  sections:
+  - file: interfaces/repl/index
     sections:
-    - file: agent/agent_api
-    - file: agent/smart_func_api
-    - file: agent/remote_agent
+    - file: interfaces/repl/commands
+    - file: interfaces/repl/file-viewer
+    - file: interfaces/repl/advanced
+  - file: interfaces/ui/index
+    sections:
+    - file: interfaces/ui/quickstart
+    - file: interfaces/ui/web-interface
+    - file: interfaces/ui/advanced
+  - file: interfaces/api/index
+    sections:
+    - file: interfaces/api/quickstart
+    - file: interfaces/api/agent
+    - file: interfaces/api/team
+    - file: interfaces/api/toolsets
+    - file: interfaces/api/advanced
+
+# Configuration (Shared Foundation)
+- file: configuration/index
+  sections:
+  - file: configuration/settings
+  - file: configuration/templates/index
+    sections:
+    - file: configuration/templates/agents
+    - file: configuration/templates/teams
+  - file: configuration/mcp
+  - file: configuration/models
+
+# Core Components (Deep Dive)
+- file: components/index
+  sections:
+  - file: components/agents
+  - file: components/teams
+  - file: components/toolsets
+  - file: components/memory
+  - file: components/providers
+  # Legacy detailed docs
   - file: team/index
     sections:
+    - file: team/pantheon_team
     - file: team/sequential_team
     - file: team/moa_team
     - file: team/swarm_team
     - file: team/swarm_center_team
-    - file: team/pantheon_team
   - file: toolsets/index
     sections:
     - file: toolsets/builtin_toolsets
-      sections:
-      - file: toolsets/python_interpreter
-      - file: toolsets/r_interpreter
-      - file: toolsets/shell
-      - file: toolsets/web_browse
-      - file: toolsets/scraper_api
-      - file: toolsets/file_editor
-    - file: toolsets/rag_system
-      sections:
-      - file: toolsets/vector_rag
+    - file: toolsets/python_interpreter
+    - file: toolsets/notebook
+    - file: toolsets/shell
+    - file: toolsets/web_browse
+    - file: toolsets/file_editor
     - file: toolsets/custom_toolsets
-  - file: endpoint_chatroom/index
-    sections:
-    - file: endpoint_chatroom/architecture
 
-- title: Reference
-  entries:
-  - file: api/index
-  - file: examples/index
-  - file: contributing
+# Advanced Topics
+- file: advanced/index
+  sections:
+  - file: advanced/learning
+  - file: advanced/evolution
+  - file: advanced/distributed
+  - file: advanced/extending
+
+# Reference
+- file: examples/index
+  sections:
+  - file: examples/shell_bot
+  - file: examples/search_bot
+  - file: examples/coderun_bot
+  - file: examples/reasoning_bot
+  - file: examples/sequential_team
+  - file: examples/swarm_team
+  - file: examples/moa_team
+  - file: examples/paper_reporter
+- file: api/index
+  sections:
+  - file: api/agent
+  - file: api/team
+  - file: api/memory
+  - file: api/chatroom
+  - file: api/repl
+- file: concepts
+- file: architecture
+- file: contributing

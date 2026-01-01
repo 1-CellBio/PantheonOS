@@ -3,23 +3,19 @@ API Reference
 
 Complete API documentation for Pantheon's classes and modules.
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Core Components
+**Core Components:**
 
-   agent
-   team
-   memory
-   chatroom
+- :doc:`agent` - Agent API
+- :doc:`team` - Team API
+- :doc:`memory` - Memory API
+- :doc:`chatroom` - ChatRoom API
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Utilities
+**Utilities:**
 
-   reasoning
-   remote
-   repl
-   utils
+- :doc:`reasoning` - Reasoning utilities
+- :doc:`remote` - Remote execution
+- :doc:`repl` - REPL API
+- :doc:`utils` - Utility functions
 
 Quick Reference
 ---------------

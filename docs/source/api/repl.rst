@@ -3,296 +3,351 @@ REPL Module
 
 .. module:: pantheon.repl
 
-The REPL (Read-Eval-Print Loop) module provides interactive interfaces for agents and teams.
-
-Team REPL
----------
-
-.. autoclass:: pantheon.repl.team.Repl
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Single Agent REPL
------------------
-
-.. automodule:: pantheon.repl.single
-   :members:
-   :undoc-members:
+The REPL (Read-Eval-Print Loop) module provides a feature-rich interactive command-line interface for agents and teams.
 
 Overview
 --------
 
-The REPL module provides interactive command-line interfaces for:
+The REPL module provides:
 
-- Chatting with individual agents
-- Interacting with agent teams
-- Testing and debugging agent behaviors
-- Managing conversation flow
+- Interactive chat with agents and teams
+- Syntax highlighting for code and markdown
+- Full-screen file viewer with navigation
+- Interactive approval workflows
+- Command history and auto-completion
+- Session management and persistence
 
-Using Team REPL
----------------
-
-Basic Usage
-~~~~~~~~~~~
-
-.. code-block:: python
-
-   from pantheon.repl.team import Repl
-   from pantheon.team import SwarmTeam
-   from pantheon.agent import Agent
-
-   # Create agents
-   agent1 = Agent(name="Agent1", instructions="First agent")
-   agent2 = Agent(name="Agent2", instructions="Second agent")
-
-   # Create team
-   team = SwarmTeam([agent1, agent2])
-
-   # Start REPL
-   repl = Repl(team)
-   await repl.run()
-
-With Initial Message
-~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   # Start with a specific message
-   repl = Repl(team)
-   await repl.run("Hello team!")
-
-Custom REPL Configuration
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   repl = Repl(
-       team,
-       prompt=">>> ",  # Custom prompt
-       welcome_message="Welcome to the team chat!",
-       exit_commands=["quit", "exit", "bye"]
-   )
-
-Single Agent REPL
+Starting the REPL
 -----------------
 
-The `agent.chat()` method provides a built-in REPL:
+Command Line
+~~~~~~~~~~~~
+
+The easiest way to start the REPL:
+
+.. code-block:: bash
+
+   python -m pantheon.repl
+
+With options:
+
+.. code-block:: bash
+
+   # Specify a team template
+   python -m pantheon.repl --team myteam
+
+   # Specify memory directory
+   python -m pantheon.repl --memory-dir ./chats
+
+   # Resume a specific chat
+   python -m pantheon.repl --chat-id abc123
+
+Programmatic Usage
+~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   from pantheon.agent import Agent
+   import asyncio
+   from pantheon.repl import Repl
+   from pantheon import Agent
 
-   agent = Agent(
-       name="assistant",
-       instructions="You are a helpful assistant"
-   )
+   async def main():
+       agent = Agent(
+           name="assistant",
+           instructions="You are helpful.",
+           model="gpt-4o"
+       )
 
-   # Start interactive chat
-   await agent.chat()
+       repl = Repl(agent=agent)
+       await repl.run()
 
-REPL Features
+   asyncio.run(main())
+
+With Teams
+~~~~~~~~~~
+
+.. code-block:: python
+
+   from pantheon.repl import Repl
+   from pantheon.team import PantheonTeam
+   from pantheon import Agent
+
+   async def main():
+       agents = [
+           Agent(name="researcher", instructions="..."),
+           Agent(name="writer", instructions="...")
+       ]
+
+       team = PantheonTeam(agents)
+       repl = Repl(agent=team)
+       await repl.run()
+
+With ChatRoom
+~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from pantheon.repl import Repl
+   from pantheon.chatroom import ChatRoom
+
+   async def main():
+       chatroom = ChatRoom()
+       repl = Repl(chatroom=chatroom)
+       await repl.run()
+
+REPL Commands
 -------------
 
-Interactive Commands
-~~~~~~~~~~~~~~~~~~~~
+Built-in Commands
+~~~~~~~~~~~~~~~~~
 
-Common REPL commands:
+The REPL provides several built-in slash commands:
 
 - ``/help`` - Show available commands
-- ``/history`` - View conversation history
+- ``/view <filepath>`` - Open full-screen file viewer
 - ``/clear`` - Clear conversation context
-- ``/save`` - Save conversation to file
-- ``/load`` - Load previous conversation
-- ``/exit`` or ``/quit`` - Exit REPL
+- ``/compress`` - Compress conversation history to save tokens
+- ``/exit`` or ``/quit`` - Exit the REPL
+
+File Viewer
+~~~~~~~~~~~
+
+The ``/view`` command opens a full-screen file viewer with:
+
+- Syntax highlighting via Pygments
+- Keyboard navigation:
+
+  - ``j/k`` or arrow keys: Scroll up/down
+  - ``Space`` or ``Ctrl-F``: Page down
+  - ``Ctrl-B``: Page up
+  - ``g``: Go to top
+  - ``G``: Go to bottom
+  - ``q`` or ``Esc``: Exit viewer
+
+Example:
+
+.. code-block:: text
+
+   > /view src/main.py
+
+Interactive Approval
+~~~~~~~~~~~~~~~~~~~~
+
+When agents request user approval (via ``notify_user`` with ``interrupt=True``), an interactive dialog appears with:
+
+- Markdown-rendered notification message
+- File preview with multi-file switching (keys 1-9, Tab)
+- Action buttons:
+
+  - ``a``: Approve
+  - ``c``: Continue planning
+  - ``Esc``: Reject/Cancel
 
 Multi-line Input
 ~~~~~~~~~~~~~~~~
 
-Support for multi-line messages:
+For multi-line messages, use triple backticks:
 
 .. code-block:: text
 
-   >>> ```
-   ... This is a
-   ... multi-line
-   ... message
-   ... ```
+   > ```
+   This is a
+   multi-line
+   message
+   ```
 
-Special Features
-~~~~~~~~~~~~~~~~
+REPL Class
+----------
 
-- **Syntax highlighting**: Code blocks are highlighted
-- **Auto-completion**: Tab completion for commands
-- **History navigation**: Up/down arrows for previous messages
-- **Context preservation**: Maintains conversation state
+.. autoclass:: pantheon.repl.core.Repl
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
-Advanced REPL Usage
--------------------
-
-Custom REPL Commands
+Initialization Modes
 ~~~~~~~~~~~~~~~~~~~~
 
+The Repl class supports multiple initialization modes:
+
+1. **Agent Mode**: Pass an Agent or Team directly
+
+   .. code-block:: python
+
+      repl = Repl(agent=my_agent)
+
+2. **ChatRoom Mode**: Pass an existing ChatRoom
+
+   .. code-block:: python
+
+      repl = Repl(chatroom=my_chatroom)
+
+3. **Endpoint Mode**: Pass an Endpoint instance
+
+   .. code-block:: python
+
+      repl = Repl(endpoint=my_endpoint)
+
+4. **Auto Mode**: Create everything automatically
+
+   .. code-block:: python
+
+      repl = Repl()  # Auto-creates ChatRoom and Endpoint
+
+Configuration
+~~~~~~~~~~~~~
+
 .. code-block:: python
 
-   from pantheon.repl.team import Repl
+   repl = Repl(
+       agent=my_agent,
+       memory_dir="./chat_history",  # Directory for persistence
+       chat_id="session-123",        # Specific chat session ID
+   )
+
+UI Components
+-------------
+
+ReplUI
+~~~~~~
+
+Base class providing UI rendering capabilities:
+
+- Console output with Rich
+- Progress indicators
+- Token statistics display
+- Task rendering
+
+TaskUIRenderer
+~~~~~~~~~~~~~~
+
+Renders task progress and status:
+
+- Tool execution progress
+- Agent thinking indicators
+- Cost and token tracking
+
+NotifyUIRenderer
+~~~~~~~~~~~~~~~~
+
+Renders notification panels and approval dialogs.
+
+Viewers Module
+--------------
+
+FileViewer
+~~~~~~~~~~
+
+Full-screen file viewer using prompt_toolkit:
+
+.. code-block:: python
+
+   from pantheon.repl.viewers import FileViewer
+
+   async def view_file():
+       viewer = FileViewer()
+       await viewer.view("path/to/file.py")
+
+Features:
+
+- Syntax highlighting for 100+ languages
+- Line numbers
+- Smooth scrolling
+- Multiple encoding support
+
+NotifyDialog
+~~~~~~~~~~~~
+
+Interactive dialog for agent approval workflows:
+
+.. code-block:: python
+
+   from pantheon.repl.viewers import NotifyDialog
+
+   dialog = NotifyDialog(
+       message="Agent wants to modify files",
+       files=["file1.py", "file2.py"]
+   )
+   result = await dialog.show()
+
+Command Handlers
+----------------
+
+Base Handler
+~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from pantheon.repl.handlers.base import CommandHandler
+
+   class MyHandler(CommandHandler):
+       def __init__(self, console, repl):
+           super().__init__(console, repl)
+
+       def can_handle(self, command: str) -> bool:
+           return command.startswith("/mycommand")
+
+       async def handle(self, command: str) -> bool:
+           # Handle the command
+           return True  # Consumed the command
+
+Registering Custom Handlers
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
 
    class CustomRepl(Repl):
-       def __init__(self, team):
-           super().__init__(team)
-           self.register_command("/status", self.show_status)
-           self.register_command("/switch", self.switch_agent)
-       
-       async def show_status(self):
-           """Show team status"""
-           print(f"Active agents: {len(self.team.agents)}")
-           for name, agent in self.team.agents.items():
-               print(f"  - {name}: Ready")
-       
-       async def switch_agent(self, agent_name):
-           """Switch to specific agent"""
-           if agent_name in self.team.agents:
-               self.current_agent = self.team.agents[agent_name]
-               print(f"Switched to {agent_name}")
+       def __init__(self, *args, **kwargs):
+           super().__init__(*args, **kwargs)
+           self.handlers.append(MyCustomHandler(self.console, self))
 
-   # Use custom REPL
-   repl = CustomRepl(team)
-   await repl.run()
+Best Practices
+--------------
 
-REPL with Logging
-~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   import logging
-
-   # Enable debug logging
-   logging.basicConfig(level=logging.DEBUG)
-
-   repl = Repl(team)
-   
-   # Log all interactions
-   repl.enable_logging("conversation.log")
-   
-   await repl.run()
+1. **Use Templates**: Define agent/team configurations in ``.pantheon/`` for reusability
+2. **Memory Management**: Use ``/compress`` periodically for long conversations
+3. **File Viewer**: Use ``/view`` to inspect files before editing
+4. **History**: Use arrow keys to navigate command history
+5. **Interrupts**: Use Ctrl+C gracefully to interrupt long operations
 
 Integration Examples
 --------------------
-
-Testing Agents
-~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   # Test agent responses
-   test_agent = Agent(
-       name="test_agent",
-       instructions="You are being tested"
-   )
-
-   # Interactive testing
-   print("Starting test session...")
-   await test_agent.chat()
 
 Development Workflow
 ~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   # Development REPL with hot reload
-   from importlib import reload
+   from pantheon.repl import Repl
+   from pantheon import Agent
+   from pantheon.toolsets import FileManagerToolSet, ShellToolSet
 
-   class DevRepl(Repl):
-       async def reload_agent(self, agent_name):
-           """Reload agent configuration"""
-           # Reload agent module
-           reload(agent_module)
-           
-           # Update agent
-           self.team.agents[agent_name] = create_agent()
-           print(f"Reloaded {agent_name}")
+   async def dev_repl():
+       agent = Agent(
+           name="developer",
+           instructions="You are a developer assistant.",
+           model="gpt-4o",
+           tools=[FileManagerToolSet(), ShellToolSet()]
+       )
 
-Team Interaction Modes
-~~~~~~~~~~~~~~~~~~~~~~
+       repl = Repl(agent=agent)
+       await repl.run()
 
-.. code-block:: python
-
-   # Sequential team REPL
-   from pantheon.team import SequentialTeam
-
-   seq_team = SequentialTeam([agent1, agent2])
-   repl = Repl(seq_team)
-   await repl.run()
-
-   # Swarm team with transfers
-   from pantheon.team import SwarmTeam
-
-   @agent1.tool
-   def transfer_to_agent2():
-       return agent2
-
-   swarm_team = SwarmTeam([agent1, agent2])
-   repl = Repl(swarm_team)
-   await repl.run()
-
-Best Practices
---------------
-
-1. **Clear Prompts**: Use descriptive prompts for better UX
-2. **Error Handling**: Gracefully handle errors in REPL
-3. **Command Documentation**: Document custom commands
-4. **State Management**: Save important conversations
-5. **Testing**: Use REPL for agent testing and debugging
-
-Customization Options
----------------------
-
-UI Customization
-~~~~~~~~~~~~~~~~
+Data Analysis
+~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   repl = Repl(
-       team,
-       # Colors and formatting
-       prompt_color="cyan",
-       response_color="green",
-       error_color="red",
-       
-       # Display options
-       show_agent_name=True,
-       show_timestamp=True,
-       
-       # Behavior
-       auto_save=True,
-       save_path="./conversations"
-   )
+   from pantheon.repl import Repl
+   from pantheon import Agent
+   from pantheon.toolsets import IntegratedNotebookToolSet
 
-Event Handling
-~~~~~~~~~~~~~~
+   async def analysis_repl():
+       agent = Agent(
+           name="analyst",
+           instructions="You are a data analyst.",
+           model="gpt-4o",
+           tools=[IntegratedNotebookToolSet()]
+       )
 
-.. code-block:: python
-
-   class EventRepl(Repl):
-       async def on_message_sent(self, message):
-           """Called when user sends a message"""
-           print(f"[SENT] {message}")
-       
-       async def on_response_received(self, response):
-           """Called when agent responds"""
-           print(f"[RECEIVED] {response.agent_name}: {response.content}")
-       
-       async def on_error(self, error):
-           """Called on errors"""
-           print(f"[ERROR] {error}")
-
-Future Enhancements
--------------------
-
-Planned features:
-
-- Rich text formatting
-- File uploads in REPL
-- Voice input/output
-- Multi-user REPL sessions
-- Web-based REPL interface
+       repl = Repl(agent=agent)
+       await repl.run()

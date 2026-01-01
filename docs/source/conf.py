@@ -33,9 +33,9 @@ extensions = [
     'sphinxcontrib.mermaid',
 ]
 
-# Use a light syntax highlighting style
-pygments_style = 'default'
-pygments_dark_style = 'monokai'
+# Use modern syntax highlighting styles
+pygments_style = 'github-dark'  # Modern GitHub-inspired style
+pygments_dark_style = 'github-dark'
 
 # Generate autosummary pages
 autosummary_generate = True
@@ -51,7 +51,7 @@ html_static_path = ['_static']
 html_title = "Pantheon"
 html_logo = "_static/pantheon.png"  
 html_favicon = "_static/favicon.ico"
-html_css_files = ['custom.css']
+html_css_files = ['custom.css', 'icons.css']
 html_js_files = [
     ('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js', {'loading_method': 'async'}),
     'mermaid-init.js',

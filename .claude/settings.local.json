@@ -26,7 +26,9 @@
       "Bash(python:*)",
       "Bash(done)",
       "Bash(for file in *.json)",
-      "Bash(do echo \"=== $file ===\")"
+      "Bash(do echo \"=== $file ===\")",
+      "Bash(cat:*)",
+      "Bash(powershell -Command:*)"
     ],
     "deny": [],
     "ask": []

@@ -10,8 +10,11 @@ Pantheon is built around several key abstractions that work together to create p
 - **Teams** - Collections of agents working together in coordinated patterns
 - **Memory** - Systems for persisting information across interactions
 - **Toolsets** - Functions and services that extend agent capabilities
+- **Providers** - Interfaces for connecting to external tool sources (MCP, remote toolsets)
 - **Endpoints** - Network services for distributed deployment
 - **ChatRooms** - Interactive interfaces for agent conversations
+- **Learning** - Skillbook-based system for agent improvement over time
+- **Evolution** - LLM-driven program optimization
 
 ---
 
@@ -27,6 +30,7 @@ An agent in Pantheon is:
 - **Tool-enabled**: Can use various tools to extend its capabilities
 - **Stateful**: Maintains context and memory across interactions
 - **Collaborative**: Can work with other agents in teams
+- **Learnable**: Can improve through the skillbook system
 
 ![Agent Architecture](_static/Agent%20Loop.png)
 
@@ -37,6 +41,9 @@ Every agent has instructions that define its behavior and personality. These ins
 
 #### Tools and Capabilities
 Agents become powerful through tools - functions that extend their abilities beyond pure conversation. Tools allow agents to interact with external systems, perform calculations, access databases, browse the web, execute code, and much more. The tool system is extensible, allowing you to add custom capabilities tailored to your specific needs.
+
+#### Model Selection
+Agents can use any LLM supported by LiteLLM. Model selection can be configured at the agent level or globally through settings. Fallback chains allow graceful degradation when primary models are unavailable.
 
 ---
 
@@ -54,6 +61,14 @@ A team is a coordinated group of agents that:
 - **Coordinate**: Follow structured interaction patterns
 
 ### Team Types
+
+#### PantheonTeam (Recommended)
+The default team type with intelligent agent delegation. A lead agent can dynamically delegate tasks to specialist agents using `call_agent()` and discover available agents with `list_agents()`.
+
+**Use Cases:**
+- Complex workflows requiring specialized expertise
+- Dynamic task routing
+- Hierarchical agent organizations
 
 #### Sequential Team
 Agents process tasks in a predefined order, with each agent building on the previous one's output. This creates a pipeline where each agent specializes in one stage of a multi-step process.
@@ -86,6 +101,14 @@ Multiple agents work on the same problem independently, then their outputs are s
 - Ensemble reasoning
 - Diverse perspectives
 - Robust solutions
+
+#### Agent as Tool Team (AaT)
+A leader agent treats sub-agents as tools, calling them when specific expertise is needed. This creates a hierarchical structure where the leader orchestrates specialized workers.
+
+**Use Cases:**
+- Hierarchical workflows
+- Specialized sub-tasks
+- Tool-like agent integration
 
 ### Team Coordination
 
@@ -126,7 +149,7 @@ graph LR
 ```
 
 #### Context Sharing
-Teams share context between agents to maintain continuity and accumulate knowledge throughout the collaboration. This enables agents to build upon each other's work, share discovered information, and maintain a coherent understanding of the task at hand. Context sharing is crucial for complex tasks that require multiple agents to work together effectively.
+Teams share context between agents to maintain continuity and accumulate knowledge throughout the collaboration. This enables agents to build upon each other's work, share discovered information, and maintain a coherent understanding of the task at hand.
 
 ---
 
@@ -142,6 +165,7 @@ Memory in Pantheon provides:
 - **Context**: Agents remember previous conversations
 - **Learning**: Agents can accumulate knowledge over time
 - **Sharing**: Multiple agents can access common information
+- **Compression**: Long conversations can be compressed to fit context windows
 
 ---
 
@@ -153,61 +177,157 @@ Toolsets extend agent capabilities by providing access to external functions, AP
 
 A toolset is a collection of functions that agents can use to:
 
-- **Execute Code**: Run Python, R, or shell commands
+- **Execute Code**: Run Python, R, Julia, or shell commands
 - **Access Information**: Browse web, query databases
 - **Manipulate Files**: Read, write, edit files
 - **Integrate Services**: Connect to external APIs
 - **Perform Computations**: Complex calculations and analysis
+- **Manage Knowledge**: Vector stores and RAG systems
 
 ### Built-in Toolsets
 
-#### Python Interpreter
-Execute Python code in a sandboxed environment. This toolset provides agents with the ability to perform data analysis, numerical computations, and general-purpose programming tasks in a secure, isolated environment.
+#### File Operations
+- `FileManagerToolSet` - Read, write, edit, search files with intelligent diffing
 
-#### Web Browsing
-Search and fetch web content. This toolset enables agents to access current information from the internet, conduct research, and gather data from web sources.
+#### Code Execution
+- `PythonInterpreterToolSet` - Execute Python code
+- `ShellToolSet` - Run shell commands
+- `IntegratedNotebookToolSet` - Jupyter notebook integration with kernel management
+
+#### Web & Search
+- `WebToolSet` - Web browsing and search capabilities
+- `ScraperToolSet` - Web scraping with crawl4ai
+
+#### Knowledge & RAG
+- `KnowledgeToolSet` - Knowledge base management with LlamaIndex
+- `VectorRAGToolSet` - Vector-based retrieval augmented generation
+
+#### Specialized
+- `TaskToolSet` - Ephemeral task tracking
+- `PackageToolSet` - Package discovery and method extraction
+- `EvolutionToolSet` - Program evolution and optimization
+- `SkillbookToolSet` - Skill management for agents
 
 ### Creating Custom Tools
 
 #### Simple Function Tools
-Convert any Python function into a tool that agents can use. Functions are automatically introspected to understand their parameters and return types, making them immediately accessible to agents. The function's docstring serves as the tool's description, helping agents understand when and how to use it.
+Convert any Python function into a tool using the `@tool` decorator:
+
+```python
+from pantheon import ToolSet, tool
+
+class MyTools(ToolSet):
+    @tool
+    def my_function(self, param: str) -> str:
+        """Description for the LLM to understand when to use this tool."""
+        return f"Result: {param}"
+```
 
 #### Async Tools
-Support for asynchronous operations allows tools to perform network requests, database queries, and other I/O-bound operations efficiently. Async tools enable agents to handle time-consuming operations without blocking, making them ideal for integrating with external services and APIs.
+Support for asynchronous operations:
+
+```python
+@tool
+async def fetch_data(self, url: str) -> str:
+    """Fetch data from a URL."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            return await response.text()
+```
+
+---
+
+## Provider
+
+Providers are interfaces for connecting agents to external tool sources. They abstract the complexity of different tool backends.
+
+### What is a Provider?
+
+A provider enables:
+
+- **Tool Discovery**: Automatic discovery of available tools
+- **Remote Execution**: Running tools on remote machines
+- **Protocol Support**: Different communication protocols (MCP, NATS, HTTP)
+- **Tool Filtering**: Selective exposure of tool subsets
+
+### Provider Types
+
+#### MCPProvider
+Connect to Model Context Protocol (MCP) servers:
+
+```python
+from pantheon.providers import MCPProvider
+
+# STDIO-based MCP server
+mcp = MCPProvider("npx -y @anthropic/mcp-server-filesystem")
+
+# With tool filtering
+mcp = MCPProvider("...", filter_prefix="fs_")
+```
+
+#### LocalProvider
+Use local ToolSet instances:
+
+```python
+from pantheon.providers import LocalProvider
+from pantheon.toolsets import FileManagerToolSet
+
+provider = LocalProvider(FileManagerToolSet())
+```
+
+#### ToolSetProvider
+Connect to remote Pantheon toolsets via NATS:
+
+```python
+from pantheon.providers import ToolSetProvider
+
+provider = ToolSetProvider(service_id="remote-toolset-id")
+```
 
 ---
 
 ## Endpoint
 
-Endpoints in Pantheon enable distributed deployment of agents and toolsets by exposing them as network services. This allows for scalable, modular architectures where components can run on different machines.
+Endpoints in Pantheon enable distributed deployment of agents and toolsets by exposing them as network services.
 
 ### What is an Endpoint?
 
 An endpoint is a network-accessible service that:
 
 - **Exposes Functionality**: Makes agents or tools available over the network
-- **Enables Distribution**: Allows components to run on different machines
-- **Provides APIs**: Offers standardized interfaces for communication
-- **Supports Scaling**: Facilitates horizontal scaling of services
-
-### Types of Endpoints
-
-#### Agent Endpoints
-Deploy agents as standalone services that can be accessed remotely. Agent endpoints make it possible to run specialized agents on dedicated hardware, share agents across multiple applications, and build distributed multi-agent systems where agents communicate across network boundaries.
-
-#### Toolset Endpoints
-Expose toolsets as services that agents can connect to remotely. This separation allows resource-intensive tools (like code execution environments) to run on specialized infrastructure while keeping agents lightweight. Toolset endpoints enable secure, scalable deployment of potentially dangerous operations.
+- **Manages Toolsets**: Coordinates multiple tool providers
+- **Handles MCP**: Manages MCP server lifecycle
+- **Provides Workspace**: File transfer and workspace management
 
 ### Deployment Patterns
 
-#### Microservices Architecture
-Deploy each component as a separate service in a microservices architecture. This pattern enables independent scaling, isolated failures, and flexible deployment strategies. Each agent, toolset, and service can be updated, scaled, and managed independently, providing maximum flexibility for complex systems.
+#### Local Endpoint
+Run everything in a single process:
+
+```python
+from pantheon.endpoint import Endpoint
+
+endpoint = Endpoint(workspace_dir="./workspace")
+```
+
+#### Distributed Deployment
+Deploy components across machines:
+
+```python
+# On toolset server
+toolset = PythonInterpreterToolSet()
+await toolset.serve()  # Exposes via NATS
+
+# On agent server
+agent = Agent(...)
+await agent.remote_toolset("service-id")
+```
 
 ---
 
 ## ChatRoom
 
-ChatRoom is an interactive service that provides a user-friendly interface for conversations with agents and teams. It manages sessions, handles real-time communication, and integrates with web UIs.
+ChatRoom is an interactive service that provides a user-friendly interface for conversations with agents and teams.
 
 ### What is a ChatRoom?
 
@@ -222,15 +342,111 @@ A ChatRoom is a service layer that:
 ### Core Features
 
 #### Session Management
-ChatRooms manage user sessions automatically, handling multiple concurrent conversations while maintaining isolation between users. Each session maintains its own conversation history, context, and state, ensuring privacy and coherent interactions.
+ChatRooms manage user sessions automatically, handling multiple concurrent conversations while maintaining isolation between users.
 
 #### Web UI Integration
-Connect to Pantheon's web interface for a rich, interactive chat experience. The web UI provides real-time messaging, conversation history, and a polished interface that makes it easy for users to interact with your agents and teams.
+Connect to Pantheon's web interface at https://pantheon-ui.vercel.app/ for a rich, interactive chat experience.
 
-### Creating ChatRooms
+---
 
-#### Team ChatRoom
-ChatRooms can host teams of agents working together. This enables sophisticated multi-agent interactions where users can benefit from the combined expertise of multiple specialized agents, all through a single conversational interface.
+## REPL
 
-#### Configuration-based ChatRoom
-Create ChatRooms from configuration files for easy deployment and management. Configuration-based setup allows you to define complex agent systems declaratively, making it simple to version control, share, and deploy your ChatRoom configurations across different environments.
+The REPL (Read-Eval-Print Loop) provides an interactive command-line interface for working with agents and teams.
+
+### What is the REPL?
+
+The REPL is a feature-rich CLI that provides:
+
+- **Interactive Chat**: Converse with agents in real-time
+- **Syntax Highlighting**: Code and markdown rendering
+- **File Viewer**: Full-screen file viewing with `/view` command
+- **Approval Workflows**: Interactive approval dialogs for agent actions
+- **Command System**: Extensible slash commands
+- **History**: Persistent command history across sessions
+
+### Key Commands
+
+- `/help` - Show available commands
+- `/view <file>` - Full-screen file viewer with syntax highlighting
+- `/clear` - Clear conversation context
+- `/compress` - Compress conversation history
+- `/exit` - Exit the REPL
+
+---
+
+## Learning & Skillbook
+
+The learning system enables agents to improve over time by extracting and applying skills from successful interactions.
+
+### What is a Skillbook?
+
+A skillbook is a persistent store of learned behaviors:
+
+- **Skill Extraction**: Automatic extraction of successful patterns
+- **Success Tracking**: Track helpful vs. harmful skill applications
+- **Skill Injection**: Inject relevant skills into agent prompts
+- **Contradiction Resolution**: Handle conflicting skills
+
+### Learning Pipeline
+
+1. **Execution**: Agent performs tasks
+2. **Reflection**: Reflector analyzes execution patterns
+3. **Extraction**: Skills are extracted from successful patterns
+4. **Validation**: Skills are validated against existing knowledge
+5. **Storage**: Valid skills are stored in the skillbook
+6. **Application**: Skills are injected into future prompts
+
+---
+
+## Evolution
+
+The evolution system enables LLM-driven program optimization and improvement.
+
+### What is Evolution?
+
+Evolution in Pantheon provides:
+
+- **Program Improvement**: Iteratively improve code through LLM feedback
+- **Hybrid Evaluation**: Combine function-based and LLM-based evaluation
+- **Version Tracking**: Track program versions and changes
+- **Parallel Evaluation**: Evaluate multiple candidates concurrently
+
+### Use Cases
+
+- Prompt optimization
+- Code refactoring
+- Algorithm improvement
+- Configuration tuning
+
+---
+
+## Configuration
+
+Pantheon uses a layered configuration system for flexibility.
+
+### Configuration Layers
+
+1. **User Global**: `~/.pantheon/` - User-wide settings
+2. **Project**: `./.pantheon/` - Project-specific settings
+3. **Defaults**: Built-in package defaults
+
+### Configuration Files
+
+- `settings.json` - General settings (models, timeouts, etc.)
+- `mcp.json` - MCP server configurations
+- `agents/*.md` - Agent templates
+- `teams/*.md` - Team templates
+
+### Model Selection
+
+Configure default models and fallback chains:
+
+```json
+{
+  "default_model": "gpt-4o",
+  "fallback_models": ["gpt-4o-mini", "claude-3-sonnet"],
+  "model_overrides": {
+    "reasoning": "o1-preview"
+  }
+}
+```

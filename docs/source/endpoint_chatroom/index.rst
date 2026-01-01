@@ -4,10 +4,7 @@ Endpoint and Chatroom
 .. warning::
    This section is currently under development. The documentation will be updated soon.
 
-.. toctree::
-   :maxdepth: 2
-   
-   architecture
+**Related:** :doc:`architecture`
 
 TODO
 ----
