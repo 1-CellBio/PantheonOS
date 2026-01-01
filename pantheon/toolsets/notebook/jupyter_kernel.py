@@ -78,119 +78,6 @@ class SessionInfo:
     execution_count: int = 0
 
 
-class IOPubEventBus(ABC):
-    """Abstract IOPub event publishing system"""
-
-    @abstractmethod
-    async def publish(
-        self, session_id: str, message: JupyterMessage, metadata: Optional[dict] = None
-    ) -> None:
-        """Publish message to all subscribers of specified session"""
-        pass
-
-    @abstractmethod
-    async def subscribe(
-        self, session_id: str, client_id: str, callback: Callable
-    ) -> str:
-        """Subscribe to IOPub messages for session"""
-        pass
-
-    @abstractmethod
-    async def unsubscribe(self, subscription_id: str) -> bool:
-        """Unsubscribe from messages"""
-        pass
-
-
-class RemoteIOPubEventBus(IOPubEventBus):
-    """
-    IOPub event bus implementation based on unified remote backend
-
-    This class is primarily designed for PUBLISHING IOPub messages from backend to frontend.
-    For SUBSCRIBING to messages, use frontend StreamChannel.subscribe() directly for better performance.
-    """
-
-    def __init__(self, remote_backend: RemoteBackend):
-        self.remote_backend = remote_backend
-        self.stream_channels: Dict[str, Any] = {}  # stream_id -> StreamChannel
-
-    async def publish(
-        self, session_id: str, message: JupyterMessage, metadata: Optional[dict] = None
-    ) -> None:
-        """Convert Jupyter message to stream message and publish with optional metadata"""
-        try:
-            # Encode session_id to avoid NATS subject special characters (. : * >)
-            # NATS treats . as token separator in subjects, so "chat:analysis.ipynb"
-            # would be parsed incorrectly. URL encoding ensures proper handling.
-            safe_session_id = urllib.parse.quote(session_id, safe="")
-            stream_id = f"notebook_iopub_{safe_session_id}"
-
-            # Get or create stream channel
-            if stream_id not in self.stream_channels:
-                self.stream_channels[
-                    stream_id
-                ] = await self.remote_backend.get_or_create_stream(
-                    stream_id, StreamType.NOTEBOOK
-                )
-
-            stream_channel = self.stream_channels[stream_id]
-
-            # Send Jupyter message directly (simplified structure)
-            jupyter_message_dict = make_json_serializable(message.to_dict())
-
-            # Prepare stream metadata (merge default + provided metadata)
-            stream_metadata = {
-                "source": "jupyter_kernel",
-            }
-            if metadata:
-                stream_metadata.update(metadata)
-
-            stream_message = StreamMessage(
-                type=StreamType.NOTEBOOK,
-                session_id=session_id,
-                timestamp=time.time(),
-                data=jupyter_message_dict,  # Direct Jupyter message
-                metadata=stream_metadata,  # Enhanced metadata support
-            )
-
-            # Publish to stream channel
-            await stream_channel.publish(stream_message)
-            logger.debug(
-                f"Published IOPub message to stream {stream_id}: {message.msg_type}"
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Failed to publish IOPub message for session {session_id}: {e}"
-            )
-            raise
-
-    async def subscribe(
-        self, session_id: str, client_id: str, callback: Callable
-    ) -> str:
-        """Backend subscription not supported - use frontend StreamChannel.subscribe()"""
-        raise NotImplementedError("Use frontend StreamChannel.subscribe() instead")
-
-    async def unsubscribe(self, subscription_id: str) -> bool:
-        """Backend unsubscription not supported - use frontend StreamChannel.unsubscribe()"""
-        raise NotImplementedError("Use frontend StreamChannel.unsubscribe() instead")
-
-    async def cleanup(self):
-        """Clean up all stream channels"""
-        try:
-            # Close all stream channels
-            for stream_id, channel in self.stream_channels.items():
-                try:
-                    await channel.close()
-                    logger.debug(f"Closed stream channel: {stream_id}")
-                except Exception as e:
-                    logger.warning(f"Error closing stream channel {stream_id}: {e}")
-
-            self.stream_channels.clear()
-            logger.info("UnifiedRemoteIOPubEventBus cleanup completed")
-
-        except Exception as e:
-            logger.error(f"Error during IOPub event bus cleanup: {e}")
-
 
 class KernelListener:
     """Unified Kernel IOPub message listener - uses single ZMQ poller to monitor all kernels"""
@@ -483,9 +370,6 @@ class JupyterKernelToolSet(ToolSet):
             from pantheon.settings import get_settings
             self.execution_timeout = get_settings().tool_timeout
 
-        # Event bus will be set by parent toolset during setup
-        self.event_bus: Optional[IOPubEventBus] = None
-
         # Configure listening mode
         self.use_unified_listener = use_unified_listener
 
@@ -497,6 +381,9 @@ class JupyterKernelToolSet(ToolSet):
 
         # Track execution metadata for IOPub message injection
         self.msg_metadata_mapping: Dict[str, dict] = {}  # msg_id -> execution_metadata
+
+        # IOPub message handlers registry: handler_id -> async callable
+        self._iopub_handlers: Dict[str, Callable] = {}
 
         # Unified listener (created only when unified listening mode is enabled)
         self.unified_listener: Optional[KernelListener] = None
@@ -546,8 +433,52 @@ class JupyterKernelToolSet(ToolSet):
             """
         ).strip()
 
+    async def subscribe(self, handler_id: str, handler: Callable) -> str:
+        """
+        Register an IOPub message handler.
+        
+        If this is the first handler being registered and kernels already exist,
+        automatically sets up IOPub monitoring for those kernels.
+        
+        Args:
+            handler_id: Unique identifier for this handler
+            handler: Async callable with signature (session_id, message, metadata) -> None
+        
+        Returns:
+            The handler_id for later unsubscription
+        """
+        is_first_handler = len(self._iopub_handlers) == 0
+        self._iopub_handlers[handler_id] = handler
+        logger.info(f"Subscribed IOPub handler: {handler_id}")
+        
+        # If this is the first handler and kernels already exist, set up monitoring
+        if is_first_handler and self.sessions:
+            logger.info(f"First handler registered, setting up IOPub monitoring for {len(self.sessions)} existing kernel(s)")
+            for session_id in list(self.sessions.keys()):
+                km = self.kernel_managers.get(session_id)
+                kc = self.clients.get(session_id)
+                if km and kc:
+                    await self._setup_iopub_monitoring(session_id, km, kc)
+        
+        return handler_id
+    
+    def unsubscribe(self, handler_id: str) -> bool:
+        """
+        Unregister an IOPub message handler.
+        
+        Args:
+            handler_id: Handler identifier to remove
+        
+        Returns:
+            True if handler was found and removed, False otherwise
+        """
+        removed = self._iopub_handlers.pop(handler_id, None) is not None
+        if removed:
+            logger.info(f"Unsubscribed IOPub handler: {handler_id}")
+        return removed
+
     async def _handle_iopub_message(self, session_id: str, jupyter_msg: JupyterMessage):
-        """Unified IOPub message handler - Separate metadata flow"""
+        """Dispatch IOPub message to all registered handlers"""
         try:
             parent_msg_id = (
                 jupyter_msg.parent_header.get("msg_id")
@@ -560,16 +491,178 @@ class JupyterKernelToolSet(ToolSet):
             if parent_msg_id and parent_msg_id in self.msg_metadata_mapping:
                 execution_metadata = self.msg_metadata_mapping[parent_msg_id]
                 stream_metadata.update(execution_metadata)
-                logger.debug(
-                    f"Prepared stream metadata for IOPub message {jupyter_msg.msg_type}: {list(execution_metadata.keys())}"
-                )
 
-            # Forward to event bus with separate metadata
-            if self.event_bus:
-                await self.event_bus.publish(session_id, jupyter_msg, stream_metadata)
+            # Dispatch to all registered handlers
+            for handler_id, handler in self._iopub_handlers.items():
+                try:
+                    await handler(session_id, jupyter_msg, stream_metadata)
+                except Exception as e:
+                    logger.warning(f"IOPub handler '{handler_id}' failed: {e}")
 
         except Exception as e:
             logger.error(f"Error handling IOPub message for session {session_id}: {e}")
+
+    async def _notify_kernel_death(self, session_id: str, msg_id: str, error_msg: str):
+        """
+        Notify IOPub handlers about kernel death for logging purposes.
+        
+        Args:
+            session_id: Kernel session ID
+            msg_id: Message ID of the execution that was running when kernel died
+            error_msg: Error message describing the kernel death
+        """
+        if not self._iopub_handlers:
+            return
+        
+        kernel_died_msg = JupyterMessage(
+            msg_type="kernel_died",
+            content={
+                "reason": "process_terminated",
+                "error": error_msg,
+            },
+            header={"msg_type": "kernel_died", "msg_id": msg_id},
+            parent_header={"msg_id": msg_id},
+        )
+        
+        await self._handle_iopub_message(session_id, kernel_died_msg)
+
+    async def _wait_for_shell_reply(
+        self, client: AsyncKernelClient, session_id: str, msg_id: str
+    ) -> dict:
+        """
+        Wait for shell reply with kernel liveness check.
+        
+        Polls with short intervals to detect kernel death early instead of
+        blocking for the full timeout period.
+        
+        Args:
+            client: Kernel client
+            session_id: Kernel session ID
+            msg_id: Message ID to wait for
+            
+        Returns:
+            Shell reply message dict
+            
+        Raises:
+            RuntimeError: If kernel dies during execution
+            TimeoutError: If execution timeout is exceeded
+        """
+        km = self.kernel_managers.get(session_id)
+        poll_interval = 2.0  # Check kernel liveness every 2 seconds
+        elapsed = 0.0
+        reply = None
+        
+        while elapsed < self.execution_timeout:
+            # Check if kernel is still alive
+            if km and not await km.is_alive():
+                error_msg = (
+                    f"Kernel process died unexpectedly during execution. "
+                    f"This is often caused by:\n"
+                    f"1. Out of Memory (OOM)\n"
+                    f"2. Segmentation fault in native libraries\n"
+                    f"3. Manual process termination\n\n"
+                    f"Recommendations:\n"
+                    f"- Use manage_kernel to check/restart the kernel\n"
+                    f"- Check/Monitor memory and Reduce memory usage while executing cells\n"
+                )
+                logger.warning(f"Kernel {session_id[:8]} died during execution")
+                await self._notify_kernel_death(session_id, msg_id, error_msg)
+                raise RuntimeError(error_msg)
+            
+            # Try to get message with short timeout
+            try:
+                reply = client.get_shell_msg(timeout=poll_interval)
+                # If get_shell_msg is async, it returns a coroutine
+                if hasattr(reply, "__await__"):
+                    reply = await reply
+                break  # Got reply, exit loop
+            except Exception as e:
+                # Check if this is a timeout (expected) or real error
+                error_name = type(e).__name__
+                if "Empty" in error_name or "Timeout" in error_name:
+                    # Normal timeout, continue polling
+                    elapsed += poll_interval
+                    continue
+                else:
+                    # Real error, re-raise
+                    raise
+        
+        if reply is None:
+            # Exhausted timeout without getting reply
+            raise TimeoutError(f"Kernel execution timeout after {self.execution_timeout}s")
+        
+        return reply
+
+    async def _collect_iopub_messages(
+        self, client: AsyncKernelClient, clean_reply: dict
+    ) -> tuple[list, dict]:
+        """
+        Collect IOPub messages until kernel is idle and extract timing information.
+        
+        Args:
+            client: Kernel client
+            clean_reply: Cleaned shell reply message
+            
+        Returns:
+            Tuple of (iopub_messages, execution_timing)
+        """
+        iopub_messages = []
+        execution_timing = {}
+        
+        try:
+            # Collect IOPub messages until kernel is idle
+            while True:
+                try:
+                    # Get IOPub message with timeout
+                    iopub_msg = await client.get_iopub_msg(timeout=1)
+                    
+                    # Clean and store the message
+                    clean_iopub_msg = make_json_serializable(iopub_msg)
+                    iopub_messages.append(clean_iopub_msg)
+                    
+                    # Extract timing information and check for completion
+                    msg_type = None
+                    execution_state = None
+                    
+                    if isinstance(clean_iopub_msg, dict):
+                        header = clean_iopub_msg.get("header", {})
+                        content = clean_iopub_msg.get("content", {})
+                        
+                        if isinstance(header, dict):
+                            msg_type = header.get("msg_type")
+                            timestamp = header.get("date")
+                            
+                            if msg_type == "status" and isinstance(content, dict):
+                                execution_state = content.get("execution_state")
+                                if execution_state == "busy" and timestamp:
+                                    execution_timing["iopub.status.busy"] = timestamp
+                                elif execution_state == "idle" and timestamp:
+                                    execution_timing["iopub.status.idle"] = timestamp
+                            elif msg_type == "execute_input" and timestamp:
+                                execution_timing["iopub.execute_input"] = timestamp
+                    
+                    # Stop when kernel becomes idle (execution finished)
+                    if msg_type == "status" and execution_state == "idle":
+                        break
+                except Exception:
+                    # Timeout or no more messages - execution finished
+                    break
+        except Exception as e:
+            logger.debug(f"Error collecting IOPub messages: {e}")
+        
+        # Add shell reply timing
+        if isinstance(clean_reply, dict):
+            header = clean_reply.get("header", {})
+            if isinstance(header, dict):
+                shell_timestamp = header.get("date")
+                if shell_timestamp:
+                    execution_timing["shell.execute_reply"] = shell_timestamp
+        
+        logger.debug(
+            f"Collected {len(iopub_messages)} IOPub messages and timing info for execution"
+        )
+        
+        return iopub_messages, execution_timing
 
     @tool
     async def create_session(
@@ -626,8 +719,9 @@ class JupyterKernelToolSet(ToolSet):
             )
             self.sessions[kernel_session_id] = session_info
 
-            # Start IOPub monitoring
-            if self.event_bus:
+            # Start IOPub monitoring if any handlers are registered
+            # (e.g., NATS streaming, file logging, or custom handlers)
+            if self._iopub_handlers:
                 await self._setup_iopub_monitoring(kernel_session_id, km, kc)
 
             # Execute context prefix code once during kernel initialization
@@ -650,7 +744,7 @@ class JupyterKernelToolSet(ToolSet):
                 "kernel_spec": kernel_spec,
                 "status": session_info.status.value,
                 "created_at": session_info.created_at,
-                "streaming_enabled": self.event_bus is not None,
+                "streaming_enabled": bool(self._iopub_handlers),
             }
 
         except Exception as e:
@@ -699,15 +793,8 @@ class JupyterKernelToolSet(ToolSet):
                     f"Stored execution metadata for {msg_id[:8]}: {list(execution_metadata.keys())}"
                 )
 
-            # Wait for execution reply - handle both sync and async versions
-            try:
-                reply = client.get_shell_msg(timeout=self.execution_timeout)
-                # If get_shell_msg is async, it returns a coroutine
-                if hasattr(reply, "__await__"):
-                    reply = await reply
-            except TypeError:
-                # Fallback to async version
-                reply = await client.get_shell_msg(timeout=self.execution_timeout)
+            # Wait for execution reply with kernel liveness check
+            reply = await self._wait_for_shell_reply(client, session_id, msg_id)
 
             # Update execution count
             if store_history and reply["content"].get("status") == "ok":
@@ -722,65 +809,11 @@ class JupyterKernelToolSet(ToolSet):
             clean_reply = make_json_serializable(reply)
 
             # Collect IOPub messages to get actual output and timing information
-            iopub_messages = []
-            execution_timing = {}
-            try:
-                # Collect IOPub messages until kernel is idle
-                while True:
-                    try:
-                        # Get IOPub message with timeout (always async since we use AsyncKernelClient)
-                        iopub_msg = await client.get_iopub_msg(timeout=1)
-
-                        # Clean and store the message
-                        clean_iopub_msg = make_json_serializable(iopub_msg)
-                        iopub_messages.append(clean_iopub_msg)
-
-                        # Extract timing information and check for completion from cleaned message
-                        # This ensures all downstream consumers get consistent string timestamps
-                        msg_type = None
-                        execution_state = None
-
-                        if isinstance(clean_iopub_msg, dict):
-                            header = clean_iopub_msg.get("header", {})
-                            content = clean_iopub_msg.get("content", {})
-
-                            if isinstance(header, dict):
-                                msg_type = header.get("msg_type")
-                                timestamp = header.get("date")
-
-                                if msg_type == "status" and isinstance(content, dict):
-                                    execution_state = content.get("execution_state")
-                                    if execution_state == "busy" and timestamp:
-                                        execution_timing["iopub.status.busy"] = (
-                                            timestamp
-                                        )
-                                    elif execution_state == "idle" and timestamp:
-                                        execution_timing["iopub.status.idle"] = (
-                                            timestamp
-                                        )
-                                elif msg_type == "execute_input" and timestamp:
-                                    execution_timing["iopub.execute_input"] = timestamp
-
-                        # Stop when kernel becomes idle (execution finished)
-                        if msg_type == "status" and execution_state == "idle":
-                            break
-                    except Exception:
-                        # Timeout or no more messages - execution finished
-                        break
-            except Exception as e:
-                logger.debug(f"Error collecting IOPub messages: {e}")
-
-            # Add shell reply timing (with type safety)
-            if isinstance(clean_reply, dict):
-                header = clean_reply.get("header", {})
-                if isinstance(header, dict):
-                    shell_timestamp = header.get("date")
-                    if shell_timestamp:
-                        execution_timing["shell.execute_reply"] = shell_timestamp
-
-            logger.debug(
-                f"Collected {len(iopub_messages)} IOPub messages and timing info for execution"
+            iopub_messages, execution_timing = await self._collect_iopub_messages(
+                client, clean_reply
             )
+            
+            # Debug log for IOPub messages
             for i, msg in enumerate(iopub_messages):
                 if isinstance(msg, dict):
                     header = msg.get("header", {})
@@ -828,16 +861,12 @@ class JupyterKernelToolSet(ToolSet):
 
 ## Prevention Tips:
 1. Split long operations into multiple cells (load → preprocess → compute)
-2. Use parallel computing:
-   - scanpy: `sc.settings.n_jobs = -1`
-   - pandas: `df.parallel_apply()` (pandarallel)
-3. Subsample for testing: `adata_sample = adata[:10000, :]`
-4. Save checkpoints: `adata.write('checkpoint.h5ad')`
-5. Tune algorithm parameters:
-   - UMAP: `n_neighbors=15, min_dist=0.3`
-   - PCA: `n_comps=50`
+2. Use parallel computing
+3. Subsample for testing
+4. Save checkpoints
+5. Tune algorithm parameters
 """
-            logger.error(f"Execute request failed for session {session_id}: {error_msg}")
+            logger.warning(f"Execute request failed for session {session_id}: {error_msg}")
             return {
                 "success": False,
                 "error": error_msg,
@@ -949,7 +978,7 @@ class JupyterKernelToolSet(ToolSet):
 
                 # Step 4: Re-setup IOPub monitoring after restart
                 # This establishes the new IOPub connection with the restarted kernel
-                if self.event_bus:
+                if self._iopub_handlers:
                     await self._setup_iopub_monitoring(session_id, km, kc)
                     logger.debug(f"IOPub monitoring re-established for {session_id}")
 
@@ -1260,16 +1289,6 @@ class JupyterKernelToolSet(ToolSet):
 
         logger.info(f"Stopped IOPub monitoring for session {session_id}")
 
-    async def subscribe_iopub(
-        self, session_id: str, client_id: str, callback=None
-    ) -> dict:
-        _ = session_id, client_id, callback  # Mark as intentionally unused
-        raise NotImplementedError("Backend IOPub subscription not supported")
-
-    async def unsubscribe_iopub(self, subscription_id: str) -> dict:
-        _ = subscription_id  # Mark as intentionally unused
-        raise NotImplementedError("Backend IOPub unsubscription not supported")
-
     def _generate_outputs_from_iopub(
         self, iopub_messages: List[dict], execution_count: Optional[int] = None
     ) -> List[dict]:
@@ -1362,16 +1381,6 @@ class JupyterKernelToolSet(ToolSet):
         # Cleanup unified listener if used
         if self.use_unified_listener and self.unified_listener:
             await self.unified_listener.cleanup()
-
-        # Cleanup event bus if it exists and has cleanup method
-        if self.event_bus:
-            if hasattr(self.event_bus, "cleanup") and callable(
-                getattr(self.event_bus, "cleanup")
-            ):
-                cleanup_method = getattr(self.event_bus, "cleanup")
-                await cleanup_method()
-            else:
-                logger.debug("Event bus doesn't have cleanup method, skipping")
 
         # Clear message metadata mappings
         self.msg_metadata_mapping.clear()

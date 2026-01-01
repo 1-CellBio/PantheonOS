@@ -637,6 +637,13 @@ class Settings:
         self._ensure_loaded()
         return self._settings.get("endpoint", {}).get("max_glob_results", 100)
 
+    @property
+    def enable_notebook_execution_logging(self) -> bool:
+        self._ensure_loaded()
+        return self._settings.get("endpoint", {}).get(
+            "enable_notebook_execution_logging", True
+        )
+
 
     @property
     def settings(self) -> Dict[str, Any]:

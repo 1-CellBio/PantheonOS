@@ -573,8 +573,12 @@ class Repl(ReplUI):
         # Setup file logging FIRST (before suppressing console output)
         # This ensures all logs are captured to file for debugging
         if log_to_file:
+            from pantheon.settings import get_settings
             from pantheon.utils.log import setup_file_logging
-            log_file = setup_file_logging(session_name="repl")
+            
+            # Save logs to 'repl' subdirectory
+            log_dir = get_settings().logs_dir / "repl"
+            log_file = setup_file_logging(log_dir=log_dir, session_name="repl")
             self._log_file = log_file  # Store for reference
         
         if disable_logging:
@@ -758,10 +762,10 @@ class Repl(ReplUI):
             await self._handle_list_chats()
             return
 
-        # Switch chat command
-        elif cmd_lower.startswith("/switch "):
-            chat_id = cmd[8:].strip()
-            await self._handle_switch_chat(chat_id)
+        # Resume chat command
+        elif cmd_lower.startswith("/resume "):
+            chat_arg = cmd[8:].strip()
+            await self._handle_resume_chat(chat_arg)
             return
 
         # Agents command
@@ -1343,27 +1347,53 @@ class Repl(ReplUI):
         else:
             self.console.print(f"[red]Error listing chats: {result.get('message')}[/red]")
 
-    async def _handle_switch_chat(self, chat_id: str):
-        """Switch to a different chat session."""
-        # Verify chat exists
+    async def _handle_resume_chat(self, chat_arg: str):
+        """Resume a different chat session.
+        
+        Args:
+            chat_arg: Chat ID, name prefix, or 'last' for the most recent chat (excluding current)
+        """
+        # Get chat list
         result = await self._chatroom.list_chats()
-        if result.get("success"):
-            chats = result.get("chats", [])
-            found = None
+        if not result.get("success"):
+            self.console.print(f"[red]Error listing chats: {result.get('message')}[/red]")
+            self.console.print()
+            return
+            
+        chats = result.get("chats", [])
+        found = None
+        
+        # Handle 'last' argument - switch to most recent chat (excluding current)
+        if chat_arg.lower() == "last":
+            # Find the most recent chat that is not the current one
             for chat in chats:
-                if chat.get("id", "").startswith(chat_id) or chat.get(
+                if chat.get("id") != self._chat_id:
+                    found = chat
+                    break
+            
+            if not found:
+                self.console.print("[yellow]No other chat sessions found[/yellow]")
+                self.console.print()
+                return
+        else:
+            # Search by ID or name prefix
+            for chat in chats:
+                if chat.get("id", "").startswith(chat_arg) or chat.get(
                     "name", ""
-                ).lower().startswith(chat_id.lower()):
+                ).lower().startswith(chat_arg.lower()):
                     found = chat
                     break
 
-            if found:
-                self._chat_id = found["id"]
-                self.console.print(
-                    f"[green]✅ Switched to:[/green] {found.get('name', self._chat_id)}"
-                )
-            else:
-                self.console.print(f"[red]Chat not found: {chat_id}[/red]")
+            if not found:
+                self.console.print(f"[red]Chat not found: {chat_arg}[/red]")
+                self.console.print()
+                return
+
+        # Switch to the found chat
+        self._chat_id = found["id"]
+        self.console.print(
+            f"[green]✅ Resumed:[/green] {found.get('name', self._chat_id)}"
+        )
         self.console.print()
 
     async def _handle_show_agents(self):
@@ -1812,7 +1842,7 @@ class Repl(ReplUI):
             parts = command.split()
             filename = parts[1]
             self.console.print(
-                f"[yellow]Note: /load is not fully supported in ChatRoom mode. Use /switch instead.[/yellow]"
+                f"[yellow]Note: /load is not fully supported in ChatRoom mode. Use /resume instead.[/yellow]"
             )
         except Exception as e:
             self.console.print(f"[red]Error loading conversation: {str(e)}[/red]")

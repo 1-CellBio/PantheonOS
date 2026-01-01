@@ -277,6 +277,10 @@ class ToolSet(ABC):
         """Setup the toolset before running it. Can be overridden by subclasses."""
         pass
 
+    async def cleanup(self):
+        """Clean up toolset resources. Override in subclasses if cleanup is needed."""
+        pass
+
     @tool(exclude=True)
     async def list_tools(self) -> dict:
         """

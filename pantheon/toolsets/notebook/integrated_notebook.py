@@ -28,12 +28,9 @@ from pantheon.toolset import ToolSet, tool
 from pantheon.utils.log import logger
 
 from .jedi_integration import EnhancedCompletionService
-from .jupyter_kernel import (
-    IOPubEventBus,
-    JupyterKernelToolSet,
-    RemoteIOPubEventBus,
-)
+from .jupyter_kernel import JupyterKernelToolSet
 from .notebook_contents import NotebookContentsToolSet
+from .handlers import NatsStreamHandler, FileLogHandler
 
 
 # rpy2 initialization code - executed once per kernel session when first %%R cell is detected
@@ -41,8 +38,13 @@ RPY2_INIT_CODE = '''
 try:
     import rpy2
     get_ipython().run_line_magic('load_ext', 'rpy2.ipython')
-    # Preset CRAN mirror to avoid interactive selection during package installation
-    get_ipython().run_cell_magic('R', '', 'options(repos = c(CRAN = "https://cloud.r-project.org"))')
+    # Configure R options: CRAN mirror and parallel compilation
+    get_ipython().run_cell_magic('R', '', """
+options(
+  repos = c(CRAN = "https://cloud.r-project.org"),
+  Ncpus = max(1, parallel::detectCores() - 1)  # Enable parallel compilation
+)
+""")
 except ImportError:
     print("⚠️ rpy2 not installed. Run: pip install rpy2")
 except Exception as e:
@@ -80,7 +82,7 @@ class IntegratedNotebookToolSet(ToolSet):
         self.remote_backend = remote_backend
         self.streaming_mode = streaming_mode
         self.streaming_enabled = False
-        self.event_bus: Optional[IOPubEventBus] = None
+        self.nats_handler: Optional["NatsStreamHandler"] = None
 
         # Initialize child toolsets
         self.kernel_toolset = JupyterKernelToolSet(f"{name}_kernel", workdir, **kwargs)
@@ -102,6 +104,10 @@ class IntegratedNotebookToolSet(ToolSet):
         """Setup toolset"""
         await super().run_setup()
 
+        # Load settings
+        from pantheon.settings import get_settings
+        settings = get_settings()
+
         # Decide whether streaming should be active for this toolset
         if self.streaming_mode == "local":
             allow_streaming = False
@@ -116,27 +122,27 @@ class IntegratedNotebookToolSet(ToolSet):
             except Exception as e:
                 logger.warning(f"No remote backend available: {e}")
 
-        # Initialize event bus when remote backend exists
-        if allow_streaming and self.remote_backend:
-            self.event_bus = RemoteIOPubEventBus(self.remote_backend)
-            self.kernel_toolset.event_bus = self.event_bus
-            self.streaming_enabled = True
-            logger.info("Initialized IOPub event bus (streaming enabled)")
-        else:
-            self.event_bus = None
-            self.kernel_toolset.event_bus = None
-            self.streaming_enabled = False
-            logger.info(
-                f"Streaming disabled for IntegratedNotebookToolSet (mode={self.streaming_mode})"
-            )
-
+        # Setup child toolsets
         await self.kernel_toolset.run_setup()
         await self.notebook_contents.run_setup()
 
+        # Register NATS stream handler (if remote backend exists)
+        if allow_streaming and self.remote_backend:
+            self.nats_handler = NatsStreamHandler(self.remote_backend)
+            await self.kernel_toolset.subscribe("nats_stream", self.nats_handler)
+            self.streaming_enabled = True
+            logger.info("Registered NatsStreamHandler")
+
+        # Register file log handler (if enabled via settings)
+        if settings.enable_notebook_execution_logging:
+            log_dir = settings.logs_dir / "notebook"
+            log_handler = FileLogHandler(log_dir)
+            await self.kernel_toolset.subscribe("file_log", log_handler)
+            logger.info(f"Registered FileLogHandler: {log_dir}")
+
         # Start unified IOPub listener
         if (
-            self.streaming_enabled
-            and self.kernel_toolset.use_unified_listener
+            self.kernel_toolset.use_unified_listener
             and self.kernel_toolset.unified_listener
         ):
             await self.kernel_toolset.unified_listener.start_listening()
@@ -506,7 +512,7 @@ class IntegratedNotebookToolSet(ToolSet):
         Returns:
             dict with:
             - success: True if execution succeeded
-            - output: Execution result/output
+            - outputs: Execution results/outputs (list of nbformat output nodes)
             - kernel_session_id: Kernel session ID
         
         Tips:
@@ -555,7 +561,14 @@ class IntegratedNotebookToolSet(ToolSet):
             - success: True if cell was added
             - cell_id: The cell identifier
             - notebook_path: Path to the notebook
-            - output: Execution output (only when execute=True and cell_type="code")
+            - execution: (only when execute=True and cell_type="code") Complete execution result dict containing:
+                - success: True if execution succeeded
+                - outputs: Execution outputs (list of nbformat output nodes)
+                - execution_count: Kernel execution count
+                - kernel_session_id: Kernel session ID
+                - cell_id: The cell identifier
+                - memory_hint: (optional) Memory warning if usage > 75%
+                - error: Error message if execution failed
         """
         session_id = self.get_session_id()
 
@@ -586,11 +599,10 @@ class IntegratedNotebookToolSet(ToolSet):
                     exec_result = await self._execute_cell_internal(
                         notebook_path, result["cell_id"], session_id
                     )
-                    result["output"] = exec_result.get("output")
-                    result["execution_success"] = exec_result.get("success", False)
-                    result["kernel_session_id"] = exec_result.get("kernel_session_id")
-                    if not exec_result.get("success"):
-                        result["execution_error"] = exec_result.get("error")
+                    # Put all execution info in a dedicated field to avoid missing any fields
+                    # Remove redundant notebook_path (already in result)
+                    exec_result.pop("notebook_path", None)
+                    result["execution"] = exec_result
 
             return result
 
@@ -625,7 +637,14 @@ class IntegratedNotebookToolSet(ToolSet):
             - success: True if cell was updated
             - cell_id: The cell identifier
             - replacements: Number of replacements made (only when old_content provided)
-            - output: Execution output (only when execute=True and cell is code type)
+            - execution: (only when execute=True and cell is code type) Complete execution result dict containing:
+                - success: True if execution succeeded
+                - outputs: Execution outputs (list of nbformat output nodes)
+                - execution_count: Kernel execution count
+                - kernel_session_id: Kernel session ID
+                - cell_id: The cell identifier
+                - memory_hint: (optional) Memory warning if usage > 75%
+                - error: Error message if execution failed
 
         Examples:
             # Update and execute in one call (recommended)
@@ -699,11 +718,10 @@ class IntegratedNotebookToolSet(ToolSet):
                     exec_result = await self._execute_cell_internal(
                         notebook_path, cell_id, session_id
                     )
-                    result["output"] = exec_result.get("output")
-                    result["execution_success"] = exec_result.get("success", False)
-                    result["kernel_session_id"] = exec_result.get("kernel_session_id")
-                    if not exec_result.get("success"):
-                        result["execution_error"] = exec_result.get("error")
+                    # Put all execution info in a dedicated field to avoid missing any fields
+                    # Remove redundant notebook_path (already in result)
+                    exec_result.pop("notebook_path", None)
+                    result["execution"] = exec_result
 
             return result
 
@@ -1213,156 +1231,6 @@ class IntegratedNotebookToolSet(ToolSet):
     # Event Subscription API (Backend/UI Streaming - Not @tool)
     # ═══════════════════════════════════════════════════════════
 
-    async def subscribe_notebook_events(
-        self, notebook_path: str, client_id: str, callback=None
-    ) -> dict:
-        """
-        Subscribe to notebook real-time IOPub events (Backend use only, not exposed to agents)
-
-        This method allows backend/UI to receive real-time execution events:
-        - stream (stdout/stderr)
-        - display_data (plots, images)
-        - execute_result (return values)
-        - error (exceptions)
-        - status (kernel busy/idle)
-
-        Args:
-            notebook_path: Path to notebook
-            client_id: Unique client identifier for this subscription
-            callback: Optional callback function for events
-
-        Returns:
-            dict with success status and subscription info
-
-        Example:
-            # Backend subscribes for UI streaming
-            await toolset.subscribe_notebook_events(
-                notebook_path="analysis.ipynb",
-                client_id="ui-client-123",
-                callback=send_to_websocket
-            )
-
-            # Execute cell (events streamed to callback)
-            # UI can fire-and-forget (don't await)
-            execute_cell("analysis.ipynb", cell_id, code)
-
-        Note:
-            - NOT a @tool (backend internal use only)
-            - Requires event_bus to be initialized
-            - Client must unsubscribe when done
-        """
-        session_id = self.get_session_id()
-        if not session_id:
-            return {"success": False, "error": "No session_id provided"}
-
-        # Get context
-        context = self._get_context(notebook_path, session_id)
-        if not context:
-            return {"success": False, "error": f"Notebook not opened: {notebook_path}"}
-
-        # Check event bus
-        if not self.event_bus:
-            return {
-                "success": False,
-                "error": "Event bus not initialized (no streaming support)",
-            }
-
-        try:
-            # Subscribe to kernel's IOPub channel
-            result = await self.kernel_toolset.subscribe_iopub(
-                context.kernel_session_id, client_id, callback
-            )
-
-            if result["success"]:
-                logger.info(
-                    f"Subscribed to notebook events: {notebook_path} "
-                    f"(client={client_id}, kernel={context.kernel_session_id})"
-                )
-
-            return {
-                "success": result["success"],
-                "notebook_path": notebook_path,
-                "kernel_session_id": context.kernel_session_id,
-                "client_id": client_id,
-                "subscription_info": result,
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to subscribe to notebook events: {e}")
-            return {"success": False, "error": str(e)}
-
-    async def unsubscribe_notebook_events(
-        self, notebook_path: str, client_id: str
-    ) -> dict:
-        """
-        Unsubscribe from notebook IOPub events (Backend use only, not exposed to agents)
-
-        Cleanup subscription created by subscribe_notebook_events().
-        Should be called when client disconnects or no longer needs events.
-
-        Args:
-            notebook_path: Path to notebook
-            client_id: Client identifier used in subscribe
-
-        Returns:
-            dict with success status
-
-        Example:
-            # Client disconnects, cleanup subscription
-            await toolset.unsubscribe_notebook_events(
-                notebook_path="analysis.ipynb",
-                client_id="ui-client-123"
-            )
-
-        Note:
-            - NOT a @tool (backend internal use only)
-            - Safe to call even if subscription doesn't exist
-        """
-        session_id = self.get_session_id()
-        if not session_id:
-            return {"success": False, "error": "No session_id provided"}
-
-        # Get context
-        context = self._get_context(notebook_path, session_id)
-        if not context:
-            # Context might have been deleted, try to handle gracefully
-            logger.warning(
-                f"Context not found for {notebook_path}, "
-                f"cannot unsubscribe (may already be cleaned up)"
-            )
-            return {
-                "success": False,
-                "error": f"Notebook context not found: {notebook_path}",
-            }
-
-        # Check event bus
-        if not self.event_bus:
-            return {"success": False, "error": "Event bus not initialized"}
-
-        try:
-            # Unsubscribe from kernel's IOPub channel
-            result = await self.kernel_toolset.unsubscribe_iopub(
-                context.kernel_session_id, client_id
-            )
-
-            if result["success"]:
-                logger.info(
-                    f"Unsubscribed from notebook events: {notebook_path} "
-                    f"(client={client_id}, kernel={context.kernel_session_id})"
-                )
-
-            return {
-                "success": result["success"],
-                "notebook_path": notebook_path,
-                "kernel_session_id": context.kernel_session_id,
-                "client_id": client_id,
-                "unsubscription_info": result,
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to unsubscribe from notebook events: {e}")
-            return {"success": False, "error": str(e)}
-
     # ═══════════════════════════════════════════════════════════
     # Code Intelligence Tools (Frontend Only - exclude=True)
     # ═══════════════════════════════════════════════════════════
@@ -1458,6 +1326,56 @@ class IntegratedNotebookToolSet(ToolSet):
         # For now, default to 'user' (can be enhanced with context tracking)
         return "user"
 
+    async def _gc_and_check_memory(
+        self, kernel_session_id: str, notebook_path: str = None, cell_id: str = None
+    ) -> float | None:
+        """
+        Run gc.collect() and return current memory usage percentage.
+        Combined into one kernel call for efficiency.
+        
+        Args:
+            kernel_session_id: Kernel session ID
+            notebook_path: Path to notebook (for logging to correct file)
+            cell_id: Cell ID (for logging context)
+        """
+        try:
+            # Build execution metadata with notebook context
+            execution_metadata = {"operated_by": "system"}
+            if notebook_path:
+                execution_metadata["notebook_path"] = notebook_path
+            if cell_id:
+                execution_metadata["cell_id"] = cell_id
+            
+            result = await self.kernel_toolset.execute_request(
+                "import gc, psutil; gc.collect(); print(psutil.virtual_memory().percent)",
+                kernel_session_id,
+                silent=True,
+                store_history=False,
+                execution_metadata=execution_metadata,
+            )
+            
+            if not result.get("success"):
+                return None
+            
+            # Extract stdout text from nbformat outputs array
+            # outputs = [{"output_type": "stream", "name": "stdout", "text": "42.5\n"}, ...]
+            outputs = result.get("outputs", [])
+            for output in outputs:
+                if output.get("output_type") == "stream" and output.get("name") == "stdout":
+                    text = output.get("text", "")
+                    # text can be string or list of strings
+                    if isinstance(text, list):
+                        text = "".join(text)
+                    try:
+                        return float(text.strip())
+                    except ValueError:
+                        return None
+            
+            return None
+        except Exception as e:
+            logger.debug(f"gc_and_check_memory error: {e}")
+            return None
+
     async def _execute_and_update(
         self, kernel_session_id: str, notebook_path: str, cell_id: str, code: str
     ) -> dict:
@@ -1505,6 +1423,18 @@ class IntegratedNotebookToolSet(ToolSet):
             if exec_result.get("success") and code.strip():
                 self.completion_service.update_session_context(kernel_session_id, code)
 
+            # Post-execution: gc + memory check in one call
+            logger.info(f"Calling _gc_and_check_memory for session {kernel_session_id[:8]}")
+            mem_pct = await self._gc_and_check_memory(
+                kernel_session_id, notebook_path=notebook_path, cell_id=cell_id
+            )
+            logger.info(f"Memory check result: {mem_pct}")
+            if mem_pct is not None and mem_pct > 75:
+                exec_result["memory_hint"] = (
+                    f"⚠️ Memory at {mem_pct:.0f}%. Consider: "
+                    "`del unused_var; gc.collect()` or `manage_kernel(action='restart')`"
+                )
+
             # Add notebook-specific fields
             exec_result["notebook_path"] = notebook_path
 
@@ -1519,8 +1449,9 @@ class IntegratedNotebookToolSet(ToolSet):
         try:
             await self._save_contexts()
 
-            if self.event_bus and hasattr(self.event_bus, "cleanup"):
-                await self.event_bus.cleanup()
+            if self.nats_handler:
+                await self.nats_handler.cleanup()
+                logger.info("Cleaned up NatsStreamHandler")
 
             if self.kernel_toolset:
                 await self.kernel_toolset.cleanup()

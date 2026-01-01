@@ -16,6 +16,7 @@ hypotheses generation or interpretation of the analysis results.
 
 ## Workdir:
 Always work in the workdir provided by the leader/other agents, and always report the results in the workdir.
+All paths MUST be **absolute paths** . Relative paths are forbidden.
 
 ## Call other agents:
 

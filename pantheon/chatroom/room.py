@@ -258,7 +258,8 @@ class ChatRoom(ToolSet):
     async def cleanup(self) -> None:
         """Clean up ChatRoom resources before exit.
         
-        Stops learning pipeline (saves skillbook) and cancels background tasks.
+        Stops learning pipeline (saves skillbook), cancels background tasks,
+        and cleans up the endpoint.
         """
         # Stop learning pipeline (saves skillbook)
         if self._learning_pipeline is not None:
@@ -267,10 +268,18 @@ class ChatRoom(ToolSet):
             except Exception:
                 pass
         
+        # Clean up endpoint if it exists
+        if hasattr(self, "_endpoint") and self._endpoint:
+            try:
+                await self._endpoint.cleanup()
+            except Exception:
+                pass
+
         # Cancel any pending background tasks
         for task in self._background_tasks:
             if not task.done():
                 task.cancel()
+
 
     def _save_team_template_to_memory(self, memory, template_obj: dict) -> None:
         """Save TeamConfig to memory for persistence (new format)."""

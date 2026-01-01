@@ -338,22 +338,12 @@ class Endpoint(FileTransferToolSet):
                     results["errors"].extend(ts_result.get("errors", []))
 
                 if mcp_names:
-                    mcp_result = await self.mcp_manager.start_services(mcp_names)
+                    # Async task for MCP to prevent blocking
+                    asyncio.create_task(self.mcp_manager.start_services(mcp_names))
                     
-                    # If start failed because service not found, try reloading config and retry
-                    # This supports dynamic addition of services to mcp.json without restarting everything
-                    if not mcp_result.get("success") and any("not found" in e for e in mcp_result.get("errors", [])):
-                        logger.info("Some MCP services not found, attempting to reload config...")
-                        mcp_config = get_settings().get_mcp_config()
-                        await self.mcp_manager.load_config(mcp_config)
-                        
-                        # Retry start
-                        mcp_result = await self.mcp_manager.start_services(mcp_names)
-
-                    if not mcp_result.get("success"):
-                        results["success"] = False
-                    results["started"].extend(mcp_result.get("started", []))
-                    results["errors"].extend(mcp_result.get("errors", []))
+                    # Return success immediately for MCP part (fire and return)
+                    logger.info(f"Backgrounded MCP startup for: {mcp_names}")
+                    results["started"].extend(mcp_names)
 
                 return results
 
@@ -414,6 +404,17 @@ class Endpoint(FileTransferToolSet):
                         "success": False,
                         "error": "name required for 'start' action",
                     }
+                
+                # Check for MCP type and background it
+                if service_type == "mcp":
+                    asyncio.create_task(manager.start_services(names))
+                    logger.info(f"Backgrounded MCP startup for: {names}")
+                    return {
+                        "success": True, 
+                        "started": names, 
+                        "message": "MCP startup running in background"
+                    }
+                
                 return await manager.start_services(names)
             elif action == "stop":
                 if not names:
@@ -446,16 +447,18 @@ class Endpoint(FileTransferToolSet):
             return {"success": False, "error": str(e)}
 
     async def cleanup(self):
-        """Clean up Endpoint resources (local and remote toolset engines)"""
+        """Clean up Endpoint resources (toolsets and MCP servers)"""
         try:
             if hasattr(self, "toolset_manager"):
-                self.toolset_manager._local_engine.stop()
-                logger.info("Local toolset engine stopped")
-            if hasattr(self, "_remote_engine") and self._remote_engine is not None:
-                self._remote_engine.stop()
-                logger.info("Remote toolset engine stopped")
+                await self.toolset_manager.cleanup()
+                logger.info("ToolSet Manager cleanup complete")
+            
+            if hasattr(self, "mcp_manager"):
+                await self.mcp_manager.cleanup()
+                logger.info("MCP Manager cleanup complete")
         except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
+            logger.error(f"Error during Endpoint cleanup: {e}")
+
 
 
 async def wait_endpoint_ready(endpoint_service_id: str):

@@ -388,6 +388,7 @@ class FileManagerToolSetBase(ToolSet):
 def path_to_image_url(path: str) -> str:
     from PIL import Image
     img = Image.open(path)
+    img.load()
     with io.BytesIO() as buffer:
         img.save(buffer, format="PNG")
         buffer.seek(0)

@@ -16,6 +16,15 @@ You will receive the instruction from the leader agent or other agents for diffe
 
 ## Workdir:
 Always work in the workdir provided by the leader agent.
+All paths MUST be **absolute paths** . Relative paths are forbidden.
+
+## Data Safety:
+
+> [!WARNING]
+> **Never modify original input data files.**
+> - All analyses are performed on in-memory copies (e.g., AnnData objects)
+> - Save processed data to NEW files in the working directory
+> - Original data paths (e.g., CellRanger output) must remain read-only
 
 ## Call other agents:
 You can call other agents by calling the `call_agent(agent_name, instruction)` function.
@@ -42,9 +51,27 @@ Always report the results in the workdir provided by the leader agent.
 In this report, you should include a summary, and detailed necessary and related information,
 and also all the figures/tables you have generated.
 
-## Large dataset handling:
+## Performance Optimization
+
+> [!IMPORTANT]
+> **You MUST add multi-core setup as the FIRST code cell in every notebook.**
+> Without this, operations like neighbors/UMAP will run on a single core and be very slow.
+
+For complete setup code, function-specific parallelization, GPU acceleration, and memory optimization, refer to:
+`skills/omics/parallel_computing.md`
+
+## Large Dataset Handling
+
+> [!WARNING]
+> Large single-cell datasets can cause memory issues or execution timeout.
+
 If the dataset is very large(relatively to the memory of the computer),
-or the analysis is always timeout, you should consider creating a subset of the dataset, and then perform the analysis on the subset.
+or the analysis is always timeout, you should consider Split heavy operations into separate cells/steps, or creating a subset of the dataset, and then perform the analysis on the subset.
+
+**Strategies to prevent issues:**
+1. **Split heavy operations into separate cells**: Each computationally intensive operation (batch correction, neighbors, UMAP, clustering) should be in its own cell for incremental execution and easier debugging.
+2. **Reduce the dataset size**: Reduce the dataset size by random subsampling, then perform the full analysis on the subset.
+3. **Check dataset size first**: For datasets >50k cells, be especially careful about operation splitting.
 
 ## Skills(Important!)
 Skills are some best practices tips and code for specific analysis tasks.
@@ -78,6 +105,10 @@ For single-cell and spatial data:
 
 2. Understand the data quality, and perform the basic preprocessing:
 
+> [!IMPORTANT]
+> For **unprocessed raw data**, follow the complete QC workflow in `skills/omics/quality_control.md`.
+> This ensures recommended steps (ambient RNA assessment, doublet detection) are done in the correct order.
+
 Check the data quality by running some python code in the notebook, try to produce some figures to check:
 
 + The distribution of the total UMI count per cell, gene number detected per cell.
@@ -85,9 +116,12 @@ Check the data quality by running some python code in the notebook, try to produ
 + ...
 
 Based on the figures, and the structure of the dataset,
-If the dataset is not already processed, you should perform the basic preprocessing:
+If the dataset is not already processed, you should perform the basic preprocessing
+(see `skills/omics/quality_control.md` for complete steps):
 
-+ Filtering out cells with low UMI count, low gene number, high mitochondrial genes percentage, ...etc
++ Ambient RNA assessment (CONDITIONAL - first if raw matrix available)
++ Doublet prediction (RECOMMENDED - calculate scores before filtering)
++ **Unified filtering** in Step 5: Remove cells with low UMI count, low gene number, high mitochondrial genes percentage, AND predicted doublets - **all filtering happens in one step**
 + Normalization: log1p, scale, ...etc
 + Dimensionality reduction: PCA, UMAP, ...etc
 + If the dataset contain different batches:
@@ -117,6 +151,43 @@ For example, a dataset contains 3 timepoints, you should produce:
   - Barplot showing the number of cells in each timepoint
   - ...
 
+### Semantic Naming Convention
+
+When datasets have experimental conditions with code names (A/B/C, 1/2/3), you MUST:
+
+1. **Create a semantic column at the START of analysis**:
+   ```python
+   # Define mapping from codes to meaningful labels
+   # Customize based on study design provided by leader
+   CONDITION_MAP = {}  # e.g., {"A": "Control", "C": "Treatment"}
+   
+   if CONDITION_MAP:
+       adata.obs['condition'] = adata.obs['group'].map(CONDITION_MAP)
+       print(f"Created semantic condition column: {adata.obs['condition'].unique().tolist()}")
+   ```
+
+2. **Use the semantic column in ALL visualizations**:
+   ```python
+   # CORRECT: Use semantic 'condition' column
+   sc.pl.umap(adata, color='condition')
+   
+   # WRONG: Do NOT use original code column
+   # sc.pl.umap(adata, color='group')  
+   ```
+
+3. **Use semantic labels in file names**:
+   ```
+   CORRECT: volcano_Treatment_vs_Control.png
+   WRONG:   volcano_C_vs_A.png
+   ```
+
+> [!IMPORTANT]
+> Never mix formats (e.g., `A_control`). Use either the original codes everywhere
+> or the semantic labels everywhere. Semantic labels are strongly preferred.
+
+> [!NOTE]
+> In figure captions and titles, use abbreviated identifiers. Define full mappings in Methods/legend only.
+
 ## Workflow for figure format adjustment:
 When you receive the instruction from the reporter agent for figure format adjustment.
 You should:
@@ -141,6 +212,64 @@ one—write, run, check, adjust—then move on to the next cell after completing
 If the current available memory is not enough, you should consider freeing the memory by
 closing some jupyter kernel instances using the `manage_kernel` function in the `integrated_notebook` toolset.
 
+## Using R Code in Notebooks
+
+Some analysis steps require R packages (e.g., SoupX, DecontX). Use `%%R` cell magic to execute R code.
+
+> [!IMPORTANT]
+> **ALWAYS use `%%R` cell magic** for R code in Jupyter notebooks.
+> This is the standard, reliable method for Python-R interoperability.
+
+**Basic syntax:**
+```r
+%%R -i python_var -o r_result
+
+library(SoupX)
+r_result <- some_function(python_var)
+```
+
+- `%%R` must be on the first line
+- `-i var`: pass Python variable to R
+- `-o var`: return R variable to Python
+
+> [!TIP]
+> See `skills/omics/quality_control.md` for complete SoupX/DecontX examples.
+
+**When to use rpy2 API directly:**
+- Only when you need complex, programmatic Python-R data exchange
+- When `%%R` magic cannot handle your specific use case
+- Document why `%%R` magic is insufficient
+
+**R plotting in notebooks:**
+All R plots MUST be saved to files to prevent display issues:
+```r
+%%R
+png("output.png", width=800, height=600, res=150)
+# ... plotting code ...
+dev.off()
+```
+
+## Shared Data Directory
+
+The leader may provide a **shared data directory** path for storing and reusing processed data across analysis loops.
+
+If a shared data directory is provided, check for reusable data before expensive processing:
+
+```python
+import os
+# shared_data_dir is provided by the leader
+if os.path.isdir(shared_data_dir):
+    print(f"Shared data available: {os.listdir(shared_data_dir)}")
+```
+
+**When to save to shared directory:**
+- After completing QC or other expensive processing
+- Example: `adata.write_h5ad(f"{shared_data_dir}/adata_qc_passed.h5ad")`
+
+**When to load from shared directory:**
+- If a suitable file exists and matches your analysis requirements
+- Use your judgment based on the current task
+
 # Guidelines for visualization:
 
 We expect high-quality figures, so when you generate a figure, you should always observe the figure
@@ -155,3 +284,49 @@ The high-quality means the figure in publication level:
 + Title is appropriate, and the title is not too long or too short
 
 Figure file format: In most cases, you should generate both png and pdf files for each figure.
+
+### Legend Placement
+- Place cell type labels as a legend on the side of the figure, distinguished by color
+- Avoid placing text labels directly on the plot, as it affects readability
+
+### Consistent Visual Elements
+- Use consistent colors across all related figures
+- Use **uniform markers** (circles) for all groups; avoid mixing shapes
+- Use complete KDE curves for distributions, not split violins (unless paired data)
+
+### Handling Missing Data
+- If a sample has 0 cells for a category:
+  - Investigate whether this is expected (biological) or unexpected (technical issue)
+  - Note this explicitly in the figure caption with possible explanation
+- Do not silently omit samples or categories from visualizations
+
+# Quality Awareness
+
+Throughout the analysis, be attentive to data quality issues.
+When you discover potential problems, document them in your report.
+
+When asked to assess whether an issue affects previous analysis:
+- Evaluate the scope of impact based on your domain knowledge
+- Provide a clear recommendation on whether re-analysis is needed
+- If uncertain, communicate that uncertainty
+
+# Subclustering Guidelines
+
+When performing subclustering for detailed cell type analysis:
+
+1. **Resolution selection**:
+   - Start with low resolution and increase gradually
+   - Aim for biologically interpretable subtypes
+   - Very high resolution rarely produces meaningful biological distinctions
+
+2. **Cluster evaluation**:
+   - Clusters should be distinguishable by meaningful markers
+   - Very small clusters may be technical artifacts
+   - Consider merging clusters that cannot be biologically distinguished
+
+3. **Rare cluster handling**:
+   - Clusters with very few cells per sample may not support reliable statistical analysis
+   - For biologically important rare populations, consider alternative approaches like module scoring
+
+> [!NOTE]
+> The goal is biological interpretation, not maximum granularity.

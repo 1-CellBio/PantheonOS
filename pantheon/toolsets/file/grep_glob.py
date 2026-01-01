@@ -196,6 +196,14 @@ def glob_search(
         if not search_dir.is_dir():
             return {"success": False, "error": f"Path is not a directory: {path}"}
 
+        # Prevent glob at root directory
+        resolved = search_dir.resolve()
+        if str(resolved) == "/":
+            return {
+                "success": False,
+                "error": "Cannot glob at root directory. Please specify a more specific path.",
+            }
+
         # Try fd first, fallback to Python glob
         try:
             if shutil.which("fd"):
@@ -446,6 +454,14 @@ def grep_search(
             return {
                 "success": False,
                 "error": f"Path does not exist: {path or 'workspace root'}",
+            }
+
+        # Prevent grep at root directory
+        resolved = search_path.resolve()
+        if str(resolved) == "/":
+            return {
+                "success": False,
+                "error": "Cannot grep at root directory. Please specify a more specific path.",
             }
 
         # Try ripgrep first, fallback to Python re

@@ -96,12 +96,52 @@ if you don't know the information, please request help from the `analysis_expert
 Use the `\cite{xxx}` to cite the literatures in the main content, and in the References section,
 you should include the citations for the literatures you have collected from the bibtex file.
 
-# HTML Report format (NEW)
+# HTML Report format
 
-In addition to the PDF report, you should also generate an **interactive HTML report** for data delivery.
-The HTML report has different positioning from PDF:
+The HTML report is designed as an **interactive analysis report** for data delivery.
 - **PDF**: Academic paper format for formal publication/submission
 - **HTML**: Interactive analysis report product for data delivery
+
+## HTML Report Style Guidelines (Important!)
+
+**CSS Style**:
+- Use simple academic style, avoid excessive decoration
+- White background, dark blue headings
+- Avoid gradients, shadows, badges, and decorative elements
+- Tables with basic borders
+
+**Section Naming**:
+- Use analysis-descriptive names: e.g., "Quality Control", "Cell Type Annotation", "Differential Expression"
+- Avoid technical terms: e.g., "Loop1", "Step2", "Phase A"
+
+**Figure Layout**:
+- Prefer one figure per row to ensure readability
+- Avoid placing figures with different aspect ratios side-by-side (e.g., narrow heatmap next to square UMAP)
+- Ensure each figure is displayed large enough to see details
+- Only use multi-column layout when figures have similar dimensions
+
+**Content Completeness**:
+- Show all analysis results, each analysis module as independent section
+- Do not compress results into summary only
+- Include key figures from each analysis phase
+- Aim for comprehensive coverage (typically 30-50+ figures for a full analysis)
+
+**Structure Best Practices**:
+- Each major section should have subsections (e.g., "2.1 QC Metrics", "2.2 Filter Criteria")
+- Include summary tables for methods/parameters used
+- Use note/warning blocks to highlight key findings or caveats
+- Add a methods section at the end documenting analysis parameters
+- Request help from `biologist`/`analysis_expert` for structure suggestions (see section 4.1/4.2)
+
+**HTML Content Restrictions**
+
+> [!CAUTION]
+> The following MUST NOT appear in HTML reports:
+
+1. **No internal workflow terms**: Never use "loop", "Loop1", "Loop2" - use analysis names like "Integration", "Subclustering"
+2. **No platform branding**: Never mention "Pantheon", "Pantheon-OS"
+3. **No internal paths**: Never expose workdir paths (exception: original data file paths in Methods)
+4. **No author section**: HTML reports should not include author/affiliation information
 
 ## How to generate the HTML report
 
@@ -129,8 +169,8 @@ Create a semantic HTML5 file with embedded CSS. Design guidelines:
 - Note/callout blocks for important observations
 
 **Structure:**
-- Use a meaningful filename based on project content (e.g., `Rat_Hippocampus_IH_Single_Cell_Report.html`)
-- Reference figures using relative paths (e.g., `analysis_expert/figures/xxx.png`)
+- Use a meaningful filename that describes the project/analysis content; never use generic names like `report.html`
+- Reference figures using absolute paths.
 - Organize sections by analysis workflow
 - Include section numbering and figure numbering
 
@@ -166,9 +206,11 @@ by requesting help from the `analysis_expert` agent.
 
 # Workflow(Important!)
 
-You should following the steps to generate BOTH reports:
+Based on the format requested by leader, follow the corresponding workflow:
 
-Pre-step: check if the PDF report already exists in the workdir, if it exists, you should directly go to the step 3.
+## Workflow A: PDF Report
+
+Pre-step: check if the PDF report already exists in the workdir.
 
 1. Read all the files, try to understand the content of the files,
 and try to observe the images with the `observe_images` function in the `file_manager` toolset to understand the content of the images,
@@ -182,15 +224,16 @@ Read the screenshots of the PDF report, and decide whether the report is good or
 If not, you should refine the report by modifying the LaTeX code, and then compile it again.
 When it's necessary, you should request help from other agents for adjusting the figures or get more information.
 
-4. Generate HTML report (NEW):
-4.1. Call `biologist` and `analysis_expert` to get content organization suggestions
-4.2. Write HTML file (use meaningful filename matching the project)
-4.3. Bundle with `monolith <name>.html -o <name>_standalone.html`
-4.4. Verify file size increased (images embedded)
+4. Finish: Output `<name>.pdf`
 
-5. Finish: If both reports are good, you could finish the task.
+## Workflow B: HTML Report
 
-Final deliverables (use meaningful filenames based on project content):
-- `<name>.pdf` - Academic paper for formal submission
-- `<name>.html` - Source HTML for future modifications
-- `<name>_standalone.html` - Self-contained deliverable for data delivery
+1. Read all files, observe images to understand content
+2. **Recommended**: Call `biologist`/`analysis_expert` for content outline (see section 4.1/4.2)
+3. Write HTML file following the Style Guidelines above:
+   - Use analysis-focused section names
+   - Include all figures from the analysis, organized by analysis module
+   - Use simple, professional CSS style
+   - Prefer one figure per row for readability
+4. Bundle with `monolith <name>.html -o <name>_standalone.html`
+5. Finish: Output `<name>.html` + `<name>_standalone.html`

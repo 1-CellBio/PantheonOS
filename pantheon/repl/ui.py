@@ -534,7 +534,7 @@ class ReplUI:
             "[dim][bold purple]/list    [/bold purple][/dim] - List all chat sessions"
         )
         self.console.print(
-            "[dim][bold purple]/switch  [/bold purple][/dim] - Switch to another chat (by id or name)"
+            "[dim][bold purple]/resume  [/bold purple][/dim] - Resume another chat (by id, name, or 'last')"
         )
         self.console.print()
 

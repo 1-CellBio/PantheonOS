@@ -1,3 +1,4 @@
+import copy
 import re
 import uuid
 from typing import TYPE_CHECKING, List, Optional
@@ -90,6 +91,59 @@ def _build_execution_context_id(
     )
 
 
+def _detect_and_reset_stale_chain(
+    enhanced_chain: list,
+    agent_names: list,
+    caller_name: str,
+    target_name: str,
+) -> tuple[list, list]:
+    """Detect stale chain_path and auto-reset instead of throwing error.
+    
+    When the system detects that:
+    1. Target agent already appears in chain_path (would trigger loop error)
+    2. Caller is the ROOT of existing chain (first element without call_id)
+    
+    This indicates a NEW delegation from root, but chain_path contains stale
+    data from a previous turn. Solution: reset to fresh chain.
+    
+    Args:
+        enhanced_chain: Current chain_path list
+        agent_names: Extracted agent names from chain
+        caller_name: Name of the calling agent
+        target_name: Name of the target agent
+        
+    Returns:
+        Tuple of (enhanced_chain, agent_names) - possibly reset if stale detected
+        
+    Raises:
+        RuntimeError: If a real delegation loop is detected (e.g., A -> B -> A)
+    """
+    if target_name not in agent_names:
+        # No conflict, return as-is
+        return enhanced_chain, agent_names
+    
+    # Target already in chain - check if stale or real loop
+    is_caller_root = (
+        len(enhanced_chain) > 0 and 
+        enhanced_chain[0] == caller_name and  # Caller is first element
+        ":" not in enhanced_chain[0]  # Without call_id (root format)
+    )
+    
+    if is_caller_root:
+        # Stale chain_path from previous turn - reset
+        logger.warning(
+            f"Detected stale chain_path (caller {caller_name} is root but "
+            f"target {target_name} already in chain). Resetting chain. "
+            f"Original chain: {enhanced_chain}"
+        )
+        return [caller_name], [caller_name]
+    else:
+        # Real loop (e.g., A -> B -> A)
+        raise RuntimeError(
+            "Delegation loop detected: this agent already appears in the current chain."
+        )
+
+
 def _build_child_context_metadata(
     run_context,
     target_agent: Agent,
@@ -118,10 +172,13 @@ def _build_child_context_metadata(
         agent_name = entry.split(":", 1)[0] if ":" in entry else entry
         agent_names.append(agent_name)
     
-    if target_agent.name in agent_names:
-        raise RuntimeError(
-            "Delegation loop detected: this agent already appears in the current chain."
-        )
+    # Detect and handle stale chain_path or real loop
+    enhanced_chain, agent_names = _detect_and_reset_stale_chain(
+        enhanced_chain=enhanced_chain,
+        agent_names=agent_names,
+        caller_name=run_context.agent.name,
+        target_name=target_agent.name,
+    )
     
     child_depth = max(len(enhanced_chain), 0)  # Depth is length of existing chain
     if child_depth > max_depth:
@@ -438,7 +495,12 @@ class PantheonTeam(Team):
                 target_agent = self.get_target_agent(agent_name, instruction)
                 run_context = get_current_run_context()
 
+                # Shallow copy context_variables to avoid mutating the original
                 context_variables = dict(context_variables or {})
+                
+                # CRITICAL FIX: Deep copy _metadata to prevent child call pollution
+                if "_metadata" in context_variables:
+                    context_variables["_metadata"] = copy.deepcopy(context_variables["_metadata"])
                 
                 # P2: _build_child_context_metadata now returns (metadata, execution_context_id)
                 child_metadata, execution_context_id = _build_child_context_metadata(

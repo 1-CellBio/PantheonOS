@@ -83,6 +83,21 @@ neurogenesis, and lineage tracing studies.
 
 ---
 
+### Parallel Computing & Performance
+
+Strategies for accelerating single-cell analysis using multi-core CPU,
+GPU acceleration, and memory optimization.
+
+**Skill file**: [parallel_computing.md](file:///parallel_computing.md)
+
+**When to use**:
+- Analysis is running slowly on single core
+- Dataset has >50k cells and operations are timing out
+- GPU is available and you want 10-100x speedup
+- Need to parallelize custom analysis loops
+
+---
+
 ## Using Skills
 
 1. **Before analysis**: Scan this index for relevant skills

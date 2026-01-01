@@ -11,6 +11,67 @@ tags: [qc, preprocessing, scanpy]
 
 Standard workflow for quality control of single-cell RNA-seq data using Scanpy.
 
+---
+
+## ⚠️ MANDATORY QC CHECKLIST ⚠️
+
+> [!CAUTION]
+> **YOU MUST COMPLETE ALL STEPS BELOW IN ORDER BEFORE PROCEEDING TO CLUSTERING**
+> 
+> The order is critical. Changing the order will invalidate your analysis.
+> Follow the **Data Cleaning First** principle: clean raw data before any filtering or normalization.
+
+### Phase 1: Data Cleaning (Raw Data Level)
+
+These steps MUST be performed on RAW data BEFORE any filtering or normalization.
+
+- [ ] **Step 1**: � **Ambient RNA Assessment** (CONDITIONAL)
+      - Input: Raw counts including empty droplets (if available)
+      - Tool: SoupX (if raw matrix available) or DecontX (fallback)
+      - ⚠️ Must be done FIRST if applicable
+      - Skip if: Only filtered matrix available OR contamination < 10%
+      
+- [ ] **Step 2**: Calculate QC metrics (MT%, counts, genes)
+      - Based on: Corrected counts from Step 1 (or raw counts if Step 1 skipped)
+      
+- [ ] **Step 3**: � **Doublet Prediction** (RECOMMENDED)
+      - Input: Corrected counts (before any gene-count filtering)
+      - Tool: Scrublet or DoubletFinder
+      - ⚠️ Must be done BEFORE filtering to preserve high-count reference cells
+      - **Note**: Only calculate scores here; filtering happens in Step 5
+
+### Phase 2: Cell Quality Filtering
+
+- [ ] **Step 4**: Visualize QC metrics and Doublet scores
+      - Include: Violin/scatter plots of counts, genes, MT%, **doublet scores**
+      - Purpose: Data-driven threshold determination
+      - ⚠️ Doublet scores MUST be visible for threshold selection
+      
+- [ ] **Step 5**: Apply filters (UNIFIED FILTERING)
+      - Remove: High MT%, low genes, low counts, **AND predicted doublets**
+      - All filtering happens HERE, not earlier
+      - Document: Cell counts before/after, doublets removed
+
+### Phase 3: Normalization & Feature Selection
+
+- [ ] **Step 6**: Normalization
+      - Preserve raw counts in layer first
+      - Normalize → Log1p
+      
+- [ ] **Step 7**: Identify highly variable genes
+      - Based on: Normalized, clean data
+
+> [!WARNING]
+> **CRITICAL ORDER CONSTRAINTS**:
+> - Step 1 (Ambient RNA) MUST be done FIRST on raw data (if applicable)
+> - Step 3 (Doublet) MUST calculate scores BEFORE filtering; **DO NOT filter in Step 3**
+> - Step 5 is the ONLY place where cells are filtered (unified filtering)
+> - Step 6 (Normalization) MUST be done AFTER all data cleaning (Steps 1-5)
+> 
+> Skipping or reordering these steps will produce scientifically invalid results.
+
+---
+
 ## Prerequisites
 
 ```python
@@ -19,9 +80,148 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 sc.settings.verbosity = 3
+
+# Initialize variables for QC summary (prevents NameError if steps fail)
+contamination_rate = 0.0
+n_predicted_doublets = 0
+n_cells_before = 0
+n_genes_before = 0
 ```
 
-## 1. Calculate QC Metrics
+
+## Step 1: � Ambient RNA Assessment (CONDITIONAL - FIRST IF APPLICABLE)
+
+> [!IMPORTANT]
+> **THIS STEP SHOULD BE DONE FIRST IF DATA IS AVAILABLE**
+> 
+> - This is Step 1 of QC - run it BEFORE calculating QC metrics
+> - SoupX requires both `raw_feature_bc_matrix/` AND `filtered_feature_bc_matrix/`
+> - **When to run**: Raw matrix available AND estimated contamination > 10%
+> - **When to skip**: Only filtered matrix available, OR contamination < 10%
+> - If average contamination > 10%, correction **SHOULD** be applied
+> 
+> ⚠️ If running this step, it MUST be on raw data before any filtering.
+
+### Background
+When cells break during sample preparation, their RNA is released into the droplet suspension.
+This "ambient RNA" can be captured by other droplets, causing:
+- False co-expression of unrelated markers
+- Reduced marker specificity
+- Incorrect cell type identification
+
+### Workflow Selection
+1.  **SoupX** (Primary): Use if you have CellRanger output with both `raw_feature_bc_matrix/` and `filtered_feature_bc_matrix/`.
+2.  **DecontX** (Fallback): Use if only the filtered matrix is available.
+
+---
+
+### Option 1: SoupX (Primary Method)
+
+**Step 1: Setup R interface** (Required for both SoupX and DecontX)
+```python
+# Setup rpy2 converters for AnnData <-> SingleCellExperiment conversion
+import rpy2.robjects as robjects
+from rpy2.robjects import pandas2ri
+import anndata2ri
+
+# Modern replacement for .activate()
+robjects.default_converter += pandas2ri.converter + anndata2ri.converter
+```
+
+**Step 2: Verify data availability**
+```python
+import os
+cellranger_dir = "path/to/cellranger_output"  # Contains raw_feature_bc_matrix/ and filtered_feature_bc_matrix/
+use_soupx = os.path.isdir(os.path.join(cellranger_dir, "raw_feature_bc_matrix"))
+print(f"SoupX available: {use_soupx}")
+```
+
+**Step 3: Run SoupX in R** (Execute in separate cell with `%%R` magic)
+```r
+%%R -i cellranger_dir -o contamination_rate -o corrected_counts
+
+library(SoupX)
+
+# Load 10X data (automatically finds raw and filtered matrices)
+sc <- load10X(cellranger_dir)
+sc <- autoEstCont(sc)
+
+contamination_rate <- sc$fit$rhoEst
+cat("Estimated contamination:", round(contamination_rate * 100, 1), "%\n")
+
+# Apply correction if > 10%
+if (contamination_rate > 0.10) {
+    corrected_counts <- adjustCounts(sc)
+    cat("✓ SoupX correction applied\n")
+} else {
+    corrected_counts <- NULL
+    cat("✓ Contamination acceptable, no correction needed\n")
+}
+```
+
+**Step 4: Apply corrected counts to AnnData**
+```python
+if corrected_counts is not None:
+    adata.layers['counts_raw'] = adata.X
+    adata.X = corrected_counts.T  # SoupX returns genes x cells, transpose to cells x genes
+    adata.uns['soupx_contamination'] = float(contamination_rate)
+    print(f"✓ Applied SoupX correction (contamination: {contamination_rate:.1%})")
+```
+
+---
+
+### Option 2: DecontX (Fallback Method)
+
+Use when raw matrix is unavailable. **Requires Step 1 setup above.**
+
+**Run DecontX in R:**
+```r
+%%R -i adata -o decontx_counts -o decontx_contamination
+
+library(celda)
+library(SingleCellExperiment)
+
+# adata converted to SCE (requires anndata2ri from Step 1)
+sce <- decontX(adata)
+
+decontx_counts <- decontXcounts(sce)
+decontx_contamination <- colData(sce)$decontX_contamination
+
+cat("Mean contamination:", round(mean(decontx_contamination) * 100, 1), "%\n")
+```
+
+**Apply correction if needed:**
+```python
+mean_cont = decontx_contamination.mean()
+if mean_cont > 0.10:
+    adata.layers['counts_raw'] = adata.X
+    adata.X = decontx_counts.T
+    adata.obs['decontx_contamination'] = decontx_contamination
+    print(f"✓ Applied DecontX correction (mean contamination: {mean_cont:.1%})")
+else:
+    print(f"✓ DecontX contamination acceptable ({mean_cont:.1%})")
+```
+
+---
+
+### Detection Signs (verify during downstream analysis)
+- Cell-type-specific genes appearing in ALL clusters (e.g., Hb genes everywhere)
+- Marker genes lacking specificity in dotplot/heatmap
+
+> [!WARNING]
+> If you detect contamination signs AFTER clustering:
+> 1. **STOP** and go back to QC stage
+> 2. Apply SoupX/DecontX correction
+> 3. Re-run the entire analysis from normalization
+
+> [!TIP]
+> **Advanced Option**: For datasets with severe contamination (>20%) or when maximum accuracy is critical, consider [CellBender](https://github.com/broadinstitute/CellBender) `remove-background`.
+> - **Pros**: Highest accuracy, near-optimal denoising
+> - **Cons**: Requires GPU (CUDA), ~30-60min runtime per sample
+> - **Use when**: GPU available AND (contamination >20% OR critical marker detection needed)
+
+
+## Step 2: Calculate QC Metrics
 
 ```python
 # Calculate mitochondrial gene percentage
@@ -44,11 +244,64 @@ sc.pp.calculate_qc_metrics(
 )
 ```
 
-## 2. Visualize QC Metrics
+## Step 3: Doublet Prediction (RECOMMENDED - Score Only, Before Filtering)
+
+> [!CAUTION]
+> **This step MUST be done BEFORE any gene-count filtering (Step 5)**
+> 
+> Doublet detection helps identify droplets containing multiple cells.
+> Scrublet needs high-count cells as reference for simulation.
+> If you filter first, you lose these reference cells and detection accuracy drops significantly.
+>
+> ⚠️ **IMPORTANT**: Only calculate and record scores here. **DO NOT filter cells in this step.**
+> All filtering happens in Step 5 after visualization.
+
+### Common Approaches
+- Simulation-based methods (e.g., scrublet, DoubletFinder)
+- Clustering-based detection
+- Hybrid approaches
+
+### Cell Count Check
+```python
+# Scrublet requires sufficient cells for reliable simulation
+n_cells = adata.n_obs
+print(f"Cell count: {n_cells}")
+if n_cells < 500:
+    print("⚠️ Warning: Low cell count may reduce doublet detection accuracy")
+    print("   Consider skipping doublet detection for very small datasets")
+```
+
+### Calculate Doublet Scores (DO NOT FILTER)
+```python
+# Using scrublet for doublet detection
+import scrublet as scr
+
+# Run on raw counts
+scrub = scr.Scrublet(adata.layers['counts'] if 'counts' in adata.layers else adata.X)
+doublet_scores, predicted_doublets = scrub.scrub_doublets()
+
+# Save scores to metadata - DO NOT FILTER HERE
+adata.obs['doublet_score'] = doublet_scores
+adata.obs['predicted_doublet'] = predicted_doublets
+
+# Report statistics (filtering happens in Step 5)
+print(f"Predicted doublets (to be filtered in Step 5): {sum(predicted_doublets)}")
+print(f"Doublet rate: {sum(predicted_doublets) / len(predicted_doublets) * 100:.1f}%")
+# DO NOT filter here - all filtering is unified in Step 5
+```
+
+
+
+
+## Step 4: Visualize QC Metrics (Including Doublet Scores)
+
+> [!IMPORTANT]
+> Doublet scores MUST be visualized here to determine appropriate thresholds.
+> Since doublets have NOT been filtered yet, you can see the full score distribution.
 
 ```python
-# Violin plots of key metrics
-fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+# Violin plots of key metrics (including doublet score)
+fig, axes = plt.subplots(1, 4, figsize=(16, 4))
 
 sc.pl.violin(adata, 'n_genes_by_counts', ax=axes[0], show=False)
 axes[0].set_title('Genes per Cell')
@@ -58,6 +311,15 @@ axes[1].set_title('UMI Counts per Cell')
 
 sc.pl.violin(adata, 'pct_counts_mt', ax=axes[2], show=False)
 axes[2].set_title('% Mitochondrial')
+
+# Doublet score visualization - CRITICAL for threshold selection
+if 'doublet_score' in adata.obs.columns:
+    sc.pl.violin(adata, 'doublet_score', ax=axes[3], show=False)
+    axes[3].set_title('Doublet Score')
+    axes[3].axhline(y=0.25, color='r', linestyle='--', alpha=0.5, label='Default threshold')
+else:
+    axes[3].text(0.5, 0.5, 'Doublet detection\nnot performed', ha='center', va='center')
+    axes[3].set_title('Doublet Score (N/A)')
 
 plt.tight_layout()
 plt.savefig('qc_metrics_violin.png', dpi=150, bbox_inches='tight')
@@ -84,7 +346,7 @@ plt.savefig('qc_scatter.png', dpi=150, bbox_inches='tight')
 plt.show()
 ```
 
-## 3. Determine Filtering Thresholds
+## Step 4b: Determine Filtering Thresholds
 
 > [!IMPORTANT]
 > Thresholds should be determined by examining the data distributions.
@@ -96,37 +358,60 @@ print("Summary statistics:")
 print(f"  n_genes_by_counts: {adata.obs['n_genes_by_counts'].describe()}")
 print(f"  total_counts: {adata.obs['total_counts'].describe()}")
 print(f"  pct_counts_mt: {adata.obs['pct_counts_mt'].describe()}")
+if 'doublet_score' in adata.obs.columns:
+    print(f"  doublet_score: {adata.obs['doublet_score'].describe()}")
 
 # Common thresholds (adjust based on plots)
 min_genes = 200       # Minimum genes per cell
 max_genes = 5000      # Maximum genes per cell (doublet filter)
 min_counts = 500      # Minimum UMI counts
 max_mt_pct = 20       # Maximum mitochondrial percentage
+max_doublet_score = 0.25  # Doublet score threshold (if doublet detection was performed)
 ```
 
-## 4. Apply Filters
+## Step 5: Apply Filters (UNIFIED FILTERING)
+
+> [!IMPORTANT]
+> **This is the ONLY step where cells are filtered.**
+> All filtering criteria (QC metrics + doublets) are applied together here.
 
 ```python
+# Unified filtering - all criteria applied together
 print(f"Cells before filtering: {adata.n_obs}")
 
-# Filter cells
-sc.pp.filter_cells(adata, min_genes=min_genes)
-adata = adata[adata.obs['n_genes_by_counts'] < max_genes, :]
-adata = adata[adata.obs['total_counts'] >= min_counts, :]
-adata = adata[adata.obs['pct_counts_mt'] < max_mt_pct, :]
+# Create QC masks
+mask_min_genes = adata.obs['n_genes_by_counts'] >= min_genes
+mask_max_genes = adata.obs['n_genes_by_counts'] < max_genes
+mask_min_counts = adata.obs['total_counts'] >= min_counts
+mask_max_mt = adata.obs['pct_counts_mt'] < max_mt_pct
+
+# Create doublet mask (keep cells that are NOT predicted doublets)
+if 'predicted_doublet' in adata.obs.columns:
+    mask_doublet = ~adata.obs['predicted_doublet']
+    n_doublets = (~mask_doublet).sum()
+else:
+    mask_doublet = True  # No doublet filtering if not calculated
+    n_doublets = 0
+
+# Combine ALL masks and apply ONCE
+final_mask = mask_min_genes & mask_max_genes & mask_min_counts & mask_max_mt & mask_doublet
+adata = adata[final_mask].copy()
 
 print(f"Cells after filtering: {adata.n_obs}")
+print(f"  - Removed as doublets: {n_doublets}")
+print(f"  - Removed by QC metrics: {(~(mask_min_genes & mask_max_genes & mask_min_counts & mask_max_mt)).sum()}")
 
 # Filter genes (keep genes expressed in at least N cells)
 sc.pp.filter_genes(adata, min_cells=3)
 print(f"Genes after filtering: {adata.n_vars}")
 ```
 
-## 5. Normalization
+## Step 6: Normalization
 
 ```python
-# Store raw counts for later
-adata.layers['counts'] = adata.X.copy()
+# Store raw counts SAFELY before normalization
+# IMPORTANT: Use .copy() to prevent reference issues with sparse matrices
+adata.layers['counts'] = adata.X.copy()  # FORCE COPY to prevent reference modification
 
 # Normalize to 10,000 counts per cell
 sc.pp.normalize_total(adata, target_sum=1e4)
@@ -138,7 +423,7 @@ sc.pp.log1p(adata)
 adata.raw = adata
 ```
 
-## 6. Identify Highly Variable Genes
+## Step 7: Identify Highly Variable Genes
 
 ```python
 # Find highly variable genes
@@ -158,52 +443,76 @@ plt.savefig('hvg_selection.png', dpi=150, bbox_inches='tight')
 print(f"Highly variable genes: {sum(adata.var['highly_variable'])}")
 ```
 
-## 7. Post-QC Summary
+## Post-QC Summary
 
 ```python
 # Generate QC report
+# Handle case where doublet detection was not performed
+doublet_info = ""
+if 'predicted_doublet' in adata.obs.columns:
+    # Note: After filtering, predicted_doublet should be all False
+    # Use stored variable from Step 5 for accurate count
+    doublet_info = f"""### Step 3: Doublet Detection
+- Method: Scrublet
+- Doublets removed in Step 5: {n_doublets if 'n_doublets' in dir() else 'N/A'}
+"""
+else:
+    doublet_info = """### Step 3: Doublet Detection
+- Status: Skipped (low cell count or not applicable)
+"""
+
 qc_summary = f"""
 ## Quality Control Summary
 
-### Before Filtering
-- Cells: {n_cells_before}
-- Genes: {n_genes_before}
+### Step 1: Ambient RNA Assessment
+- Estimated contamination rate: {contamination_rate:.1%}
+- Correction applied: {'Yes' if contamination_rate > 0.10 else 'No (< 10% or skipped)'}
+- Method: SoupX / DecontX
 
-### Filtering Thresholds
+### Step 2: Initial QC Metrics
+- Cells before QC: {n_cells_before}
+- Genes before QC: {n_genes_before}
+
+{doublet_info}
+### Step 5: Unified Filtering
 - Min genes per cell: {min_genes}
 - Max genes per cell: {max_genes}
 - Min UMI counts: {min_counts}
 - Max % mitochondrial: {max_mt_pct}%
+- Cells after filtering: {adata.n_obs}
+- Genes after filtering: {adata.n_vars}
 
-### After Filtering
-- Cells: {adata.n_obs}
-- Genes: {adata.n_vars}
-- Highly variable genes: {sum(adata.var['highly_variable'])}
-
-### Normalization
+### Steps 6-7: Normalization & Feature Selection
 - Normalized to 10,000 counts per cell
 - Log1p transformed
+- Highly variable genes: {sum(adata.var['highly_variable'])}
+
+### Steps Verification
+- [{'x' if contamination_rate > 0 else ' '}] Step 1: Ambient RNA assessment - {'COMPLETED' if contamination_rate > 0 else 'SKIPPED'}
+- [{'x' if 'predicted_doublet' in adata.obs.columns else ' '}] Step 3: Doublet detection - {'COMPLETED' if 'predicted_doublet' in adata.obs.columns else 'SKIPPED'}
+- [x] Step 5: Unified filtering - COMPLETED
 """
 print(qc_summary)
 ```
 
-## Optional: Doublet Detection
 
-```python
-# Using scrublet for doublet detection
-import scrublet as scr
 
-# Run on raw counts
-scrub = scr.Scrublet(adata.layers['counts'])
-doublet_scores, predicted_doublets = scrub.scrub_doublets()
 
-adata.obs['doublet_score'] = doublet_scores
-adata.obs['predicted_doublet'] = predicted_doublets
+## Quality Gate
 
-# Filter doublets
-print(f"Predicted doublets: {sum(predicted_doublets)}")
-adata = adata[~adata.obs['predicted_doublet'], :]
-```
+Before proceeding to downstream analysis, summarize the quality status:
+
+**Checklist** (document in your QC report):
+- [ ] Doublet detection: method used (or reason for skipping), doublets removed in Step 5
+- [ ] Ambient RNA: contamination level assessed (if raw matrix available), correction applied if > 10%
+- [ ] Filtering thresholds: values used and justification (all applied in Step 5)
+- [ ] Cell counts: per sample before/after unified filtering
+
+**Flag for leader review if**:
+- Marker genes appear in >50% of cells unexpectedly (potential ambient contamination)
+- Any sample has <500 cells after filtering
+- Doublet rate > 15% (may indicate loading issues)
+- Major quality concerns that may affect interpretation
 
 ## Tips
 
@@ -216,3 +525,4 @@ adata = adata[~adata.obs['predicted_doublet'], :]
 > [!WARNING]
 > Overly aggressive filtering can remove rare cell populations.
 > Underly lenient filtering can introduce noise and doublets.
+

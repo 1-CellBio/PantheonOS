@@ -180,7 +180,7 @@ class ReplCompleter(Completer):
         # Chat management
         ("/new", "New chat session"),
         ("/list", "List chat sessions"),
-        ("/switch", "Switch to another chat"),
+        ("/resume", "Resume another chat"),
         # Agent/Team
         ("/agents", "Show agents in team"),
         ("/agent", "Switch to specific agent"),

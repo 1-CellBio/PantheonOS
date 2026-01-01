@@ -164,6 +164,21 @@ print(annotation_table.to_markdown())
 
 ## Quality Checks
 
+After annotation, verify the quality of your cell type assignments.
+
+> [!IMPORTANT]
+> You should verify marker specificity before proceeding with downstream analysis.
+
+### Validation Checklist
+
+1. **Diagonal pattern check**: High expression should be on-diagonal (marker in its cluster)
+2. **Off-diagonal contamination**: If markers appear in unrelated clusters, investigate:
+   - Ambient RNA contamination (see Ambient RNA section in quality_control skill)
+   - Doublet contamination
+   - True biological co-expression
+3. **Expression scale**: If one marker has much higher scale than others, 
+   this may indicate ambient RNA contamination
+
 ### Verify Marker Specificity
 
 ```python
@@ -198,6 +213,12 @@ for cluster in adata.obs['leiden'].unique():
                 pct = (cluster_data[:, gene].X > 0).mean() * 100
                 print(f"  {lineage} ({gene}): mean={expr:.2f}, %exp={pct:.1f}%")
 ```
+
+### Action Required
+
+- If contamination detected: Return to QC and apply correction
+- If clusters cannot be distinguished: Consider merging
+- Document your observations in the analysis report
 
 ## Tips
 

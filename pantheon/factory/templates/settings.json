@@ -28,9 +28,11 @@
         // Maximum lines for file read operations
         "max_file_read_lines": 1000,
         // Maximum characters for file read operations (prevents single-line overflow)
-        "max_file_read_chars": 50000,
+        "max_file_read_chars": 100000,
         // Maximum results for glob/search operations
-        "max_glob_results": 100
+        "max_glob_results": 100,
+        // Enable notebook execution logging (JSONL files in .pantheon/logs/notebook/)
+        "enable_notebook_execution_logging": true
     },
     // ===== Built-in Services Configuration =====
     // Service modes: Specify service runtime modes

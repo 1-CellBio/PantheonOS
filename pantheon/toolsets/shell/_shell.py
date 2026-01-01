@@ -5,6 +5,8 @@ import os
 import uuid
 from enum import Enum
 
+from pantheon.utils.process import make_child_die_with_parent
+
 
 class ShellStatus(Enum):
     """Shell status for tracking availability."""
@@ -38,6 +40,7 @@ class AsyncCommandLineInterpreter(abc.ABC):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=self.env,
+            preexec_fn=make_child_die_with_parent if sys.platform != "win32" else None,
         )
         return await self._drain_initial_output()
 

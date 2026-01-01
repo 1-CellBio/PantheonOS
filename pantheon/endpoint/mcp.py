@@ -694,6 +694,18 @@ class MCPManager:
         # Ensure gateway is running
         await self._gateway.start_gateway()
 
+        # Check for missing services and reload config if needed
+        # This supports dynamic addition of services to mcp.json without restarting everything
+        missing = [n for n in names if n not in self.instances]
+        if missing:
+            from pantheon.settings import get_settings
+            logger.info(f"Services {missing} not found, attempting to reload MCP config...")
+            try:
+                # Reload config from settings
+                await self.load_config(get_settings().get_mcp_config())
+            except Exception as e:
+                logger.warning(f"Failed to reload MCP config: {e}")
+
         for name in names:
             if name not in self.instances:
                 results["errors"].append(f"Service '{name}' not found")
@@ -997,3 +1009,18 @@ class MCPManager:
             "success": True,
             "service": self._build_service_info(name, instance),
         }
+    async def cleanup(self):
+        """Clean up all MCP resources."""
+        async with self._lock:
+            # Stop all running instances
+            running_names = [name for name, inst in self.instances.items() if inst.is_running()]
+            if running_names:
+                logger.info(f"Stopping {len(running_names)} MCP servers during cleanup...")
+                await self.stop_services(running_names)
+            
+            # Stop the gateway
+            try:
+                await self._gateway.stop_gateway()
+                logger.info("MCP Gateway stopped")
+            except Exception as e:
+                logger.error(f"Error stopping MCP gateway: {e}")

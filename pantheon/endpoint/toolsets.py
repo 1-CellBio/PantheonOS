@@ -718,7 +718,36 @@ class ToolSetManager:
                             f"Service {service_name} startup returned: {result}"
                         )
 
+
         return successful, failed
+
+    async def cleanup(self):
+        """Clean up toolset manager resources.
+        
+        Calls cleanup() on all local toolsets (those needing cleanup will override
+        the base class no-op method), then stops execution engines.
+        """
+        # Clean up local toolsets (only those with overridden cleanup will do work)
+        for service_id, toolset in list(self.local_toolsets.items()):
+            try:
+                await toolset.cleanup()
+            except Exception as e:
+                logger.error(f"Error cleaning up toolset {service_id}: {e}")
+        
+        # Stop execution engines
+        try:
+            self._local_engine.stop()
+            logger.info("Local toolset engine stopped")
+        except Exception as e:
+            logger.error(f"Error stopping local engine: {e}")
+
+        if self._remote_engine:
+            try:
+                self._remote_engine.stop()
+                logger.info("Remote toolset engine stopped")
+            except Exception as e:
+                logger.error(f"Error stopping remote engine: {e}")
 
 
 __all__ = ["ToolSetMode", "ToolSetManager"]
+

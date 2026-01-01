@@ -117,6 +117,7 @@ class PythonInterpreterToolSet(ToolSet):
         env = build_context_env(
             workdir=str(self.workdir),
             context_variables=self._current_context_dict(),
+            base_env=os.environ.copy(),  # Inherit all env vars including R_HOME, LD_LIBRARY_PATH, etc.
         )
         if not env:
             return
@@ -427,3 +428,4 @@ class PythonInterpreterToolSet(ToolSet):
             " Please be careful when using it."
             " Highly recommend using it in a controlled environment like a docker container."
         )
+
