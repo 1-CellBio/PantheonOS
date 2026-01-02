@@ -3,142 +3,337 @@ Model Configuration
 
 Configure which LLM models your agents use.
 
-Model Format
-------------
+Overview
+--------
 
-Models are specified as ``provider/model-name``:
+Pantheon uses `LiteLLM <https://github.com/BerriAI/litellm>`_ as its unified LLM interface, providing access to **100+ LLM providers** through a consistent API. This means any model supported by LiteLLM works with Pantheon.
 
-.. code-block:: text
+Key features:
 
-   openai/gpt-4o
-   openai/gpt-4o-mini
-   anthropic/claude-3-opus
-   anthropic/claude-3-sonnet
-   google/gemini-pro
+- **Smart Model Selection**: Use quality tags (``high``, ``normal``, ``low``) instead of hardcoding model names
+- **Automatic Provider Detection**: Pantheon detects available providers from your API keys
+- **Capability Filtering**: Select models by capabilities (``vision``, ``reasoning``, ``tools``, etc.)
+- **Fallback Chains**: Automatic failover to backup models
+
+Smart Model Selection
+---------------------
+
+Instead of hardcoding specific model names, you can use Pantheon's intelligent tag-based selection.
+
+Quality Tags
+~~~~~~~~~~~~
+
+Select models by quality level:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 35 50
+
+   * - Tag
+     - Description
+     - Typical Models (System Defaults)
+   * - ``high``
+     - Most capable models for complex tasks
+     - ``openai/gpt-5.2``, ``anthropic/claude-opus-4-5-20251101``, ``gemini/gemini-3-pro-preview``
+   * - ``normal``
+     - Balanced performance and cost
+     - ``openai/gpt-5.2``, ``anthropic/claude-sonnet-4-5-20250929``, ``gemini/gemini-3-flash-preview``
+   * - ``low``
+     - Fast and cost-effective
+     - ``openai/gpt-5-mini``, ``anthropic/claude-haiku-4-5-20251001``, ``gemini/gemini-flash-lite-latest``
+
+.. code-block:: python
+
+   from pantheon import Agent
+
+   # Let Pantheon choose the best available model
+   agent = Agent(model="high")      # Best quality
+   agent = Agent(model="normal")    # Balanced (default)
+   agent = Agent(model="low")       # Fast and cheap
+
+Capability Tags
+~~~~~~~~~~~~~~~
+
+Filter models by required capabilities:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 85
+
+   * - Tag
+     - Description
+   * - ``vision``
+     - Image understanding (GPT-4o, Claude 3, Gemini Pro Vision)
+   * - ``reasoning``
+     - Enhanced reasoning (o1, DeepSeek R1)
+   * - ``tools``
+     - Function/tool calling support
+   * - ``audio_in``
+     - Audio input support
+   * - ``audio_out``
+     - Audio output/TTS support
+   * - ``web``
+     - Built-in web search
+   * - ``pdf``
+     - PDF document input
+   * - ``computer``
+     - Computer use capabilities
+   * - ``schema``
+     - Structured output/response schema
+   * - ``prefill``
+     - Assistant message prefilling
+
+Combine quality and capability tags:
+
+.. code-block:: python
+
+   # High quality with vision support
+   agent = Agent(model="high,vision")
+
+   # Cost-effective with tool calling
+   agent = Agent(model="low,tools")
+
+   # Normal quality with reasoning
+   agent = Agent(model="normal,reasoning")
+
+Automatic Provider Detection
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Pantheon automatically detects available providers from environment variables:
+
+.. code-block:: bash
+
+   # Set any of these - Pantheon will use the first available
+   export OPENAI_API_KEY="sk-..."
+   export ANTHROPIC_API_KEY="sk-ant-..."
+   export GEMINI_API_KEY="..."
+
+Provider priority (configurable in settings.json):
+
+1. OpenAI
+2. Anthropic
+3. Gemini
+4. Z.ai (Zhipu)
+5. DeepSeek
 
 Supported Providers
 -------------------
 
+Pantheon supports all LiteLLM providers. Here are the most common ones:
+
+Major Cloud Providers
+~~~~~~~~~~~~~~~~~~~~~
+
 .. list-table::
    :header-rows: 1
-   :widths: 20 40 40
+   :widths: 20 20 60
 
    * - Provider
      - Prefix
      - Example Models
    * - OpenAI
      - ``openai/``
-     - ``gpt-4o``, ``gpt-4o-mini``, ``gpt-4-turbo``
+     - ``gpt-5.2``, ``gpt-5-mini``, ``gpt-4o``, ``o3-mini``
    * - Anthropic
      - ``anthropic/``
-     - ``claude-3-opus``, ``claude-3-sonnet``, ``claude-3-haiku``
-   * - Google
-     - ``google/``
-     - ``gemini-pro``, ``gemini-pro-vision``
+     - ``claude-opus-4-5-20251101``, ``claude-sonnet-4-5-20250929``, ``claude-haiku-4-5-20251001``
+   * - Google AI
+     - ``gemini/``
+     - ``gemini-3-pro-preview``, ``gemini-3-flash-preview``, ``gemini-flash-lite-latest``
    * - Azure OpenAI
      - ``azure/``
      - Your deployed model names
-   * - Local (Ollama)
+   * - AWS Bedrock
+     - ``bedrock/``
+     - ``anthropic.claude-3``, ``amazon.titan``
+   * - Google Vertex AI
+     - ``vertex_ai/``
+     - ``gemini-pro``, ``claude-3-sonnet``
+
+Specialized AI Platforms
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 60
+
+   * - Provider
+     - Prefix
+     - Example Models
+   * - Mistral AI
+     - ``mistral/``
+     - ``mistral-large``, ``mistral-medium``, ``codestral``
+   * - Cohere
+     - ``cohere/``
+     - ``command-r-plus``, ``command-r``
+   * - Groq
+     - ``groq/``
+     - ``llama-3.3-70b-versatile``, ``mixtral-8x7b-32768``
+   * - Together AI
+     - ``together_ai/``
+     - ``llama-3``, ``qwen``, ``deepseek``
+   * - Fireworks AI
+     - ``fireworks_ai/``
+     - ``llama-v3``, ``mixtral``
+   * - DeepSeek
+     - ``deepseek/``
+     - ``deepseek-chat``, ``deepseek-reasoner``
+   * - Perplexity
+     - ``perplexity/``
+     - ``pplx-70b-online``, ``sonar-medium``
+   * - OpenRouter
+     - ``openrouter/``
+     - Access to 100+ models via single API
+
+Local & Open Source
+~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 60
+
+   * - Provider
+     - Prefix
+     - Example Models
+   * - Ollama
      - ``ollama/``
-     - ``llama2``, ``mistral``, ``codellama``
+     - ``llama3``, ``mistral``, ``codellama``, ``qwen``
+   * - vLLM
+     - ``vllm/``
+     - Any HuggingFace model
+   * - LM Studio
+     - ``lm_studio/``
+     - Local models
+   * - HuggingFace
+     - ``huggingface/``
+     - ``meta-llama/Llama-3``
 
-Settings Configuration
-----------------------
+Chinese Providers
+~~~~~~~~~~~~~~~~~
 
-Configure defaults in ``settings.json``:
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 60
 
-.. code-block:: json
+   * - Provider
+     - Prefix
+     - Example Models
+   * - Z.ai (Zhipu)
+     - ``zai/``
+     - ``glm-4.6``, ``glm-4.5``, ``glm-4.5v``
+   * - Qwen (Alibaba)
+     - ``qwen/``
+     - ``qwen-turbo``, ``qwen-plus``
+   * - Baidu ERNIE
+     - ``ernie/``
+     - ``ernie-bot-4``
 
-   {
-     "models": {
-       "default": "openai/gpt-4o",
-       "fallback": ["openai/gpt-4o-mini", "anthropic/claude-3-sonnet"]
-     }
-   }
+.. note::
 
-Default Model
+   For the complete list of 100+ supported providers, see the `LiteLLM Providers Documentation <https://docs.litellm.ai/docs/providers>`_.
+
+Model Format
+------------
+
+You can specify models in two ways:
+
+**1. Strict Model Name** (``provider/model-name``):
+
+.. code-block:: text
+
+   openai/gpt-5.2
+   anthropic/claude-opus-4-5-20251101
+   gemini/gemini-3-pro-preview
+   deepseek/deepseek-chat
+
+**2. Tags** (quality and/or capability):
+
+.. code-block:: text
+
+   high
+   normal
+   low
+   high,vision
+   normal,reasoning
+   low,tools
+
+For OpenAI models, the prefix is optional:
+
+.. code-block:: python
+
+   # These are equivalent
+   agent = Agent(model="gpt-4o")
+   agent = Agent(model="openai/gpt-4o")
+
+Configuration
+-------------
+
+Settings File
 ~~~~~~~~~~~~~
 
-The ``default`` model is used when no model is specified:
+Configure model defaults in ``.pantheon/settings.json``:
 
 .. code-block:: json
 
    {
      "models": {
-       "default": "openai/gpt-4o"
-     }
-   }
-
-Fallback Chain
-~~~~~~~~~~~~~~
-
-If the primary model fails, fallbacks are tried in order:
-
-.. code-block:: json
-
-   {
-     "models": {
-       "default": "openai/gpt-4o",
-       "fallback": [
-         "openai/gpt-4o-mini",
-         "anthropic/claude-3-sonnet"
-       ]
-     }
-   }
-
-Provider-Specific Defaults
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Set defaults per provider:
-
-.. code-block:: json
-
-   {
-     "models": {
-       "default": "openai/gpt-4o",
-       "providers": {
+       "provider_priority": ["openai", "anthropic", "gemini", "deepseek"],
+       "provider_models": {
          "openai": {
-           "default": "gpt-4o",
-           "mini": "gpt-4o-mini"
+           "high": ["openai/gpt-5.2", "openai/gpt-5.1"],
+           "normal": ["openai/gpt-5.2", "openai/gpt-4o"],
+           "low": ["openai/gpt-5-mini", "openai/gpt-4o-mini"]
          },
          "anthropic": {
-           "default": "claude-3-opus"
+           "high": ["anthropic/claude-opus-4-5-20251101"],
+           "normal": ["anthropic/claude-sonnet-4-5-20250929"],
+           "low": ["anthropic/claude-haiku-4-5-20251001"]
          }
        }
      }
    }
 
-Setting Model in Templates
---------------------------
+Provider Priority
+~~~~~~~~~~~~~~~~~
 
-Agent Templates
-~~~~~~~~~~~~~~~
+Control which provider is used when multiple API keys are available:
+
+.. code-block:: json
+
+   {
+     "models": {
+       "provider_priority": ["anthropic", "openai", "gemini"]
+     }
+   }
+
+Model in Templates
+~~~~~~~~~~~~~~~~~~
+
+In agent templates (``.pantheon/agents/*.md``):
 
 .. code-block:: markdown
 
    ---
    name: Smart Agent
-   model: openai/gpt-4o
+   model: high,vision
    ---
 
-   You are a helpful assistant.
+   You are a helpful assistant with vision capabilities.
 
-Team Templates
-~~~~~~~~~~~~~~
-
-Default for all agents:
+In team templates:
 
 .. code-block:: markdown
 
    ---
-   name: My Team
-   model: openai/gpt-4o-mini
+   name: Research Team
+   model: normal
    agents:
-     - name: agent1
-       instructions: First agent.
-     - name: agent2
-       model: openai/gpt-4o  # Override default
-       instructions: Second agent (uses better model).
+     - name: researcher
+       model: high
+       instructions: Research complex topics.
+     - name: writer
+       model: low
+       instructions: Write summaries.
    ---
 
 Python API
@@ -148,11 +343,15 @@ Python API
 
    from pantheon import Agent
 
-   agent = Agent(
-       name="assistant",
-       model="anthropic/claude-3-opus",
-       instructions="You are helpful."
-   )
+   # Using tags (recommended)
+   agent = Agent(model="normal")
+   agent = Agent(model="high,vision")
+
+   # Using strict model name
+   agent = Agent(model="anthropic/claude-opus-4-5-20251101")
+
+   # Using fallback chain
+   agent = Agent(model=["openai/gpt-5.2", "openai/gpt-4o", "openai/gpt-4o-mini"])
 
 API Keys
 --------
@@ -161,18 +360,32 @@ Set API keys via environment variables (recommended):
 
 .. code-block:: bash
 
+   # Major providers
    export OPENAI_API_KEY="sk-..."
    export ANTHROPIC_API_KEY="sk-ant-..."
-   export GOOGLE_API_KEY="..."
+   export GEMINI_API_KEY="..."
+   export GOOGLE_API_KEY="..."  # Alternative for Gemini
 
-Or in ``settings.json`` (not recommended for security):
+   # Other providers
+   export MISTRAL_API_KEY="..."
+   export COHERE_API_KEY="..."
+   export GROQ_API_KEY="..."
+   export DEEPSEEK_API_KEY="..."
+   export TOGETHER_API_KEY="..."
+   export FIREWORKS_API_KEY="..."
+   export OPENROUTER_API_KEY="..."
+
+   # Chinese providers
+   export ZAI_API_KEY="..."
+   export QWEN_API_KEY="..."
+
+Or in ``.pantheon/settings.json`` (not recommended for security):
 
 .. code-block:: json
 
    {
      "api_keys": {
-       "openai": "sk-...",
-       "anthropic": "sk-ant-..."
+       "OPENAI_API_KEY": "sk-..."
      }
    }
 
@@ -189,80 +402,47 @@ Configure Azure endpoints:
 
 Use with:
 
-.. code-block:: markdown
+.. code-block:: python
 
-   ---
-   name: Azure Agent
-   model: azure/your-deployment-name
-   ---
+   agent = Agent(model="azure/your-deployment-name")
 
 Local Models (Ollama)
 ---------------------
 
 1. Install `Ollama <https://ollama.ai>`_
-2. Pull a model: ``ollama pull llama2``
-3. Use in template:
+2. Pull a model: ``ollama pull llama3``
+3. Use in Pantheon:
 
-.. code-block:: markdown
+.. code-block:: python
 
-   ---
-   name: Local Agent
-   model: ollama/llama2
-   ---
-
-Model Selection Tips
---------------------
-
-**For complex reasoning:**
-
-- ``openai/gpt-4o``
-- ``anthropic/claude-3-opus``
-
-**For fast, simple tasks:**
-
-- ``openai/gpt-4o-mini``
-- ``anthropic/claude-3-haiku``
-
-**For code generation:**
-
-- ``openai/gpt-4o``
-- ``anthropic/claude-3-sonnet``
-
-**For cost-sensitive applications:**
-
-- ``openai/gpt-4o-mini``
-- ``ollama/llama2`` (free, local)
-
-**For vision tasks:**
-
-- ``openai/gpt-4o`` (supports images)
-- ``google/gemini-pro-vision``
+   agent = Agent(model="ollama/llama3")
 
 Model Parameters
 ----------------
 
-Some parameters can be set per-agent:
+Set model parameters per-agent:
+
+.. code-block:: python
+
+   agent = Agent(
+       model="high",
+       model_params={
+           "temperature": 0.7,
+           "max_tokens": 4000,
+           "top_p": 0.9
+       }
+   )
+
+In templates:
 
 .. code-block:: markdown
 
    ---
    name: Creative Writer
-   model: openai/gpt-4o
+   model: high
    temperature: 0.9
    max_tokens: 4000
    ---
-
-   You are a creative writer.
-
-.. code-block:: markdown
-
-   ---
-   name: Code Generator
-   model: openai/gpt-4o
-   temperature: 0.1
-   ---
-
-   You write precise, correct code.
 
 Temperature Guidelines
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -274,24 +454,38 @@ Temperature Guidelines
 Troubleshooting
 ---------------
 
-**"API key not found"**
+**"No provider available"**
 
 .. code-block:: bash
 
-   # Check if key is set
+   # Check if API keys are set
    echo $OPENAI_API_KEY
+   echo $ANTHROPIC_API_KEY
 
-   # Set it
+   # Set one
    export OPENAI_API_KEY="sk-..."
 
 **"Model not found"**
 
 - Check model name spelling
-- Verify you have access to the model
+- Verify the model exists for that provider
 - Check provider prefix is correct
 
 **"Rate limit exceeded"**
 
-- Configure fallback models
-- Use a model with higher limits
+- Use quality tags - Pantheon will fallback automatically
+- Configure fallback models in settings.json
 - Add delays between requests
+
+**Checking Available Models**
+
+.. code-block:: python
+
+   from pantheon.utils.model_selector import get_model_selector
+
+   selector = get_model_selector()
+   info = selector.list_available_models()
+
+   print("Available providers:", info["available_providers"])
+   print("Current provider:", info["current_provider"])
+   print("Models:", info["models_by_provider"])

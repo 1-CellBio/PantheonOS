@@ -52,23 +52,51 @@ API Keys
 Models
 ~~~~~~
 
+Pantheon uses LiteLLM and supports smart model selection with quality tags. See :doc:`models` for full details.
+
 .. code-block:: json
 
    {
      "models": {
-       "default": "gpt-4o",
-       "fallback": ["gpt-4o-mini", "claude-3-sonnet"],
-       "providers": {
+       "provider_priority": ["openai", "anthropic", "gemini", "deepseek"],
+       "provider_models": {
          "openai": {
-           "default": "gpt-4o",
-           "mini": "gpt-4o-mini"
+           "high": ["openai/gpt-5.2", "openai/gpt-5.1"],
+           "normal": ["openai/gpt-5.2", "openai/gpt-4o"],
+           "low": ["openai/gpt-5-mini", "openai/gpt-4o-mini"]
          },
          "anthropic": {
-           "default": "claude-3-opus"
+           "high": ["anthropic/claude-opus-4-5-20251101"],
+           "normal": ["anthropic/claude-sonnet-4-5-20250929"],
+           "low": ["anthropic/claude-haiku-4-5-20251001"]
          }
        }
      }
    }
+
+- ``provider_priority``: Order of preference when multiple API keys are available
+- ``provider_models``: Model lists per quality level (``high``, ``normal``, ``low``) for each provider
+
+Image Generation
+~~~~~~~~~~~~~~~~
+
+.. code-block:: json
+
+   {
+     "image_gen_model": "normal",
+     "image_gen_models": {
+       "gemini": {
+         "high": ["gemini/gemini-3-pro-image-preview"],
+         "normal": ["gemini/gemini-2.5-flash-image-preview"]
+       },
+       "openai": {
+         "high": ["dall-e-3"],
+         "normal": ["dall-e-3"]
+       }
+     }
+   }
+
+- ``image_gen_model``: Quality level for image generation (``high`` or ``normal``)
 
 REPL Settings
 ~~~~~~~~~~~~~
@@ -188,48 +216,73 @@ For distributed deployments:
 Environment Variables
 ---------------------
 
-These environment variables are recognized:
+API Keys (auto-detected by Pantheon):
+
+.. list-table::
+   :header-rows: 1
+
+   * - Variable
+     - Provider
+   * - ``OPENAI_API_KEY``
+     - OpenAI
+   * - ``ANTHROPIC_API_KEY``
+     - Anthropic
+   * - ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``
+     - Google AI / Gemini
+   * - ``AZURE_API_KEY``
+     - Azure OpenAI
+   * - ``MISTRAL_API_KEY``
+     - Mistral AI
+   * - ``COHERE_API_KEY``
+     - Cohere
+   * - ``GROQ_API_KEY``
+     - Groq
+   * - ``DEEPSEEK_API_KEY``
+     - DeepSeek
+   * - ``TOGETHER_API_KEY``
+     - Together AI
+   * - ``FIREWORKS_API_KEY``
+     - Fireworks AI
+   * - ``OPENROUTER_API_KEY``
+     - OpenRouter
+   * - ``ZAI_API_KEY``
+     - Z.ai (Zhipu)
+
+System Variables:
 
 .. list-table::
    :header-rows: 1
 
    * - Variable
      - Description
-   * - ``OPENAI_API_KEY``
-     - OpenAI API key
-   * - ``ANTHROPIC_API_KEY``
-     - Anthropic API key
-   * - ``GOOGLE_API_KEY``
-     - Google API key
    * - ``PANTHEON_LOG_LEVEL``
-     - Log level
+     - Log level (DEBUG, INFO, WARNING, ERROR)
    * - ``PANTHEON_CONFIG_DIR``
      - Override config directory
 
 Example Configuration
 ---------------------
 
-Minimal:
+Minimal (uses automatic provider detection):
+
+.. code-block:: json
+
+   {}
+
+With custom model configuration:
 
 .. code-block:: json
 
    {
      "models": {
-       "default": "gpt-4o-mini"
-     }
-   }
-
-Full:
-
-.. code-block:: json
-
-   {
-     "api_keys": {
-       "openai": "sk-..."
-     },
-     "models": {
-       "default": "gpt-4o",
-       "fallback": ["gpt-4o-mini"]
+       "provider_priority": ["anthropic", "openai"],
+       "provider_models": {
+         "anthropic": {
+           "high": ["anthropic/claude-opus-4-5-20251101"],
+           "normal": ["anthropic/claude-sonnet-4-5-20250929"],
+           "low": ["anthropic/claude-haiku-4-5-20251001"]
+         }
+       }
      },
      "repl": {
        "quiet": false,

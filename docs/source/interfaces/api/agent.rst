@@ -65,8 +65,8 @@ Constructor Parameters
      - str
      - System prompt defining agent behavior
    * - ``model``
-     - str
-     - LLM model to use (e.g., "gpt-4o", "claude-3-opus")
+     - str | list[str]
+     - Model specification: quality tag (``"high"``, ``"normal"``, ``"low"``), capability combo (``"high,vision"``), specific model (``"openai/gpt-4o"``), or fallback list
    * - ``tools``
      - list[Callable]
      - List of callable functions (for ToolSets, use ``await agent.toolset()``)
@@ -217,20 +217,52 @@ Custom Tools
 Model Selection
 ---------------
 
-Specify models using provider prefixes:
+Pantheon supports smart model selection with quality tags, or you can specify exact models.
+
+**Smart Selection (Recommended)**
+
+Use quality tags to let Pantheon choose the best available model:
+
+.. code-block:: python
+
+   # Quality tags
+   agent = Agent(model="high")      # Best quality model
+   agent = Agent(model="normal")    # Balanced (default)
+   agent = Agent(model="low")       # Fast and cheap
+
+   # With capability requirements
+   agent = Agent(model="high,vision")      # High quality + vision
+   agent = Agent(model="normal,reasoning") # Normal + reasoning
+   agent = Agent(model="low,tools")        # Cheap + function calling
+
+**Specific Models**
+
+Use provider/model format for exact model selection:
 
 .. code-block:: python
 
    # OpenAI
-   agent = Agent(model="gpt-4o")
-   agent = Agent(model="openai/gpt-4o-mini")
+   agent = Agent(model="openai/gpt-5.2")
+   agent = Agent(model="openai/gpt-5-mini")
 
    # Anthropic
-   agent = Agent(model="claude-3-opus")
-   agent = Agent(model="anthropic/claude-3-sonnet")
+   agent = Agent(model="anthropic/claude-opus-4-5-20251101")
+   agent = Agent(model="anthropic/claude-sonnet-4-5-20250929")
 
    # Other providers (via LiteLLM)
-   agent = Agent(model="gemini/gemini-pro")
+   agent = Agent(model="gemini/gemini-3-pro-preview")
+   agent = Agent(model="deepseek/deepseek-chat")
+   agent = Agent(model="mistral/mistral-large")
+
+**Fallback Chains**
+
+Provide multiple models for automatic failover:
+
+.. code-block:: python
+
+   agent = Agent(model=["openai/gpt-5.2", "openai/gpt-4o", "openai/gpt-4o-mini"])
+
+See :doc:`/configuration/models` for full model configuration details.
 
 Best Practices
 --------------
@@ -257,8 +289,9 @@ Write specific, clear instructions:
 
 **Appropriate Model**
 
-- Use ``gpt-4o-mini`` for simple tasks (faster, cheaper)
-- Use ``gpt-4o`` or ``claude-3-opus`` for complex tasks
+- Use quality tags for portability: ``"high"``, ``"normal"``, ``"low"``
+- Use capability tags when needed: ``"high,vision"``, ``"normal,reasoning"``
+- Use specific models only when you need exact behavior
 
 **Tool Selection**
 
