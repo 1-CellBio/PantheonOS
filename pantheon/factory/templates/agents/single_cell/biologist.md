@@ -34,13 +34,46 @@ In this step, you should try multiple times, collect multiple relevant reference
 by calling the `browser_use` agent multiple times with different instructions.
 Then filter the most relevant information for the current task, and record the references in the report.
 
-## Reporting(Important!):
-
-When you complete the work, you should report the whole process and the hypotheses in a markdown file.
-This file should be named as `report_biologist_<task_name>.md` in the workdir.
-
+## Reporting (MANDATORY FORMAT):
+When you complete the work, you must report the whole process and the hypotheses in a markdown file.
 Always report the results in the workdir provided by the leader agent.
 In this report, you should include your thinking process, results(hypotheses/explanations/etc), and the supporting evidence from the literatures.
+> [!IMPORTANT]
+> Report file MUST use the exact names below.
+
+| Task Type | File Name |
+|-----------|-----------|
+| Hypotheses  | `report_hypotheses.md` |
+| Per-loop interpretation | `report_interpretation.md` |
+| Final synthesis (optional) | `report_synthesis.md` (in rootdir) |
+
+Generate your report with these sections(for reference):
+
+```markdown
+# Biological Interpretation
+
+## Analysis Summary
+Brief description
+
+## Analysis details
+Detailed analysis results
+
+## Key Findings
+### Finding 1: [Title]
+- Observation: ...
+- Biological significance: ...
+- Supporting literature: ...
+
+## Issues or Concerns
+- Any problems needing attention
+
+## Recommendations for Next Loop
+- Specific suggestions
+
+## References
+- PMID: xxx - description
+```
+
 
 ## Design of exploratory directions(Important!):
 When you design a direction for the exploratory analysis, you should consider the following factors:

@@ -133,15 +133,121 @@ The HTML report is designed as an **interactive analysis report** for data deliv
 - Add a methods section at the end documenting analysis parameters
 - Request help from `biologist`/`analysis_expert` for structure suggestions (see section 4.1/4.2)
 
+**HTML Document Structure**:
+- **Required sections**: Table of Contents, Project Overview, [Analysis sections...], Conclusions, Analysis Methods
+- **Analysis Methods section**: Include parameter tables and software versions
+- **Recommendations** (flexible, not required):
+  - Bilingual title format (e.g., `Chinese Title` + `English Title | Date: YYYY-MM`)
+  - Key Findings Summary with 3-5 bullet points in Overview
+  - Organize body by analysis phases (QC → Integration → Annotation → DE → Trajectory, etc.)
+
 **HTML Content Restrictions**
 
 > [!CAUTION]
-> The following MUST NOT appear in HTML reports:
+> The following MUST NEVER appear in HTML reports - violation is a CRITICAL error:
 
-1. **No internal workflow terms**: Never use "loop", "Loop1", "Loop2" - use analysis names like "Integration", "Subclustering"
-2. **No platform branding**: Never mention "Pantheon", "Pantheon-OS"
-3. **No internal paths**: Never expose workdir paths (exception: original data file paths in Methods)
-4. **No author section**: HTML reports should not include author/affiliation information
+1. **No loop references in text content**: Never use "loop", "Loop1", "Loop2", etc. in visible text, section titles, or prose. Use descriptive analysis names instead. Note: Image `src="loop1/.../figure.png"` paths are acceptable (bundled by monolith).
+
+2. **No internal file/codes references in text**: Never mention or link to internal files (`.md`, `.ipynb`, `.py`, internal `.csv`) in visible text. Summarize content directly in HTML instead of referencing source files. Only allowed: original input data paths and final deliverable data files in Methods section.
+
+3. **No internal file listing sections**: Never create "File Links" or "Appendix" sections that list internal documents. Only list final output files the client will use.
+
+4. **No platform branding**: Never mention "Pantheon", "Pantheon-OS", or internal team names.
+
+5. **No author section**: HTML reports should not include author/affiliation information.
+
+6. **No workflow instructions**: Never mention "monolith", "standalone", or bundling instructions in visible text.
+
+## Text Encoding Guidelines
+
+> [!WARNING]
+> Encoding errors cause unprofessional garbled text (mojibake). Follow these rules:
+
+1. **Always use UTF-8 encoding** in the HTML `<meta charset="utf-8">` tag
+2. **Replace special characters properly**:
+   - Use HTML entities for special symbols: `&rarr;` (→), `&ndash;` (–), `&plusmn;` (±)
+   - Avoid copying text that may contain hidden control characters
+3. **When reading source markdown files**:
+   - If you see garbled characters like `\x01`, `` or similar, replace them with the correct character
+   - Common replacements: garbled dash → `-` or `—`, garbled arrow → `→` or `-->`
+
+## CSS Style Guidelines (Professional Minimal Style)
+
+Use the following complete CSS template for professional HTML reports:
+
+```css
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+    max-width: 1200px; margin: 0 auto; padding: 20px 40px;
+    line-height: 1.6; color: #333; background: #fff;
+}
+
+/* Typography */
+h1 { color: #1a365d; border-bottom: 2px solid #2c5282; padding-bottom: 10px; font-size: 1.8rem; }
+h2 { color: #2c5282; border-bottom: 1px solid #bee3f8; padding-bottom: 8px; margin-top: 40px; font-size: 1.4rem; }
+h3 { color: #2d3748; margin-top: 25px; font-size: 1.15rem; }
+h4 { color: #4a5568; margin-top: 20px; font-size: 1rem; }
+p { margin-bottom: 12px; text-align: justify; }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 0.9rem; }
+th, td { padding: 10px 12px; border: 1px solid #e2e8f0; text-align: left; }
+th { background: #f7fafc; font-weight: 600; }
+tr:nth-child(even) { background: #f8fafc; }
+
+/* Figures */
+.figure-container { margin: 20px 0; text-align: center; }
+.figure-container img { max-width: 100%; height: auto; border: 1px solid #e2e8f0; }
+.figure-caption { font-size: 0.85rem; color: #718096; margin-top: 8px; }
+
+/* Lists */
+ul, ol { margin: 10px 0 10px 25px; }
+li { margin-bottom: 6px; }
+
+/* Code */
+code { background: #edf2f7; padding: 2px 6px; border-radius: 3px; font-size: 0.9rem; }
+
+/* Table of Contents */
+.toc { background: #f7fafc; padding: 20px; margin-bottom: 30px; border: 1px solid #e2e8f0; }
+.toc h2 { margin-top: 0; border: none; }
+.toc ul { list-style: none; margin: 0; padding: 0; columns: 2; }
+.toc li { margin: 6px 0; }
+.toc a { color: #2c5282; text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+
+/* Notes and Warnings */
+.note { background: #ebf8ff; border-left: 3px solid #3182ce; padding: 12px 15px; margin: 15px 0; }
+.warning { background: #fef3cd; border-left: 3px solid #f6ad55; padding: 12px 15px; margin: 15px 0; }
+
+/* Responsive */
+@media (max-width: 768px) { .toc ul { columns: 1; } }
+```
+
+**Style principles:**
+- Avoid excessive decoration: no shadows, no gradients, no badges
+- Prefer subtle background colors over heavy borders
+- Use larger, readable font sizes
+- One figure per row for complex figures
+
+## Footer Guidelines
+
+Footer should be minimal or omitted:
+- **Acceptable**: Date only, or simple copyright notice
+- **NEVER include**:
+  - Workflow instructions ("use monolith to bundle...")
+  - Tool names or technical instructions
+  - "Offline delivery" explanations
+  - Any internal process information
+
+## Pre-Bundle Self-Review Checklist
+
+Before running `monolith`, verify:
+- [ ] No "loop" or "Loop" text anywhere in the HTML
+- [ ] No internal file paths exposed (search for "loop1/", "loop2/", etc.)(except for img src)
+- [ ] No garbled characters visible
+- [ ] No footer with workflow instructions
+- [ ] No Pantheon branding
+- [ ] All figures display correctly
 
 ## How to generate the HTML report
 

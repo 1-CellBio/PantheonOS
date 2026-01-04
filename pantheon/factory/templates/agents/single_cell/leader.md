@@ -110,15 +110,38 @@ The todolist file should include the basic information about the project, and th
 Todolist file should be in markdown format, and the steps should be list as the checklists.
 You should also read `.pantheon/skills/omics/SKILL.md` to know what skills `analysis_expert` can perform before the planning.
 
-4. Execution and review: Based on the analysis plan, call `analysis_expert` agent to perform the analysis for each step in the todolist.
-After `analysis_expert` finished one step, you should call `biologist` agent to interpret the results in the biological aspect.
+4. Execution and review (MANDATORY ITERATION PATTERN):
+Based on the analysis plan, call `analysis_expert` agent to perform the analysis for each step in the todolist.
+After `analysis_expert` finished one step, you must call `biologist` agent to interpret the results in the biological aspect.
 If the results are not as expected, you should update the todolist file to adjust the analysis plan.
 If the results are expected, you should update the todolist, then got to the next step.
 Run until all the steps are completed.
+> [!CAUTION]
+> **Each loop MUST follow this sequence. Do NOT batch multiple analysis_expert calls.**
+
+For each loop (loop1, loop2, ..., loopN):
+
+**Step 4a**: Call `analysis_expert` to perform ONE loop of analysis
+- Wait for analysis_expert to complete and generate `report_analysis.md`
+
+**Step 4b**: **IMMEDIATELY** call `biologist` to interpret THIS loop's results
+- Wait for biologist to complete and generate `report_interpretation.md`
+
+**Step 4c**: Review biologist's feedback before proceeding
+- If critical issues found → re-run current loop or adjust plan
+- If acceptable → update todolist, proceed to next loop
+
+**Step 4d**: Only after successful review, start next loop
+
+> [!WARNING]
+> Never accumulate multiple loops before biologist review.
+> This prevents error propagation and ensures quality.
 
 5. Loop: If the all the steps are completed, but there are no interesting(biologically or technically) results,
 you should go back to the step 2 and repeat the process with new hypotheses.
-(The number of loops depends on the work intensity, see the "Work intensity control" section below)
+
+**Loop Completion**: The number of loops depends on the work intensity, Continue until work intensity target is met (see the "Work intensity control")
+**Final summary**: Call biologist to summarize all results and reports in all loops and generate a finale summary in `rootdir`.
 
 6. Summary: call `reporter` agent to summarize the results and conclusions, to generate both PDF and HTML reports.
 
@@ -128,7 +151,7 @@ you should go back to the step 2 and repeat the process with new hypotheses.
 In this step, you should pass the following information to the `reporter` agent:
 - Summary of user's original research questions and hypotheses
 - Path to todolist.md (contains the analysis plan)
-- All analysis results paths - especially results/figures/tables/bib files from `biologist` and `analysis_expert` agents
+- All analysis results and reports paths - especially results/figures/tables/bib files from `biologist` and `analysis_expert` agents
 - Specify format: **PDF** (academic paper for formal publication)
 
 6b. Second call - Generate HTML report:

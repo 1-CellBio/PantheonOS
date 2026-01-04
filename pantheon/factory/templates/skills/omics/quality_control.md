@@ -142,113 +142,111 @@ print(f"SoupX available: {use_soupx}")
 
 **Step 3: Run SoupX in R** (Execute in separate cell with `%%R` magic)
 ```r
-%%R -i cellranger_dir -o contamination_rate -o corrected_counts
+%%R -i cellranger_dir -o soupx_out_dir -o contamination_rate
 
-library(SoupX)
 library(Seurat)
+library(SoupX)
+library(Matrix)
 library(dplyr)
 
-# 1. Load Data
-# 🚨 CRITICAL: We use load10X by default to ensure clusters are loaded.
+# Initialize outputs
+soupx_out_dir <- "soupx_result"
+contamination_rate <- 0.0
+
+# === 1. Robust Data Loading & Cluster Check ===
 tryCatch({
-    sc <- load10X(cellranger_dir)
+    # A. 🚨 CRITICAL: Try loading data (Handle both Folders and H5)
+    sc <- tryCatch({ load10X(cellranger_dir) }, error=function(e) {
+        # Fallback: Find H5 files automatically
+        raw_h5 <- list.files(cellranger_dir, pattern="raw.*h5", full.names=T, recursive=T)[1]
+        fil_h5 <- list.files(cellranger_dir, pattern="filtered.*h5", full.names=T, recursive=T)[1]
+        if(is.na(raw_h5)) stop("No Raw H5 found for manual load")
+        SoupChannel(Seurat::Read10X_h5(raw_h5), Seurat::Read10X_h5(fil_h5))
+    })
+
+    # B. 🚨 CRITICAL: Ensure Clusters Exist 🚨
+    # autoEstCont() fails without clusters. Run quick Seurat if missing.
+    if (is.null(sc$metaData$clusters)) {
+        cat("🚀 Generating quick clusters for SoupX...\n")
+        srat <- CreateSeuratObject(sc$toc) %>% 
+            NormalizeData(verbose=F) %>% FindVariableFeatures(verbose=F) %>% 
+            ScaleData(verbose=F) %>% RunPCA(verbose=F) %>% 
+            FindNeighbors(verbose=F) %>% FindClusters(verbose=F)
+        sc <- setClusters(sc, setNames(as.character(srat@meta.data$seurat_clusters), colnames(srat)))
+    }
+
+    # === 2. Estimate & Save ===
+    sc <- autoEstCont(sc)
+    contamination_rate <- sc$fit$rhoEst
+    
+    # Only correct if rate is reasonable (>1% and <50%)
+    if (contamination_rate > 0.01 && contamination_rate < 0.5) {
+        cat(sprintf("✓ SoupX Contamination: %.2f%%. Saving to disk...\n", contamination_rate*100))
+        out <- adjustCounts(sc)
+        
+        # Save to disk (Avoids memory crash)
+        dir.create(soupx_out_dir, showWarnings=F)
+        if (requireNamespace("DropletUtils", quietly=T)) {
+            DropletUtils::write10xCounts(soupx_out_dir, out, version="3")
+        } else {
+            # Manual fallback to MTX
+            Matrix::writeMM(out, file.path(soupx_out_dir, "matrix.mtx"))
+            write.table(rownames(out), file.path(soupx_out_dir, "genes.tsv"), sep="\t", quote=F, row.names=F, col.names=F)
+            write.table(colnames(out), file.path(soupx_out_dir, "barcodes.tsv"), sep="\t", quote=F, row.names=F, col.names=F)
+        }
+    } else {
+        soupx_out_dir <- "NULL" # Signal python: No correction needed
+        cat("✓ No correction applied (Rate too low/high).\n")
+    }
+
 }, error = function(e) {
-    # Fallback if load10X fails (e.g., non-standard folder structure)
-    cat("Standard load10X failed, attempting manual load...\n")
+    cat(paste("Error in SoupX:", e$message, "\n"))
+    soupx_out_dir <<- "NULL" 
 })
-
-# 2. 🚨 CRITICAL: Ensure Clusters Exist 🚨
-# autoEstCont() WILL FAIL without clusters. 
-# Even if 'analysis' files exist on disk, loading methods often miss them.
-# We MUST perform a check and run quick clustering if needed.
-
-if (!exists("sc")) {
-    stop("Failed to load input data.")
-}
-
-# Check if clusters were loaded successfully
-if (is.null(sc$metaData$clusters)) {
-    cat("ℹ️ Clusters not found in metadata (or .h5 loaded without analysis).\n")
-    cat("🚀 Running quick Seurat clustering for SoupX background estimation...\n")
-    
-    # Create a temporary Seurat object
-    srat <- CreateSeuratObject(counts = sc$toc)
-    
-    # Quick standard pipeline (Fast settings for QC only)
-    srat <- srat %>% 
-        NormalizeData(verbose = FALSE) %>%
-        FindVariableFeatures(nfeatures = 2000, verbose = FALSE) %>%
-        ScaleData(verbose = FALSE) %>%
-        RunPCA(verbose = FALSE) %>%
-        FindNeighbors(dims = 1:10, verbose = FALSE) %>%
-        FindClusters(resolution = 0.5, verbose = FALSE)
-    
-    # Assign clusters to SoupX object
-    sc <- setClusters(sc, setNames(as.character(srat@meta.data$seurat_clusters), colnames(srat)))
-    cat("✓ Quick clustering complete. Clusters assigned.\n")
-} else {
-    cat("✓ Existing clusters detected and loaded.\n")
-}
-
-# 3. Estimate Contamination
-sc <- autoEstCont(sc)
-
-contamination_rate <- sc$fit$rhoEst
-cat(sprintf("Estimated contamination: %.1f%%\n", contamination_rate * 100))
-
-# 4. Apply Correction
-if (contamination_rate > 0.01 && contamination_rate < 0.5) { 
-    # Apply correction if contamination is reasonable (>1% and <50%)
-    corrected_counts <- adjustCounts(sc)
-    cat("✓ SoupX correction applied\n")
-} else {
-    # If <1% (clean) or >50% (failed experiment/error), stick to raw
-    corrected_counts <- NULL
-    cat("✓ No correction applied (Rate too low or suspiciously high)\n")
-}
 ```
 
 **Step 4: Apply corrected counts to AnnData**
 ```python
-if corrected_counts is not None:
-    adata.layers['counts_raw'] = adata.X
-    adata.X = corrected_counts.T  # SoupX returns genes x cells, transpose to cells x genes
-    adata.uns['soupx_contamination'] = float(contamination_rate)
-    print(f"✓ Applied SoupX correction (contamination: {contamination_rate:.1%})")
+if soupx_out_dir != "NULL" and os.path.exists(soupx_out_dir):
+    print(f"✓ Loading corrected counts from: {soupx_out_dir}")
+    try:
+        # Load from disk
+        adata_corr = sc.read_10x_mtx(soupx_out_dir, var_names='gene_symbols', cache=False)
+    except:
+        # Fallback for manual file names
+        adata_corr = sc.read_10x_mtx(soupx_out_dir, var_names='gene_symbols', make_unique=True)
+
+    # Update adata.X with clean data
+    adata.layers['soupX_counts'] = adata_corr.X.copy()
+    adata.X = adata.layers['soupX_counts'].copy()
+    adata.uns['contamination_rate'] = float(contamination_rate)
+    
+    # Cleanup temp folder (Optional)
+    # shutil.rmtree(soupx_out_dir)
+else:
+    print("✓ No correction applied (or SoupX failed). Using original counts.")
 ```
 
 ---
 
 ### Option 2: DecontX (Fallback Method)
-
 Use when raw matrix is unavailable. **Requires Step 1 setup above.**
 
 **Run DecontX in R:**
 ```r
-%%R -i adata -o decontx_counts -o decontx_contamination
+%%R -i cellranger_dir -o decontx_out_dir -o decontx_rho
 
 library(celda)
 library(SingleCellExperiment)
 
-# adata converted to SCE (requires anndata2ri from Step 1)
+# Data loading (filtered matrix only), error handling, and result saving logic are omitted here; implement them following the exact pattern from Step 3 (SoupX) above.
+# core logic
 sce <- decontX(adata)
-
 decontx_counts <- decontXcounts(sce)
 decontx_contamination <- colData(sce)$decontX_contamination
+# save data to disk ...
 
 cat("Mean contamination:", round(mean(decontx_contamination) * 100, 1), "%\n")
-```
-
-**Apply correction if needed:**
-```python
-mean_cont = decontx_contamination.mean()
-if mean_cont > 0.10:
-    adata.layers['counts_raw'] = adata.X
-    adata.X = decontx_counts.T
-    adata.obs['decontx_contamination'] = decontx_contamination
-    print(f"✓ Applied DecontX correction (mean contamination: {mean_cont:.1%})")
-else:
-    print(f"✓ DecontX contamination acceptable ({mean_cont:.1%})")
 ```
 
 ---

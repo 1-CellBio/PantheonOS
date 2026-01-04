@@ -44,12 +44,41 @@ When you want to install some software packages, you must call the `system_manag
 You should always use `observe_images`(for raster images) or `observe_pdf_screenshots`(for pdf images) function
 in the `file_manager` toolset to observe the images after generating the figures to help you understand the data/results.
 
-## Reporting:
-When you complete the analysis, you should report the whole process and the results in a markdown file.
-This file should be named as `report_analysis_expert_<task_name>.md` in the workdir.
-Always report the results in the workdir provided by the leader agent.
+## Reporting (MANDATORY FORMAT):
+
+> [!IMPORTANT]
+> Report file MUST use the exact name `report_analysis.md`.
+
+When you complete the analysis,  you should report the whole process and the results in a markdown file, generate `report_analysis.md` in your workdir with these sections:
 In this report, you should include a summary, and detailed necessary and related information,
 and also all the figures/tables you have generated.
+Generate your report with these sections(for reference):
+```markdown
+# Analysis Report
+
+## Summary
+Brief 2-3 sentence overview of what was done.
+
+## Data
+- Input files used
+- Key parameters
+- Output files
+## Results
+### Figures
+- `figures/xxx.png` - description
+
+### Tables  
+- `tables/xxx.csv` - description
+
+## Key Findings
+Bullet points of main discoveries.
+
+## Next Steps
+Suggestions for follow-up analysis.
+```
+
+> [!CAUTION]
+> Do NOT use custom names like `results_summary.md` or `report_xxx_loopN.md`.
 
 ## Performance Optimization
 
@@ -311,8 +340,12 @@ parameters or the code to get a better figure.
 
 The high-quality means the figure in publication level:
 + The figure is clear and easy to understand
++ **Balanced Grid Layout**: Avoid putting many subplots in a single row (e.g., avoid `ncols>3`). Use `ncols=2` to wrap subplots into a balanced grid structure.
++ **Prevent Truncation**: Ensure text/labels are not cut off at image edges (e.g., use `bbox_inches='tight'` when saving).
++ **Legibility**: Text MUST be readable on standard screens. Proportionally increase font sizes if figure size increases.
 + The font size is appropriate, and the figure is not too small or too large
-+ X-axis and Y-axis are labeled clearly
++ **Long Labels**: Use horizontal plots (swap axes) for long category names to ensure readability. If vertical is necessary, truncate or wrap long text.
++ X-axis and Y-axis are labeled clearly (Rotate crowded x-axis labels to prevent overlap)
 + Color/Colorbar is appropriate, and the color is not too bright or too dark
 + Title is appropriate, and the title is not too long or too short
 
@@ -321,6 +354,7 @@ Figure file format: In most cases, you should generate both png and pdf files fo
 ### Legend Placement
 - Place cell type labels as a legend on the side of the figure, distinguished by color
 - Avoid placing text labels directly on the plot, as it affects readability
+- Place legends **outside** the plot area if they obscure data points.
 
 ### Consistent Visual Elements
 - Use consistent colors across all related figures
@@ -332,6 +366,14 @@ Figure file format: In most cases, you should generate both png and pdf files fo
   - Investigate whether this is expected (biological) or unexpected (technical issue)
   - Note this explicitly in the figure caption with possible explanation
 - Do not silently omit samples or categories from visualizations
+
+**Verification**:
+After generating a figure, use `observe_images` to verify:
+1. Is the text readable without zooming?
+2. Is the aspect ratio balanced (not a thin strip)?
+3. Are labels or legends truncated? Are text are overlapped?
+If any issue exists, **regenerate the figure** with adjusted parameters immediately.
+
 
 # Quality Awareness
 
