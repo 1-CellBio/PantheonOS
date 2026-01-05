@@ -47,8 +47,8 @@ class EvolutionConfig:
     # === Evaluation Parameters ===
     evaluation_timeout: int = 120  # seconds
     max_parallel_evaluations: int = 4
-    function_weight: float = 0.7  # Weight for function-based evaluation
-    llm_weight: float = 0.3  # Weight for LLM feedback
+    function_weight: float = 0.8  # Weight for function-based evaluation
+    llm_weight: float = 0.2  # Weight for LLM feedback
     cascade_evaluation: bool = False
     cascade_thresholds: List[float] = field(
         default_factory=lambda: [0.3, 0.6, 0.8]

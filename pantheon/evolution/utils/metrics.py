@@ -293,7 +293,11 @@ def compute_fitness_score(
     if not fitness_metrics:
         return 0.0
 
-    # Use combined_score if available
+    # Use function_score if available (pure evaluation score without LLM influence)
+    if "function_score" in fitness_metrics:
+        return fitness_metrics["function_score"]
+
+    # Fall back to combined_score if no function_score
     if "combined_score" in fitness_metrics:
         return fitness_metrics["combined_score"]
 

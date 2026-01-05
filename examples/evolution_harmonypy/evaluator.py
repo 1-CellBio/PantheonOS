@@ -332,10 +332,11 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
     X_corr_train = X_corrected[:n_train]
     X_corr_val = X_corrected[n_train:]
 
-    # Compute metrics
+    # Compute metrics on TRAINING set only (for evolution)
+    # Validation set is reserved for final evaluation after evolution
     try:
-        # Batch mixing on val data (higher = better, weight: 0.4)
-        mixing_score = compute_batch_mixing_score(X_corr_val, batch_val)
+        # Batch mixing on train data (higher = better, weight: 0.4)
+        mixing_score = compute_batch_mixing_score(X_corr_train, batch_train)
 
         # Biological conservation on train data (higher = better, weight: 0.3)
         # Using pseudo labels from clustering on original train data
@@ -375,6 +376,129 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
         }
 
 
+def evaluate_on_validation(workspace_path: str) -> Dict[str, Any]:
+    """
+    Evaluate the Harmony implementation on the VALIDATION set.
+
+    This function should be used AFTER evolution is complete to evaluate
+    the final selected program on held-out data.
+
+    Args:
+        workspace_path: Path to the workspace containing harmony.py
+
+    Returns:
+        Dictionary with validation metrics
+    """
+    workspace = Path(workspace_path)
+
+    # Load the harmony module from workspace
+    harmony_path = workspace / "harmony.py"
+    if not harmony_path.exists():
+        return {
+            "val_combined_score": 0.0,
+            "error": "harmony.py not found",
+        }
+
+    try:
+        spec = importlib.util.spec_from_file_location("harmony", harmony_path)
+        harmony_module = importlib.util.module_from_spec(spec)
+        sys.modules["harmony"] = harmony_module
+        spec.loader.exec_module(harmony_module)
+    except Exception as e:
+        return {
+            "val_combined_score": 0.0,
+            "error": f"Failed to load harmony.py: {e}",
+        }
+
+    # Load real PBMC data
+    import os
+    data_dir = Path(os.environ.get(
+        "HARMONY_DATA_DIR",
+        r"C:\Users\wzxu\Desktop\Pantheon\pantheon-agents\examples\evolution_harmonypy\data"
+    ))
+
+    try:
+        X_train, batch_train, X_val, batch_val = load_pbmc_data(data_dir)
+    except Exception as e:
+        return {
+            "val_combined_score": 0.0,
+            "error": f"Failed to load PBMC data: {e}",
+        }
+
+    n_train = len(X_train)
+    n_val = len(X_val)
+
+    # Generate pseudo labels on original validation data
+    pseudo_labels_val = generate_pseudo_labels(X_val, n_clusters=5)
+
+    # Merge train + val for Harmony
+    X_all = np.vstack([X_train, X_val])
+    batch_all = np.concatenate([batch_train, batch_val])
+
+    # Run harmony
+    try:
+        start_time = time.time()
+        hm = harmony_module.run_harmony(
+            X_all,
+            batch_all,
+            n_clusters=50,
+            max_iter=10,
+            random_state=42,
+        )
+        execution_time = time.time() - start_time
+
+        X_corrected = hm.Z_corr
+        objectives = hm.objectives
+
+    except Exception as e:
+        return {
+            "val_combined_score": 0.0,
+            "error": f"Harmony execution failed: {e}",
+        }
+
+    # Split corrected data
+    X_corr_train = X_corrected[:n_train]
+    X_corr_val = X_corrected[n_train:]
+
+    # Compute metrics on VALIDATION set
+    try:
+        # Batch mixing on validation data
+        val_mixing_score = compute_batch_mixing_score(X_corr_val, batch_val)
+
+        # Biological conservation on validation data
+        val_bio_score = compute_bio_conservation_score(X_corr_val, X_val, pseudo_labels_val)
+
+        # Speed score
+        speed_score = 1.0 / (1 + execution_time)
+
+        # Convergence score
+        conv_score = compute_convergence_score(objectives)
+
+        # Combined score (same weights as training)
+        val_combined_score = (
+            0.4 * val_mixing_score +
+            0.3 * val_bio_score +
+            0.2 * speed_score +
+            0.1 * conv_score
+        )
+
+        return {
+            "val_combined_score": val_combined_score,
+            "val_mixing_score": val_mixing_score,
+            "val_bio_conservation_score": val_bio_score,
+            "speed_score": speed_score,
+            "convergence_score": conv_score,
+            "execution_time": execution_time,
+            "n_val": n_val,
+        }
+
+    except Exception as e:
+        return {
+            "val_combined_score": 0.1,
+            "error": f"Metric computation failed: {e}",
+        }
+
+
 if __name__ == "__main__":
     # Test the evaluator locally
     import os
@@ -382,17 +506,30 @@ if __name__ == "__main__":
     # Use current directory as workspace
     workspace = os.path.dirname(os.path.abspath(__file__))
 
-    print("=" * 50)
+    print("=" * 60)
     print("Harmony Evaluator Test (Real PBMC Data)")
-    print("=" * 50)
+    print("=" * 60)
     print(f"Workspace: {workspace}")
-    print()
 
+    # Training set evaluation (used during evolution)
+    print("\n" + "-" * 60)
+    print("TRAINING SET Evaluation (used during evolution):")
+    print("-" * 60)
     result = evaluate(workspace)
-
-    print("Evaluation Results:")
-    print("-" * 50)
     for key, value in result.items():
+        if isinstance(value, float):
+            print(f"  {key}: {value:.4f}")
+        elif isinstance(value, int):
+            print(f"  {key}: {value}")
+        else:
+            print(f"  {key}: {value}")
+
+    # Validation set evaluation (used after evolution)
+    print("\n" + "-" * 60)
+    print("VALIDATION SET Evaluation (used after evolution):")
+    print("-" * 60)
+    val_result = evaluate_on_validation(workspace)
+    for key, value in val_result.items():
         if isinstance(value, float):
             print(f"  {key}: {value:.4f}")
         elif isinstance(value, int):
