@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 from pathlib import Path
+from typing import Literal
 import tempfile
 import shutil
 import base64
@@ -190,7 +191,7 @@ class FileManagerToolSetBase(ToolSet):
                 return await self.move_file(path, new_path)
 
         except Exception as e:
-            logger.error(f"manage_path failed for operation {operation}: {e}")
+            logger.warning(f"manage_path failed for operation {operation}: {e}")
             return {"success": False, "error": str(e)}
 
     def __init__(
@@ -952,109 +953,64 @@ class FileManagerToolSet(FileManagerToolSetBase):
     ) -> dict:
         """Apply patches to files with fuzzy matching support.
 
-        Automatically detects patch format and extracts file paths from headers.
-        Uses Google's diff-match-patch library for robust fuzzy matching.
+        Automatically detects patch format (Unified Diff or V4A) and extracts file paths from headers.
+        Supports single-file and multi-file patches with create/update/delete operations.
+        Uses fuzzy matching to handle whitespace and minor differences.
 
-        **Quick Reference:**
-        - Single file: Provide unified diff
-        - Multi-file: Use unified diff or V4A format
-        - Create files: Use V4A with *** Create File: or unified diff with /dev/null
-        - Fuzzy matching: Default 0.5 works for most cases; use 0.8 for AI-generated patches
-
-        **Supported Formats:**
-
-        1. **Unified Diff** (Git diff style - RECOMMENDED):
-           Industry standard, multi-file support, human-readable.
-
-           Example:
-           ```
-           --- a/config.py
-           +++ b/config.py
-           @@ -1,2 +1,2 @@
-            DEBUG = True
-           -PORT = 8000
-           +PORT = 3000
-           ```
-
-        2. **V4A/Codex** (OpenAI format):
-           Explicit operation markers, good for complex multi-file changes.
-
-           Example:
-           ```
-           *** Begin Patch
-           *** Update File: api.py
-           @@ function @@
-           - old_implementation
-           + new_implementation
-
-           *** Create File: utils.py
-           + def helper():
-           +     pass
-
-           *** Delete File: legacy.py
-           *** End Patch
-           ```
+        Format recommendations: Use Unified Diff for most cases (industry standard). Use V4A for 
+        complex multi-file operations with explicit create/delete markers. Set fuzzy_threshold=0.8 
+        for AI-generated patches.
 
         Args:
-            patch: Patch content as string (format auto-detected).
-                  Can contain changes for multiple files.
+            patch: Patch content as string, format auto-detected.
+                   - Unified Diff (Git style): Industry standard, multi-file support, human-readable
+                   - V4A/Codex format: Explicit operation markers, good for complex multi-file changes
 
-            file_path: Optional explicit file path.
-                      - For unified diff: overrides path from headers
-                      - For V4A: ignored (uses marker paths)
-                      Can be relative to workspace or absolute.
+            file_path: Optional explicit file path (default: extracted from patch headers).
+                       Can be relative to workspace or absolute.
 
-            fuzzy_threshold: Matching tolerance (0.0-1.0, default 0.5).
-                           - 0.0: Exact match only
-                           - 0.5: Balanced (RECOMMENDED)
-                           - 0.8: Tolerant (good for AI patches)
-                           - 1.0: Maximum tolerance (use with caution)
+            fuzzy_threshold: Optional, matching tolerance 0.0-1.0 (default: 0.5).
+                            0.0 = exact match, 0.5 = balanced, 0.8 = tolerant for AI patches.
 
         Returns:
-            dict: Operation result with structure:
-            {
-                "success": bool,              # True if ALL operations succeeded
-                "message": str,               # Human-readable summary
+            dict: {
+                "success": bool,
+                "message": str,
                 "summary": {
-                    "total_files": int,       # Files processed
-                    "modified": int,          # Files updated
-                    "created": int,           # Files created
-                    "deleted": int,           # Files deleted
-                    "failed": int             # Failed operations
+                    "total_files": int,
+                    "modified": int,
+                    "created": int,
+                    "deleted": int,
+                    "failed": int
                 },
-                "files": [                    # Per-file details
+                "files": [
                     {
-                        "file": str,          # File path
-                        "action": str,        # "update"|"create"|"delete"
-                        "success": bool,      # Operation result
-                        "hunks_applied": int, # (updates only)
-                        "hunks_total": int,   # (updates only)
-                        "exact_match": bool,  # (updates only)
-                        "lines_added": int,   # (creates only)
-                        "error": str          # (failures only)
+                        "file": str,
+                        "action": str,  # "update"|"create"|"delete"
+                        "success": bool,
+                        "hunks_applied": int,  # Number of changes applied (updates only)
+                        "hunks_total": int,  # Total changes in patch (updates only)
+                        "exact_match": bool,  # True if no fuzzy matching needed (updates only)
+                        "lines_added": int,  # Number of lines (creates only)
+                        "error": str  # Error message (failures only)
                     }
                 ],
-                "failed_files": [str]         # Quick list of failures
+                "failed_files": [str]
             }
 
-        Common Issues:
-            - "No valid operations found": Check patch format and headers
-            - "No hunks applied": Content mismatch - try higher fuzzy_threshold
-            - "File does not exist": File must exist for updates
-
         Examples:
-            # Single file update
-            await apply_patch('''
+            # Unified Diff format - single file update
+            ```
             --- a/hello.py
             +++ b/hello.py
             @@ -1,2 +1,2 @@
              def hello():
             -    return "Hello"
             +    return "Hello, World!"
-            ''')
+            ```
 
-            # Multi-file with V4A
-            await apply_patch('''
+            # V4A format - multi-file with create/update/delete
+            ```
             *** Begin Patch
             *** Update File: config.py
             - DEBUG = True
@@ -1063,7 +1019,16 @@ class FileManagerToolSet(FileManagerToolSetBase):
             *** Create File: new_module.py
             + def new_feature():
             +     pass
-            *** End Patch\n            ''')
+
+            *** Delete File: legacy.py
+            *** End Patch
+            ```
+
+            # Using fuzzy_threshold parameter
+            fuzzy_threshold=0.8
+
+        Note:
+            Common issues: "No valid operations" = check format; "No hunks applied" = try higher fuzzy_threshold; "File does not exist" = file must exist for updates.
         """
         return execute_patch_operations(
             patch=patch,
@@ -1082,30 +1047,38 @@ class FileManagerToolSet(FileManagerToolSetBase):
         pattern: str,
         path: str | None = None,
         respect_git_ignore: bool = True,
+        type_filter: Literal["file", "directory", "any"] | None = None,
+        excludes: list[str] | None = None,
+        max_depth: int | None = None,
     ) -> dict:
-        """Find files matching glob patterns.
-
-        Fast file search by name/path pattern using 'fd' tool.
-        Falls back to Python pathlib if 'fd' is unavailable.
+        """Search for files and subdirectories within a specified directory using glob patterns.
+        
+        Search uses smart case and will ignore gitignored files by default.
+        To avoid overwhelming output, the results are capped at max_glob_results. 
+        Use the various arguments to filter the search scope as needed.
+        Results will include the type, size, modification time, and relative path.
 
         Args:
-            pattern: Glob pattern to match files:
+            pattern: Glob pattern to search for, supports glob format:
                      - "*" matches any characters except /
                      - "**" matches any characters including /
                      - "?" matches single character
                      - "[abc]" matches any character in brackets
+                     - "{py,js,ts}" matches any of the extensions (brace expansion)
+                     Examples: "*.py", "**/*.{js,ts}", "src/**/*.py"
 
-                     Examples:
-                     - "*.py" → all Python files in current dir
-                     - "**/*.py" → all Python files recursively
-                     - "test_*.py" → test files in current dir
-                     - "src/**/*.ts" → TypeScript files in src/
-
-            path: Directory to search from (default: workspace root).
+            path: Optional directory to search from (default: workspace root).
                   Can be relative (to workspace) or absolute path.
 
-            respect_git_ignore: Whether to respect .gitignore patterns (default: True).
+            respect_git_ignore: Optional, whether to respect .gitignore patterns (default: True).
                                Set to False to search ignored files.
+
+            type_filter: Optional, type filter, enum=file,directory,any.
+                        Default None means "file" for backward compatibility.
+
+            excludes: Optional, exclude files/directories that match the given glob patterns.
+
+            max_depth: Optional, maximum depth to search.
 
         Returns:
             dict: {
@@ -1119,35 +1092,26 @@ class FileManagerToolSet(FileManagerToolSetBase):
                         "type": str         # "file" or "directory"
                     }
                 ],
-                "total": int,               # Total matches found
-                "pattern": str,             # Echo of search pattern
-                        "message": str              # Human-readable summary
-            }
-
-            On error:
-            {
-                "success": false,
-                "error": str
+                "total": int,
+                "pattern": str,
+                "message": str,
+                "capped": bool,
+                "filters_applied": {
+                    "type": str | None,
+                    "excludes": list[str] | None,
+                    "max_depth": int | None,
+                }
             }
 
         Examples:
-            # Find all Python files (workspace root)
-            await glob("**/*.py")
+            # Find Python files, excluding virtual environments
+            pattern="**/*.py", excludes=[".venv/*", "**/__pycache__/*"]
 
-            # Find test files (workspace root)
-            await glob("**/test_*.py")
+            # Find configuration directories at top level
+            pattern="*config*", type_filter="directory", max_depth=1
 
-            # Find files in specific directory (relative path)
-            await glob("*.json", path="config")
-
-            # Find files using absolute path
-            await glob("*.py", path="/absolute/path/to/directory")
-
-            # Include gitignored files
-            await glob("**/*.log", respect_git_ignore=False)
-        
-        Note:
-            Results capped at max_glob_results. Refine pattern for more specific matches.
+            # Complex search with multiple filters
+            pattern="**/*.{py,js}", excludes=["node_modules/*", ".venv/*"], type_filter="file", max_depth=3
         """
         # Run in thread pool to avoid blocking event loop
         result = await asyncio.to_thread(
@@ -1156,22 +1120,35 @@ class FileManagerToolSet(FileManagerToolSetBase):
             workspace_root=self.path,
             path=path,
             respect_git_ignore=respect_git_ignore,
+            type_filter=type_filter,
+            excludes=excludes,
+            max_depth=max_depth,
         )
-        
+
         # Apply result limit from settings
         if result.get("success") and result.get("files"):
             from pantheon.settings import get_settings
+
             max_results = get_settings().max_glob_results
-            
+
             files = result["files"]
             total = len(files)
-            
+
             if total > max_results:
                 result["files"] = files[:max_results]
                 result["total"] = total
                 result["capped"] = True
                 result["message"] = f"Results capped at {max_results}. Total matches: {total}. Refine pattern to narrow results."
-        
+            else:
+                result["capped"] = False
+
+            # Add filters summary
+            result["filters_applied"] = {
+                "type": type_filter,
+                "excludes": excludes,
+                "max_depth": max_depth,
+            }
+
         return result
 
     @tool
@@ -1185,88 +1162,59 @@ class FileManagerToolSet(FileManagerToolSetBase):
         respect_git_ignore: bool = True,
     ) -> dict:
         """Search for text patterns within file contents.
-
-        Powerful content search using 'ripgrep' (rg) for speed.
-        Falls back to Python re module if 'rg' is unavailable.
-        Searches recursively by default, respecting .gitignore.
+        
+        Search uses case-insensitive matching by default and will ignore gitignored files.
+        Searches recursively by default. Refine your pattern or use file_pattern to narrow scope.
+        Results are capped at max_glob_results to avoid overwhelming output.
+        Results will include file path, line number, line content, and optional context lines.
 
         Args:
-            pattern: Text or regex pattern to search for.
-                     Supports full Rust regex syntax.
+            pattern: Text or regex pattern to search for, supports Rust regex syntax.
+                     Examples: "TODO", "def\\s+\\w+", "class\\s+\\w+"
 
-                     Examples:
-                     - "TODO" → literal string
-                     - "def\\s+\\w+" → function definitions
-                     - "class\\s+\\w+" → class definitions
-                     - "import\\s+.*from" → import statements
-
-            path: Directory or file to search (default: workspace root).
+            path: Optional directory or file to search (default: workspace root).
                   Can be relative or absolute.
 
-            file_pattern: Glob pattern to filter files (default: all text files).
-                         Only search in files matching this pattern.
+            file_pattern: Optional glob pattern to filter files.
+                         Examples: "*.py", "*.{js,ts}", "src/**/*.py"
 
-                         Examples:
-                         - "*.py" → only Python files
-                         - "*.{js,ts}" → JavaScript and TypeScript
-                         - "src/**/*.py" → Python files in src/
+            context_lines: Optional, number of context lines before/after each match (default: 0).
 
-            context_lines: Number of context lines before/after each match.
-                          - 0 = only matching line (default)
-                          - 1-3 = show surrounding context
-                          - Higher values help understand context
+            case_sensitive: Optional, whether search is case-sensitive (default: False).
 
-            case_sensitive: Whether search is case-sensitive (default: False).
-
-            respect_git_ignore: Whether to respect .gitignore patterns (default: True).
-                               Set to False to search in ignored files/directories.
+            respect_git_ignore: Optional, whether to respect .gitignore patterns (default: True).
 
         Returns:
             dict: {
                 "success": bool,
                 "matches": [
                     {
-                        "file": str,              # Relative path from workspace
-                        "line_number": int,       # Line number (1-indexed)
-                        "line_content": str,      # Matching line
-                        "context_before": [str],  # Lines before (if context_lines > 0)
-                        "context_after": [str],   # Lines after (if context_lines > 0)
-                        "column": int             # Column where match starts (1-indexed)
+                        "file": str,
+                        "line_number": int,
+                        "line_content": str,
+                        "context_before": [str],
+                        "context_after": [str],
+                        "column": int
                     }
                 ],
-                "total_matches": int,     # Total matching lines
-                "files_matched": int,     # Number of files with matches
-                "pattern": str,           # Echo of search pattern
-                "message": str            # Human-readable summary
-            }
-
-            On error:
-            {
-                "success": false,
-                "error": str
+                "total_matches": int,
+                "files_matched": int,
+                "pattern": str,
+                "message": str
             }
 
         Examples:
-            # Find TODOs in Python files (workspace root)
-            await grep("TODO", file_pattern="*.py")
+            # Find TODOs in Python files with context
+            pattern="TODO", file_pattern="*.py", context_lines=2
 
-            # Find function definitions with context
-            await grep("def\\s+\\w+", file_pattern="**/*.py", context_lines=2)
+            # Find function definitions using regex
+            pattern="def\\s+\\w+", file_pattern="**/*.py"
 
-            # Find specific API calls in relative path
-            await grep("api\\.post\\(", file_pattern="src/**/*.js")
-
-            # Search in specific file using relative path
-            await grep("class", path="main.py")
-
-            # Search using absolute path
-            await grep("TODO", path="/absolute/path/to/directory", file_pattern="*.py")
-
-            # Search in node_modules (gitignored directory)
-            await grep("version.*1.2.3", path="node_modules", respect_git_ignore=False)
+            # Search in gitignored directory
+            pattern="version.*1.2.3", path="node_modules", respect_git_ignore=False
         """
         # Run in thread pool to avoid blocking event loop
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             grep_search,
             pattern=pattern,
             workspace_root=self.path,
@@ -1276,6 +1224,27 @@ class FileManagerToolSet(FileManagerToolSetBase):
             case_sensitive=case_sensitive,
             respect_git_ignore=respect_git_ignore,
         )
+        
+        # Apply result limit from settings (same as glob)
+        if result.get("success") and result.get("matches"):
+            from pantheon.settings import get_settings
+            max_results = get_settings().max_glob_results
+            
+            matches = result["matches"]
+            total = len(matches)
+            
+            if total > max_results:
+                result["matches"] = matches[:max_results]
+                result["total_matches"] = total
+                result["capped"] = True
+                result["message"] = (
+                    f"Results capped at {max_results}. Total matches: {total}. "
+                    f"Refine pattern or use file_pattern to narrow results."
+                )
+            else:
+                result["capped"] = False
+        
+        return result
 
     @tool
     async def generate_image(

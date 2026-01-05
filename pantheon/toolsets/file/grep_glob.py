@@ -101,15 +101,24 @@ def should_ignore(file_path: Path, base_path: Path) -> bool:
 
 
 def run_fd(
-    pattern: str, search_dir: Path, workspace_root: Path, respect_git_ignore: bool
+    pattern: str,
+    search_dir: Path,
+    workspace_root: Path,
+    respect_git_ignore: bool,
+    type_filter: Optional[str] = None,
+    excludes: Optional[list[str]] = None,
+    max_depth: Optional[int] = None,
 ) -> list[dict]:
-    """Run fd tool to find files.
+    """Run fd tool to find files with enhanced filtering.
 
     Args:
         pattern: Glob pattern to match.
         search_dir: Directory to search in.
         workspace_root: Workspace root for relative paths.
         respect_git_ignore: Whether to respect .gitignore.
+        type_filter: Filter by type ("file", "directory", "any", or None).
+        excludes: List of glob patterns to exclude.
+        max_depth: Maximum search depth.
 
     Returns:
         List of file information dictionaries.
@@ -117,8 +126,25 @@ def run_fd(
     Raises:
         Exception: If fd command fails.
     """
-    cmd = ["fd", "--type", "f", "--glob", pattern]
+    cmd = ["fd", "--glob", pattern]
 
+    # Type filter
+    if type_filter == "file":
+        cmd.extend(["--type", "f"])
+    elif type_filter == "directory":
+        cmd.extend(["--type", "d"])
+    # "any" or None: don't add --type flag
+
+    # Excludes
+    if excludes:
+        for exclude in excludes:
+            cmd.extend(["--exclude", exclude])
+
+    # Max depth
+    if max_depth is not None:
+        cmd.extend(["--max-depth", str(max_depth)])
+
+    # Git ignore
     if not respect_git_ignore:
         cmd.extend(["--no-ignore", "--hidden"])
 
@@ -141,28 +167,81 @@ def run_fd(
 
 
 def run_glob_fallback(
-    pattern: str, search_dir: Path, workspace_root: Path, respect_git_ignore: bool
+    pattern: str,
+    search_dir: Path,
+    workspace_root: Path,
+    respect_git_ignore: bool,
+    type_filter: Optional[str] = None,
+    excludes: Optional[list[str]] = None,
+    max_depth: Optional[int] = None,
 ) -> list[dict]:
-    """Fallback glob implementation using Python pathlib.
+    """Fallback glob implementation using Python pathlib with enhanced filtering.
 
     Args:
         pattern: Glob pattern to match.
         search_dir: Directory to search in.
         workspace_root: Workspace root for relative paths.
         respect_git_ignore: Whether to respect .gitignore.
+        type_filter: Filter by type ("file", "directory", "any", or None).
+        excludes: List of glob patterns to exclude.
+        max_depth: Maximum search depth.
 
     Returns:
         List of file information dictionaries.
     """
     files = []
 
-    for file_path in search_dir.glob(pattern):
+    # Convert pattern to use rglob if it contains **
+    if "**" in pattern:
+        glob_pattern = pattern
+    else:
+        glob_pattern = f"**/{pattern}"
+
+    for file_path in search_dir.glob(glob_pattern):
         # Filter gitignored files
         if respect_git_ignore and should_ignore(file_path, search_dir):
             continue
 
-        if file_path.is_file():
-            files.append(build_file_info(file_path, workspace_root))
+        # Type filter
+        if type_filter == "file" and not file_path.is_file():
+            continue
+        if type_filter == "directory" and not file_path.is_dir():
+            continue
+        # "any" or None: include both files and directories
+
+        # Max depth check
+        if max_depth is not None:
+            try:
+                relative = file_path.relative_to(search_dir)
+                depth = len(relative.parts)
+                if depth > max_depth:
+                    continue
+            except ValueError:
+                continue
+
+        # Exclude patterns
+        if excludes:
+            excluded = False
+            for exclude_pattern in excludes:
+                # Try matching against relative path
+                try:
+                    rel_path = file_path.relative_to(search_dir)
+                    if rel_path.match(exclude_pattern) or file_path.match(exclude_pattern):
+                        excluded = True
+                        break
+                except ValueError:
+                    if file_path.match(exclude_pattern):
+                        excluded = True
+                        break
+            if excluded:
+                continue
+
+        # Apply default type filter (file only) if type_filter is None
+        # This maintains backward compatibility
+        if type_filter is None and not file_path.is_file():
+            continue
+
+        files.append(build_file_info(file_path, workspace_root))
 
     return sorted(files, key=lambda x: x["path"])
 
@@ -172,14 +251,20 @@ def glob_search(
     workspace_root: Path,
     path: Optional[str] = None,
     respect_git_ignore: bool = True,
+    type_filter: Optional[str] = None,
+    excludes: Optional[list[str]] = None,
+    max_depth: Optional[int] = None,
 ) -> dict:
-    """Find files matching glob patterns.
+    """Find files matching glob patterns with enhanced filtering.
 
     Args:
         pattern: Glob pattern to match files.
         workspace_root: Workspace root directory.
         path: Directory to search from (default: workspace root).
         respect_git_ignore: Whether to respect .gitignore patterns.
+        type_filter: Filter by type ("file", "directory", "any", or None).
+        excludes: List of glob patterns to exclude.
+        max_depth: Maximum search depth.
 
     Returns:
         Dictionary with search results or error.
@@ -207,13 +292,27 @@ def glob_search(
         # Try fd first, fallback to Python glob
         try:
             if shutil.which("fd"):
-                files = run_fd(pattern, search_dir, workspace_root, respect_git_ignore)
+                files = run_fd(
+                    pattern,
+                    search_dir,
+                    workspace_root,
+                    respect_git_ignore,
+                    type_filter,
+                    excludes,
+                    max_depth,
+                )
             else:
                 raise FileNotFoundError("fd not available")
         except Exception as e:
             logger.debug(f"fd failed ({e}), using Python fallback")
             files = run_glob_fallback(
-                pattern, search_dir, workspace_root, respect_git_ignore
+                pattern,
+                search_dir,
+                workspace_root,
+                respect_git_ignore,
+                type_filter,
+                excludes,
+                max_depth,
             )
 
         return {
@@ -281,16 +380,37 @@ def run_ripgrep(
         raise Exception(f"ripgrep command failed: {result.stderr}")
 
     # Parse JSON output
+    # ripgrep with -C outputs: context lines before match, then match, then context lines after
     matches = []
     files_matched = set()
-
+    pending_context_before = []
+    
     for line in result.stdout.strip().split("\n"):
         if not line:
             continue
 
         try:
             data = json_module.loads(line)
-            if data.get("type") == "match":
+            msg_type = data.get("type")
+            
+            if msg_type == "context":
+                # Context line - could be before or after a match
+                context_data = data["data"]
+                context_line = context_data["lines"]["text"].rstrip("\n")
+                
+                if context_lines > 0:
+                    # Check if this is context_after for the last match
+                    if matches and "context_after" in matches[-1]:
+                        if len(matches[-1]["context_after"]) < context_lines:
+                            matches[-1]["context_after"].append(context_line)
+                        else:
+                            # This is context_before for next match
+                            pending_context_before.append(context_line)
+                    else:
+                        # This is context_before for next match
+                        pending_context_before.append(context_line)
+                
+            elif msg_type == "match":
                 match_data = data["data"]
                 file_path = Path(match_data["path"]["text"])
 
@@ -304,16 +424,22 @@ def run_ripgrep(
 
                 # Extract match information
                 submatches = match_data.get("submatches", [])
-                matches.append(
-                    {
-                        "file": rel_path,
-                        "line_number": match_data["line_number"],
-                        "line_content": match_data["lines"]["text"].rstrip("\n"),
-                        "context_before": [],
-                        "context_after": [],
-                        "column": submatches[0]["start"] + 1 if submatches else 1,
-                    }
-                )
+                
+                match_dict = {
+                    "file": rel_path,
+                    "line_number": match_data["line_number"],
+                    "line_content": match_data["lines"]["text"].rstrip("\n"),
+                    "column": submatches[0]["start"] + 1 if submatches else 1,
+                }
+                
+                # Add context fields if context_lines > 0
+                if context_lines > 0:
+                    # Keep only the last N lines as context_before
+                    match_dict["context_before"] = pending_context_before[-context_lines:] if pending_context_before else []
+                    match_dict["context_after"] = []
+                    pending_context_before = []
+                
+                matches.append(match_dict)
 
         except (json_module.JSONDecodeError, KeyError):
             continue
@@ -388,31 +514,26 @@ def run_grep_fallback(
 
                     files_matched.add(rel_path)
 
-                    # Get context lines
-                    context_before = []
-                    context_after = []
+                    match_dict = {
+                        "file": rel_path,
+                        "line_number": i + 1,  # 1-indexed
+                        "line_content": line.rstrip("\n"),
+                        "column": match.start() + 1,  # 1-indexed
+                    }
 
+                    # Only add context fields if context_lines > 0
                     if context_lines > 0:
                         start = max(0, i - context_lines)
                         end = min(len(lines), i + context_lines + 1)
 
-                        context_before = [
+                        match_dict["context_before"] = [
                             lines[j].rstrip("\n") for j in range(start, i)
                         ]
-                        context_after = [
+                        match_dict["context_after"] = [
                             lines[j].rstrip("\n") for j in range(i + 1, end)
                         ]
 
-                    matches.append(
-                        {
-                            "file": rel_path,
-                            "line_number": i + 1,  # 1-indexed
-                            "line_content": line.rstrip("\n"),
-                            "context_before": context_before,
-                            "context_after": context_after,
-                            "column": match.start() + 1,  # 1-indexed
-                        }
-                    )
+                    matches.append(match_dict)
 
         except (UnicodeDecodeError, PermissionError):
             # Skip binary files and permission-denied files

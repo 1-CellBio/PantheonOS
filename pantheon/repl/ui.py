@@ -505,6 +505,9 @@ class ReplUI:
             "[dim][bold purple]/view    [/bold purple][/dim] - View file in fullscreen: /view <path>"
         )
         self.console.print(
+            "[dim][bold purple]/edit    [/bold purple][/dim] - Edit file in external editor: /edit <path>"
+        )
+        self.console.print(
             "[dim][bold purple]/exit    [/bold purple][/dim] - Exit cleanly"
         )
         self.console.print()
