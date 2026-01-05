@@ -16,8 +16,8 @@ exploration_ratio: 0.2
 exploitation_ratio: 0.7
 evaluation_timeout: 120
 max_parallel_evaluations: 2
-function_weight: 0.7
-llm_weight: 0.3
+function_weight: 0.8
+llm_weight: 0.2
 cascade_evaluation: false
 cascade_thresholds:
 - 0.3
