@@ -61,7 +61,8 @@ def build_file_info(file_path: Path, workspace_root: Path) -> dict:
     Returns:
         Dictionary with file metadata.
     """
-    stat = file_path.stat()
+    # Use lstat() instead of stat() to avoid following broken symlinks
+    stat = file_path.lstat()
 
     # Calculate relative path
     try:
@@ -69,12 +70,20 @@ def build_file_info(file_path: Path, workspace_root: Path) -> dict:
     except ValueError:
         rel_path = str(file_path)
 
+    # Determine type
+    if file_path.is_symlink():
+        file_type = "symlink" if file_path.exists() else "symlink (broken)"
+    elif file_path.is_dir():
+        file_type = "directory"
+    else:
+        file_type = "file"
+
     return {
         "path": rel_path,
         "name": file_path.name,
         "size": stat.st_size,
         "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        "type": "directory" if file_path.is_dir() else "file",
+        "type": file_type,
     }
 
 
@@ -160,7 +169,8 @@ def run_fd(
     for line in result.stdout.strip().split("\n"):
         if line:
             file_path = Path(line)
-            if file_path.exists():
+            # Include symlinks even if broken
+            if file_path.exists() or file_path.is_symlink():
                 files.append(build_file_info(file_path, workspace_root))
 
     return files
@@ -203,7 +213,8 @@ def run_glob_fallback(
             continue
 
         # Type filter
-        if type_filter == "file" and not file_path.is_file():
+        # Include symlinks when filtering for files
+        if type_filter == "file" and not (file_path.is_file() or file_path.is_symlink()):
             continue
         if type_filter == "directory" and not file_path.is_dir():
             continue
@@ -237,8 +248,8 @@ def run_glob_fallback(
                 continue
 
         # Apply default type filter (file only) if type_filter is None
-        # This maintains backward compatibility
-        if type_filter is None and not file_path.is_file():
+        # This maintains backward compatibility, but includes symlinks
+        if type_filter is None and not (file_path.is_file() or file_path.is_symlink()):
             continue
 
         files.append(build_file_info(file_path, workspace_root))

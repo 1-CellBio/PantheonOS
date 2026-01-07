@@ -92,6 +92,51 @@ def _format_skillbook_for_injection(
     return "\n".join(parts).strip()
 
 
+def format_skills_by_section(
+    skills: List["Skill"],
+    skillbook: "Skillbook",
+    max_content_length: int = 500,
+) -> str:
+    """
+    Format a list of skills grouped by section.
+    
+    This is a shared utility used by:
+    - Static injection (as_prompt)
+    - Dynamic injection (load_dynamic_skills)
+    - Any other skill formatting needs
+    
+    Args:
+        skills: List of Skill objects to format
+        skillbook: Skillbook instance (required for _format_skill_content)
+        max_content_length: Maximum length for skill content before truncation
+        
+    Returns:
+        Formatted string with skills grouped by section
+    """
+    if not skills:
+        return ""
+    
+    # Group skills by section
+    sections: Dict[str, List["Skill"]] = {}
+    for skill in skills:
+        sections.setdefault(skill.section, []).append(skill)
+    
+    # Format each section
+    parts = []
+    for section_name in sorted(sections.keys()):
+        section_skills = sections[section_name]
+        parts.append(f"### {section_name.upper()}")
+        
+        for skill in section_skills:
+            # Always use skillbook's formatting method
+            content = skillbook._format_skill_content(skill, max_content_length=max_content_length)
+            parts.append(f"[{skill.id}] {content}")
+        
+        parts.append("")  # Empty line between sections
+    
+    return "\n".join(parts).strip()
+
+
 @dataclass
 class Skill:
     """Single skillbook entry representing a learned strategy or insight."""
@@ -511,7 +556,7 @@ class Skillbook:
     # Presentation
     # ------------------------------------------------------------------ #
 
-    def _format_skill_content(self, skill: Skill) -> str:
+    def _format_skill_content(self, skill: Skill, max_content_length: int = 500) -> str:
         """
         Format skill content for display in prompts.
 
@@ -519,6 +564,10 @@ class Skillbook:
         1. Use description if available (for long content)
         2. Truncate content if too long
         3. Add file reference if sources exist
+        
+        Args:
+            skill: Skill object to format
+            max_content_length: Maximum length for content before truncation (default: 500)
         """
         # Include stats: (stats: +5/-0/~2)
         stats = f"(stats: +{skill.helpful}/-{skill.harmful}/~{skill.neutral})"
@@ -527,9 +576,9 @@ class Skillbook:
         if skill.description:
             # Use description for summary
             display = skill.description
-        elif len(skill.content) > 500:
+        elif len(skill.content) > max_content_length:
             # Truncate long content
-            display = skill.content[:500] + "..."
+            display = skill.content[:max_content_length] + "..."
         else:
             display = skill.content
         
@@ -576,28 +625,17 @@ class Skillbook:
         user_rules = [s for s in skills if s.section == "user_rules"]
         other_skills = [s for s in skills if s.section != "user_rules"]
 
-        # Format user_rules
+        # Format user_rules (simple list, no section header)
         user_rules_text = ""
         if user_rules:
             user_rules_text = "\n".join(
                 f"[{s.id}] {self._format_skill_content(s)}" for s in user_rules
             )
 
-        # Format other skills by section
+        # Format other skills by section using shared function
         strategies_text = ""
         if other_skills:
-            sections: Dict[str, List[Skill]] = {}
-            for skill in other_skills:
-                sections.setdefault(skill.section, []).append(skill)
-
-            parts = []
-            for section_name in sorted(sections.keys()):
-                section_skills = sections[section_name]
-                parts.append(f"### {section_name.upper()}")
-                for skill in section_skills:
-                    parts.append(f"[{skill.id}] {self._format_skill_content(skill)}")
-                parts.append("")
-            strategies_text = "\n".join(parts).strip()
+            strategies_text = format_skills_by_section(other_skills, skillbook=self)
 
         return _format_skillbook_for_injection(user_rules_text, strategies_text)
 
@@ -643,7 +681,12 @@ class Skillbook:
                 logger.error(f"Failed to load skillbook: {e}")
         
         # Merge user-defined skills from files
-        self._merge_from_files()
+        merged_count = self._merge_from_files()
+        
+        # Auto-save if we merged skills from files (ensures skillbook.json exists)
+        if merged_count > 0:
+            self.save()
+            logger.debug(f"Auto-saved skillbook after merging {merged_count} skills from files")
     
     def _merge_from_files(self) -> int:
         """Merge user-defined skills from skills/*.md files.

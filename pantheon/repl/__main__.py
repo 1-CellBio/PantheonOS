@@ -171,11 +171,6 @@ async def _start_async(
     if workspace is None:
         workspace = _ORIGINAL_CWD
 
-    # Read learning config from settings
-    enable_learning = get_settings().get_learning_config().get("enable_learning", False)
-    enable_injection = (
-        get_settings().get_learning_config().get("enable_injection", False)
-    )
     if template:
         # Load team from template file
         template_path = Path(template)
@@ -183,16 +178,13 @@ async def _start_async(
             print(f"Error: Template file not found: {template_path}")
             sys.exit(1)
 
-        # Create ChatRoom
+        # Create ChatRoom (will read learning config from settings internally)
         chatroom = ChatRoom(
             endpoint=None,
             memory_dir=memory_dir,
             workspace_path=workspace,
             enable_nats_streaming=False,
-            learning_config={
-                "enable_learning": enable_learning,
-                "enable_injection": enable_injection,
-            },
+            earning_config=get_settings().get_learning_config(),
         )
 
         # Setup ChatRoom (including auto-created Endpoint)
@@ -220,15 +212,13 @@ async def _start_async(
         )
     else:
         # Default: auto-create everything with workspace set to original CWD
+        # ChatRoom will read learning config from settings internally
         chatroom = ChatRoom(
             endpoint=None,
             memory_dir=memory_dir,
             workspace_path=workspace,
             enable_nats_streaming=False,
-            learning_config={
-                "enable_learning": enable_learning,
-                "enable_injection": enable_injection,
-            },
+            learning_config=get_settings().get_learning_config(),
         )
         # Note: run_setup() is called in repl.run() AFTER UI display
         repl = Repl(

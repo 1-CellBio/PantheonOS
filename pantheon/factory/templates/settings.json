@@ -30,7 +30,7 @@
         // Maximum characters for file read operations (prevents single-line overflow)
         "max_file_read_chars": 100000,
         // Maximum results for glob/search operations
-        "max_glob_results": 100,
+        "max_glob_results": 50,
         // Enable notebook execution logging (JSONL files in .pantheon/logs/notebook/)
         "enable_notebook_execution_logging": true
     },
@@ -158,14 +158,16 @@
     "learning": {
         // Enable learning system (extract skills from trajectories of each user request/response run)
         "enable_learning": false,
-        // Enable skill injection into agent prompts (defaults to enable_learning if omitted)
-        "enable_injection": false,
+        // Enable skill injection into agent system prompts (user_rules, user-defined strategies, high-score skills)
+        "enable_injection": true,
+        // Enable dynamic skill injection (context injectors), defaults to enable_injection if omitted
+        "enable_dynamic_injection": true,
         // Learning mode: "pipeline" (default, lightweight) or "team" (multi-agent)
-        "mode": "team",
+        "mode": "pipeline",
         // Team ID for team mode (uses skill_learning_team template)
         "team_id": "skill_learning_team_v4",
         // Enable agent-specific skill scope filtering, If false, all agents see all skills (recommended for simpler setups)
-        "enable_agent_scope": true,
+        "enable_agent_scope": false,
         // LLM model for reflection and skill management, Uses quality level: "high", "normal", "low", or specific model name
         "learning_model": "normal",
         // Skillbook file path (relative to .pantheon/learning/)
@@ -193,6 +195,8 @@
     "context_compression": {
         // Enable context compression (disabled by default)
         "enable": true,
+        // LLM model for compression, Uses quality level: "high", "normal", "low", or specific model name
+        "compression_model": "normal",
         // Trigger compression when token usage reaches this percentage (0.0-1.0)
         // TEST MODE: set to 0 to compress based on message count (min_messages_for_compression)
         "threshold": 0.8,

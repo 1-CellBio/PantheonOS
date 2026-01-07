@@ -1071,16 +1071,20 @@ class TestPantheonTeamLearning:
         skillbook, pipeline = learning_resources
         
         # Add some skills before creating team
-        skillbook.add_skill(
+        # Add some skills before creating team
+        s1 = skillbook.add_skill(
             "strategies",
             "Always validate user input before processing",
             agent_scope="global",
         )
-        skillbook.add_skill(
-            "patterns",
+        s1.type = "user"  # Mock as user-defined to force static injection
+
+        s2 = skillbook.add_skill(
+            "strategies",
             "Use descriptive variable names for readability",
             agent_scope="test_agent",
         )
+        s2.type = "user"  # Mock as user-defined to force static injection
         
         # Create agent with basic instructions
         agent = Agent(
@@ -1090,15 +1094,24 @@ class TestPantheonTeamLearning:
         )
         original_instructions = agent.instructions
         
-        # Create team with ACE
+        # Create team with plugin-based ACE
+        from pantheon.internal.learning.plugin import LearningPlugin
+        learning_plugin = LearningPlugin({
+            "learning_dir": temp_dir,
+            "enable_injection": True,
+            "enable_learning": False,
+        })
+        learning_plugin.skillbook = skillbook
+        learning_plugin.learning_pipeline = pipeline
+        learning_plugin._initialized = True
+        
         team = PantheonTeam(
             agents=[agent],
-            learning_pipeline=pipeline,
+            plugins=[learning_plugin],
         )
         
-        # Manually trigger skill injection (normally happens on first run)
-        await pipeline.inject_to_team(team)
-        team._skills_injected = True
+        # Trigger plugin lifecycle (normally happens in async_setup)
+        await learning_plugin.on_team_created(team)
         
         # Verify skillbook was injected - check for new header format
         assert "Available Strategic Knowledge" in agent.instructions or "User Rules" in agent.instructions
@@ -1127,10 +1140,19 @@ class TestPantheonTeamLearning:
             model=TEST_MODEL,
         )
         
-        # Create team with ACE
+        # Create team with plugin-based ACE
+        from pantheon.internal.learning.plugin import LearningPlugin
+        learning_plugin = LearningPlugin({
+            "learning_dir": temp_dir,
+            "enable_learning": True,
+        })
+        learning_plugin.skillbook = skillbook
+        learning_plugin.learning_pipeline = pipeline
+        learning_plugin._initialized = True
+        
         team = PantheonTeam(
             agents=[agent],
-            learning_pipeline=pipeline,
+            plugins=[learning_plugin],
         )
         
         # Run a simple query
@@ -1185,10 +1207,19 @@ class TestPantheonTeamLearning:
             except Exception as e:
                 return f"Error: {e}"
         
-        # Create team with ACE
+        # Create team with plugin-based ACE
+        from pantheon.internal.learning.plugin import LearningPlugin
+        learning_plugin = LearningPlugin({
+            "learning_dir": temp_dir,
+            "enable_learning": True,
+        })
+        learning_plugin.skillbook = skillbook
+        learning_plugin.learning_pipeline = pipeline
+        learning_plugin._initialized = True
+        
         team = PantheonTeam(
             agents=[agent],
-            learning_pipeline=pipeline,
+            plugins=[learning_plugin],
         )
         
         # Run query that should use tool
@@ -1236,10 +1267,19 @@ class TestPantheonTeamLearning:
             model=TEST_MODEL,
         )
         
-        # Create team with ACE
+        # Create team with plugin-based ACE
+        from pantheon.internal.learning.plugin import LearningPlugin
+        learning_plugin = LearningPlugin({
+            "learning_dir": temp_dir,
+            "enable_learning": True,
+        })
+        learning_plugin.skillbook = skillbook
+        learning_plugin.learning_pipeline = pipeline
+        learning_plugin._initialized = True
+        
         team = PantheonTeam(
             agents=[agent],
-            learning_pipeline=pipeline,
+            plugins=[learning_plugin],
         )
         
         # Run query
@@ -1278,10 +1318,10 @@ class TestPantheonTeamLearning:
             model=TEST_MODEL,
         )
         
-        # Create team without ACE
+        # Create team without plugins (no ACE)
         team = PantheonTeam(
             agents=[agent],
-            learning_pipeline=None,  # No ACE
+            plugins=[],  # No plugins
         )
         
         # Run query
@@ -1307,25 +1347,28 @@ class TestPantheonTeamLearning:
         skillbook.enable_agent_scope = True
         
         # Add global skill
-        skillbook.add_skill(
+        s1 = skillbook.add_skill(
             "strategies",
             "Global tip: Be concise",
             agent_scope="global",
         )
+        s1.type = "user"
         
         # Add agent-specific skill
-        skillbook.add_skill(
-            "patterns",
+        s2 = skillbook.add_skill(
+            "strategies",
             "Python tip: Use f-strings for formatting",
             agent_scope="python_agent",
         )
+        s2.type = "user"
         
         # Add different agent's skill
-        skillbook.add_skill(
-            "mistakes",
+        s3 = skillbook.add_skill(
+            "strategies",
             "JavaScript tip: Avoid var",
             agent_scope="js_agent",
         )
+        s3.type = "user"
         
         # Create python_agent
         python_agent = Agent(
@@ -1334,15 +1377,24 @@ class TestPantheonTeamLearning:
             model=TEST_MODEL,
         )
         
-        # Create team
+        # Create team with plugin-based ACE
+        from pantheon.internal.learning.plugin import LearningPlugin
+        learning_plugin = LearningPlugin({
+            "learning_dir": temp_dir,
+            "enable_injection": True,
+            "enable_learning": False,
+        })
+        learning_plugin.skillbook = skillbook
+        learning_plugin.learning_pipeline = pipeline
+        learning_plugin._initialized = True
+        
         team = PantheonTeam(
             agents=[python_agent],
-            learning_pipeline=pipeline,
+            plugins=[learning_plugin],
         )
         
-        # Manually trigger skill injection (normally happens on first run)
-        await pipeline.inject_to_team(team)
-        team._skills_injected = True
+        # Trigger plugin lifecycle (normally happens in async_setup)
+        await learning_plugin.on_team_created(team)
         
         # Verify correct skills were injected
         assert "Global tip" in python_agent.instructions
@@ -1390,10 +1442,19 @@ Always be specific about what you learned.""",
             model=TEST_MODEL,
         )
         
-        # Create team with ACE
+        # Create team with plugin-based ACE
+        from pantheon.internal.learning.plugin import LearningPlugin
+        learning_plugin = LearningPlugin({
+            "learning_dir": temp_dir,
+            "enable_learning": True,
+        })
+        learning_plugin.skillbook = skillbook
+        learning_plugin.learning_pipeline = pipeline
+        learning_plugin._initialized = True
+        
         team = PantheonTeam(
             agents=[agent],
-            learning_pipeline=pipeline,
+            plugins=[learning_plugin],
         )
         
         # User message with explicit learning instruction
@@ -1487,10 +1548,19 @@ Please acknowledge that you understand this rule and will apply it.
             model=TEST_MODEL,
         )
         
-        # Create team with ACE
+        # Create team with plugin-based ACE
+        from pantheon.internal.learning.plugin import LearningPlugin
+        learning_plugin = LearningPlugin({
+            "learning_dir": temp_dir,
+            "enable_learning": True,
+        })
+        learning_plugin.skillbook = skillbook
+        learning_plugin.learning_pipeline = pipeline
+        learning_plugin._initialized = True
+        
         team = PantheonTeam(
             agents=[agent],
-            learning_pipeline=pipeline,
+            plugins=[learning_plugin],
         )
         
         memory = Memory(name="multi-turn-test")
@@ -1587,10 +1657,19 @@ class TestLearningPersistence:
             model=TEST_MODEL,
         )
         
-        # Create team with ACE
+        # Create team with plugin-based ACE
+        from pantheon.internal.learning.plugin import LearningPlugin
+        learning_plugin = LearningPlugin({
+            "learning_dir": str(test_learning_dir),
+            "enable_learning": True,
+        })
+        learning_plugin.skillbook = skillbook
+        learning_plugin.learning_pipeline = pipeline
+        learning_plugin._initialized = True
+        
         team = PantheonTeam(
             agents=[agent],
-            learning_pipeline=pipeline,
+            plugins=[learning_plugin],
         )
         
         # Run a conversation to trigger learning

@@ -82,17 +82,23 @@ class Repl(ReplUI):
             self._chatroom = self._create_chatroom_from_agent(agent, memory_dir)
         elif endpoint is not None:
             # Mode 3: Create ChatRoom with provided Endpoint
+            from pantheon.settings import get_settings
+            settings = get_settings()
             self._chatroom = ChatRoom(
                 endpoint=endpoint,
                 memory_dir=memory_dir,
                 enable_nats_streaming=False,
+                learning_config=settings.get_learning_config(),
             )
         else:
             # Mode 4: Auto-create everything
+            from pantheon.settings import get_settings
+            settings = get_settings()
             self._chatroom = ChatRoom(
                 endpoint=None,  # Auto-create Endpoint
                 memory_dir=memory_dir,
                 enable_nats_streaming=False,
+                learning_config=settings.get_learning_config(),
             )
 
         # Current chat session
@@ -186,11 +192,14 @@ class Repl(ReplUI):
             team = PantheonTeam([agent])
 
         # Create ChatRoom with default_team (bypasses template system)
+        from pantheon.settings import get_settings
+        settings = get_settings()
         return ChatRoom(
             endpoint=None,  # Auto-create Endpoint
             memory_dir=memory_dir,
             enable_nats_streaming=False,
             default_team=team,
+            learning_config=settings.get_learning_config(),
         )
 
     def register_handler(self, handler: CommandHandler | str | Path):

@@ -479,7 +479,6 @@ class TeamLearningPath(BaseLearningPath):
             self._team = await create_team_from_template(
                 endpoint_service=endpoint_service,
                 template_id=self._team_id,
-                learning_config={"enable_learning": False, "enable_injection": False},
                 check_toolsets=True,
                 enable_mcp=False,
             )

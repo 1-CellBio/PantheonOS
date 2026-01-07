@@ -372,6 +372,60 @@ class StopRunning(Exception):
     pass
 
 
+def _get_message_text(message: dict) -> str | None:
+    """Extract text content from a message (handles string or multimodal list)."""
+    # Use _llm_content if available (already modified), otherwise use content
+    user_input = message.get("_llm_content")
+    if user_input is None:
+        user_input = message.get("content")
+    
+    if not user_input:
+        return None
+        
+    if isinstance(user_input, str):
+        return user_input
+        
+    if isinstance(user_input, list):
+        # Extract text from content array
+        text_parts = [
+            part.get("text", "") 
+            for part in user_input 
+            if isinstance(part, dict) and part.get("type") == "text"
+        ]
+        return " ".join(text_parts)
+        
+    return None
+
+
+def _apply_injections(message: dict, injections: list[dict]) -> None:
+    """Apply collected injections to the message."""
+    if not injections:
+        return
+
+    # Initialize _llm_content if needed
+    if "_llm_content" not in message or message["_llm_content"] is None:
+        message["_llm_content"] = message.get("content")
+    
+    # Append all injections
+    for injection in injections:
+        content_str = injection["content"]
+        source = injection["source"]
+        
+        if isinstance(message["_llm_content"], str):
+            message["_llm_content"] += f"\n\n{content_str}"
+        elif isinstance(message["_llm_content"], list):
+            # For content arrays, append as text part
+            message["_llm_content"].append({
+                "type": "text",
+                "text": f"\n\n{content_str}"
+            })
+        
+        logger.debug(
+            f"Injected {len(content_str)} chars from {source}"
+        )
+
+
+
 class Agent:
     """
     The Agent class is the core component of Pantheon,
@@ -470,6 +524,9 @@ class Agent:
         # Provider management (MCP, ToolSet, etc.)
         self.providers: dict[str, ToolProvider] = {}  # name -> ToolProvider instance
         self.not_loaded_toolsets: list[str] = []  # Track which toolsets failed to load
+        
+        # Context injectors for dynamic content injection
+        self.context_injectors: list = []  # List of ContextInjector instances
 
     @staticmethod
     def _filter_messages_by_execution_context(
@@ -1531,6 +1588,70 @@ class Agent:
 
         return converted_messages
 
+    async def _collect_injections(self, input_text: str, injector_context: dict) -> list[dict]:
+        """Collect injections from all registered context injectors."""
+        pending_injections = []
+        for injector in self.context_injectors:
+            try:
+                injected_content = await injector.inject(input_text, injector_context)
+                if injected_content:
+                    pending_injections.append({
+                        "content": injected_content,
+                        "source": type(injector).__name__
+                    })
+            except Exception as e:
+                logger.error(f"Context injection failed: {e}", exc_info=True)
+        return pending_injections
+
+    async def _inject_context_to_messages(
+        self,
+        messages: list[dict],
+        context_variables: dict,
+    ) -> None:
+        """
+        Inject dynamic context into user messages via context injectors.
+        
+        Modifies messages in-place by appending injected content to _llm_content field.
+        Only injects into user messages (role="user").
+        """
+        if not self.context_injectors:
+            return
+
+        # Create _call_agent callback definition
+        async def _call_agent_wrap(
+            messages: list,
+            system_prompt: str | None = None,
+            model: str | None = None,
+            use_memory: bool = False,
+        ) -> dict:
+            memory = self.memory[:-1] if use_memory else None  # Exclude current message
+            return await _call_agent(
+                messages=messages,
+                system_prompt=system_prompt,
+                model=model,
+                memory=memory,
+            )
+        
+        # Build context for injectors
+        injector_context = {
+            "agent_name": self.name,
+            "_call_agent": _call_agent_wrap,
+            **context_variables,
+        }
+        
+        for message in messages:
+            # Only inject into user messages
+            if message.get("role") != "user":
+                continue
+            
+            input_text = _get_message_text(message)
+            if not input_text:
+                continue
+
+            injections = await self._collect_injections(input_text, injector_context)
+            if injections:
+                _apply_injections(message, injections)
+
     async def _prepare_execution_context(
         self,
         msg: AgentInput,
@@ -1600,6 +1721,14 @@ class Agent:
             _CLIENT_ID_NAME,
             memory_instance.id,
         )
+
+        # Apply context injectors to user's NEW input messages only
+        # (not the entire conversation_history to avoid re-injecting into memory)
+        if self.context_injectors and input_messages:
+            await self._inject_context_to_messages(
+                input_messages,
+                context_variables,
+            )
 
         return ExecutionContext(
             conversation_history=conversation_history,

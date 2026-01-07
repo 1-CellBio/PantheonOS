@@ -24,7 +24,7 @@ from .reflector import (
 from .skill_loader import SkillLoader, load_skills_into_skillbook
 from .skill_manager import SkillManager, SkillManagerOutput, UpdateOperation
 from .skillbook import Skill, Skillbook
-from .skill_injector import inject_skills_to_team, load_skill_prompt
+from .skill_injector import inject_skills_to_team, load_static_skills, load_dynamic_skills
 from pantheon.toolsets.skillbook import SkillbookToolSet
 
 
@@ -135,7 +135,6 @@ __all__ = [
     "LearningPipeline",
     # Injection utilities
     "inject_skills_to_team",
-    "load_skill_prompt",
     # Prompt Constants
     "SKILLBOOK_USAGE_INSTRUCTIONS",
     "SKILLBOOK_HEADER",

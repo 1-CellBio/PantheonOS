@@ -16,7 +16,7 @@ from pantheon.utils.misc import run_func
 from .base import Team
 
 if TYPE_CHECKING:
-    from pantheon.internal.learning import LearningPipeline
+    from pantheon.team.plugin import TeamPlugin
 
 
 LIST_AGENTS_DOC = """List all available agents and their capabilities.
@@ -221,7 +221,7 @@ class PantheonTeam(Team):
         use_summary: bool = False,
         max_delegate_depth: int | None = 5,
         allow_transfer: bool = False,
-        learning_pipeline: Optional["LearningPipeline"] = None,
+        plugins: Optional[List["TeamPlugin"]] = None,
     ):
         """Initialize PantheonTeam with unified agent architecture.
 
@@ -231,13 +231,13 @@ class PantheonTeam(Team):
                          when delegating tasks.
             max_delegate_depth: Maximum depth for nested call_agent calls.
             allow_transfer: If True, add transfer_to_agent tool to agents.
-            learning_pipeline: Optional learning pipeline (handles trajectory learning).
+            plugins: Optional list of TeamPlugin instances for extending functionality.
 
         Note:
             All agents are equal - the first one is used as the default
             entry point but receives no special treatment.
 
-            Skill injection is handled externally via inject_skills_to_team().
+            Plugins handle optional features like learning, compression, monitoring, etc.
         """
         if not agents:
             raise ValueError("Team must have at least one agent")
@@ -247,168 +247,30 @@ class PantheonTeam(Team):
         self.max_delegate_depth = max_delegate_depth
         self.allow_transfer = allow_transfer
 
-        # Learning pipeline handles trajectory learning
-        self._learning_pipeline = learning_pipeline
-
-        # Context compression
-        self._compressor = self._init_compressor()
+        # Plugin system for extending team functionality
+        self.plugins = plugins or []
 
         super().__init__(agents)
 
         # Keep triage reference for backward compatibility (first agent)
         self.triage = self.team_agents[0]
-
-    def _init_compressor(self):
-        """Initialize context compressor from settings."""
-        from pantheon.settings import get_settings
-        from pantheon.internal.compression import CompressionConfig, ContextCompressor
-
-        settings = get_settings()
-        compression_config = settings.get_compression_config()
-
-        if not compression_config.get("enable", False):
-            return None
-
-        config = CompressionConfig(
-            enable=True,
-            threshold=compression_config.get("threshold", 0.8),
-            preserve_recent_messages=compression_config.get(
-                "preserve_recent_messages", 5
-            ),
-            max_tool_arg_length=compression_config.get("max_tool_arg_length", 2000),
-            max_tool_output_length=compression_config.get(
-                "max_tool_output_length", 5000
-            ),
-            retry_after_messages=compression_config.get("retry_after_messages", 10),
-        )
-
-        # Use first agent's model for compression
-        model = self.team_agents[0].models[0] if self.team_agents else "low"
-
-        return ContextCompressor(config, model)
-
-    # Note: Skillbook injection is now handled by LearningPipeline.inject_to_team()
-    # The _inject_skillbook_to_agents and _inject_skillbook_to_agent methods have been removed.
-
-    def _submit_learning(
-        self,
-        agent_name: str,
-        messages: List[dict],
-        chat_id: str = "",
-        parent_question: Optional[str] = None,
-    ) -> None:
-        """Submit learning data to learning pipeline.
-
-        Args:
-            agent_name: Name of the agent that produced the trajectory
-            messages: List of messages from the conversation
-            chat_id: Original chat/memory ID for grouping learning files
-            parent_question: For sub_agent, the delegation instruction
-        """
-        from pantheon.internal.learning.pipeline import build_learning_input
-        from pantheon.settings import get_settings
-
-        settings = get_settings()
-        learning_config = settings.get_learning_config()
-
-        turn_id = str(uuid.uuid4())
-        learning_input = build_learning_input(
-            turn_id=turn_id,
-            agent_name=agent_name,
-            messages=messages,
-            learning_dir=learning_config["learning_dir"],
-            chat_id=chat_id,
-        )
-
-        # For sub_agent, use delegation instruction as question
-        if parent_question:
-            learning_input.question = parent_question
-
-        self._learning_pipeline.submit(learning_input)
-        logger.debug(
-            f"Submitted learning for {agent_name}, turn_id={turn_id}, chat_id={chat_id[:8] if chat_id else 'N/A'}"
-        )
-
-    async def _perform_compression(self, memory: Memory, force: bool = False) -> dict:
-        """Perform context compression on the memory.
-
-        Args:
-            memory: Memory instance to compress
-            force: If True, bypass chunk size checks and force compression
-            
-        Returns:
-            dict with compression result info
-        """
-        from pantheon.settings import get_settings
-
-        settings = get_settings()
-        # Use ace/learning directory for unified management with ACE learning data
-        learning_config = settings.get_learning_config()
-        compression_dir = learning_config["learning_dir"]
-
-        result = await self._compressor.compress(
-            messages=memory._messages,
-            compression_dir=compression_dir,
-            force=force,
-        )
-
-        if result.compression_message:
-            # Get compression range to know which messages to replace
-            compress_start, compress_end = self._compressor._get_compression_range(
-                memory._messages
-            )
-
-            # Non-destructive compression: Insert compression message AFTER the compressed block
-            # This preserves raw messages for UI/History while allowing get_messages(for_llm=True)
-            # to filter them out based on the checkpoint position.
-
-            # Insert at compress_end (the index immediately following the compressed block)
-            new_messages = (
-                memory._messages[:compress_end]
-                + [result.compression_message]
-                + memory._messages[compress_end:]
-            )
-            memory._messages = new_messages
-
-            logger.info(
-                f"Context compression checkpoint inserted at index {compress_end}. "
-                f"Compressed {compress_end - compress_start} messages ({result.original_tokens} -> {result.new_tokens} tokens)."
-            )
-            
-            return {
-                "success": True,
-                "compressed_messages": compress_end - compress_start,
-                "original_tokens": result.original_tokens,
-                "new_tokens": result.new_tokens,
-            }
         
-        # Handle different failure statuses
-        from pantheon.internal.compression.compressor import CompressionStatus
-        
-        if result.status == CompressionStatus.SKIPPED:
-            return {"success": False, "message": "Not enough messages to compress"}
-        elif result.status == CompressionStatus.FAILED_INFLATED:
-            return {"success": False, "message": "Compression would increase token count"}
-        elif result.status == CompressionStatus.FAILED_ERROR:
-            error_msg = result.error or "Unknown compression error"
-            return {"success": False, "message": f"Compression failed: {error_msg}"}
-        
-        return {"success": False, "message": "Compression did not produce a result"}
+        self._is_initialized = False
 
-    async def force_compress(self, memory: Memory) -> dict:
-        """Force context compression regardless of threshold.
+    # Plugin lifecycle hooks
+    async def _call_plugin_hook(self, hook_name: str, *args, **kwargs):
+        """Call a lifecycle hook on all plugins.
         
         Args:
-            memory: Memory instance to compress
-            
-        Returns:
-            dict with compression result info
+            hook_name: Name of the hook method to call
+            *args, **kwargs: Arguments to pass to the hook
         """
-        if not self._compressor:
-            return {"success": False, "message": "Compression not enabled in settings"}
-        
-        # Perform compression with force=True to bypass chunk size checks
-        return await self._perform_compression(memory, force=True)
+        for plugin in self.plugins:
+            hook_method = getattr(plugin, hook_name, None)
+            if hook_method:
+                await run_func(hook_method, *args, **kwargs)
+
+
 
     def get_active_agent(self, memory: Memory) -> Agent | RemoteAgent:
         active_agent_name = memory.extra_data.get("active_agent")
@@ -571,20 +433,20 @@ class PantheonTeam(Team):
                     allow_transfer=False,
                 )
 
-                # Submit sub_agent learning (child_memory is the complete conversation)
-                if self._learning_pipeline:
-                    # Use parent memory's id for consistent chat grouping
-                    parent_chat_id = (
-                        getattr(run_context.memory, "id", "")
-                        if run_context.memory
-                        else ""
-                    )
-                    self._submit_learning(
-                        agent_name=target_agent.name,
-                        messages=child_memory._messages,
-                        chat_id=parent_chat_id,
-                        parent_question=instruction,
-                    )
+                # Submit sub_agent learning via plugin hooks
+                # Use parent memory's id for consistent chat grouping
+                parent_chat_id = (
+                    getattr(run_context.memory, "id", "")
+                    if run_context.memory
+                    else ""
+                )
+                sub_agent_result = {
+                    "agent_name": target_agent.name,
+                    "messages": child_memory._messages,
+                    "chat_id": parent_chat_id,
+                    "question": instruction,  # For sub-agents, include the delegation instruction
+                }
+                await self._call_plugin_hook("on_run_end", self, sub_agent_result)
 
                 content = response.content if response else ""
                 return content
@@ -635,32 +497,40 @@ class PantheonTeam(Team):
         - transfer_to_agent(): Transfer control to another agent (if allow_transfer)
         - list_agents(): Discover other agents in the team
         - call_agent(): Delegate tasks to other agents
+        
+        Also calls on_team_created hook for all plugins.
         """
+        if self._is_initialized:
+            return
+
         if len(self.team_agents) > 1:
             if self.allow_transfer:
                 await self.add_transfer_tools_to_agents()
             await self.add_list_agents_tool()
             await self.add_unified_call_agent_tool()
+        
+        # Call plugin lifecycle hook
+        await self._call_plugin_hook("on_team_created", self)
+        
+        self._is_initialized = True
 
     async def run(self, msg: AgentInput, memory: Memory | None = None, **kwargs):
         await self.async_setup()
         if memory is None:
             memory = Memory(name="pantheon-team")
 
-        # Note: Skill injection is now handled externally before run()
-        # via inject_skills_to_team(team, skillbook)
+        # Call on_run_start hook for plugins
+        run_context = {
+            "memory": memory,
+            "kwargs": kwargs,
+        }
+        await self._call_plugin_hook("on_run_start", self, msg, run_context)
 
         # Record turn start for learning
         turn_start_index = len(memory._messages)
 
         while True:
             active_agent = self.get_active_agent(memory)
-
-            # Check and perform compression if needed
-            if self._compressor and self._compressor.should_compress(
-                memory._messages, active_agent.models[0]
-            ):
-                await self._perform_compression(memory)
 
             resp = await active_agent.run(msg, memory=memory, **kwargs)
             if isinstance(resp, AgentTransfer):
@@ -679,19 +549,19 @@ class PantheonTeam(Team):
                 self.set_active_agent(memory, resp.to_agent)
                 msg = tool_message
             else:
-                # Submit main agent learning (exclude sub_agent messages)
-                if self._learning_pipeline:
-                    current_messages = [
-                        m
-                        for m in memory._messages[turn_start_index:]
-                        if m.get("execution_context_id") is None
-                    ]
-                    if current_messages:
-                        self._submit_learning(
-                            agent_name=active_agent.name,
-                            messages=current_messages,
-                            chat_id=memory.id or "",
-                        )
+                # Call on_run_end hook for plugins (main agent learning)
+                current_messages = [
+                    m
+                    for m in memory._messages[turn_start_index:]
+                    if m.get("execution_context_id") is None
+                ]
+                if current_messages:
+                    run_result = {
+                        "agent_name": active_agent.name,
+                        "messages": current_messages,
+                        "chat_id": memory.id or "",
+                    }
+                    await self._call_plugin_hook("on_run_end", self, run_result)
                 return resp
 
     def get_target_agent(self, agent_name: str, instruction: str) -> Agent:
@@ -725,6 +595,27 @@ class PantheonTeam(Team):
                 "call_agent currently supports only local Agent instances"
             )
         return target_agent
+
+    async def force_compress(self, memory: "Memory") -> dict:
+        """
+        Force context compression regardless of threshold.
+        
+        This method delegates to CompressionPlugin if available.
+        Used by REPL and ChatRoom for manual compression.
+        
+        Args:
+            memory: Memory instance to compress
+            
+        Returns:
+            dict with compression result info: {success: bool, message: str, ...}
+        """
+        # Find CompressionPlugin in plugins
+        for plugin in self.plugins:
+            if hasattr(plugin, "force_compress"):
+                return await plugin.force_compress(self, memory)
+        
+        return {"success": False, "message": "Compression plugin not available"}
+
 
 
 async def create_delegation_task_message(

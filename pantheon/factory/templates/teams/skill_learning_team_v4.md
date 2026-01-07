@@ -5,16 +5,16 @@ description: |-
   Supports both conversation and document learning.
   Coordinator orchestrates workflow, Reflector/Executor/SkillManager use exact Pipeline prompts.
 icon: 🧠
-id: skill_learning_team_v3
-name: Skill Learning Team V3
+id: skill_learning_team_v4
+name: Skill Learning Team V4
 type: team
 version: 2.0.0
 agents:
-  - skill_learning_v3/coordinator
-  - skill_learning_v3/reflector
-  - skill_learning_v3/executor
-  - skill_learning_v3/extractor
-  - skill_learning_v3/skill_manager
+  - skill_learning_v4/coordinator
+  - skill_learning_v4/reflector
+  - skill_learning_v4/executor
+  - skill_learning_v4/extractor
+  - skill_learning_v4/skill_manager
 ---
 
 # Skill Learning Team V3

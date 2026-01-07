@@ -254,13 +254,6 @@ async def create_team_from_template(
     from pantheon.team import PantheonTeam
     from pantheon.utils.misc import call_endpoint_method
 
-    # 1. Build effective learning config
-    _config = get_settings().get_learning_config()
-    if learning_config:
-        _config.update(learning_config)
-
-    enable_learning = _config.get("enable_learning", False)
-    enable_injection = _config.get("enable_injection", enable_learning)
 
     # 2. Load template
     template_manager = get_template_manager()
@@ -284,27 +277,30 @@ async def create_team_from_template(
         endpoint_service, agent_configs, enable_mcp=enable_mcp
     )
 
-    # 6. Initialize learning resources
-    skillbook = None
-    learning_pipeline = None
+    # 6. Initialize plugins
+    plugins = []
 
-    if enable_learning or enable_injection:
-        from pantheon.internal.learning import create_learning_resources
+    if learning_config:
+        from pantheon.internal.learning.plugin import get_global_learning_plugin
+        
+        # Create global learning plugin
+        learning_plugin = await get_global_learning_plugin(learning_config)
+        plugins.append(learning_plugin)
+        
+    # Create compression plugin (still from settings for now, or could be passed)
+    # Keeping existing behavior for compression for now unless requested
+    compression_config = get_settings().get_compression_config()
+    if compression_config:
+        from pantheon.internal.compression.plugin import CompressionPlugin
+        compression_plugin = CompressionPlugin(compression_config)
+        plugins.append(compression_plugin)
 
-        skillbook, learning_pipeline = create_learning_resources(config=_config)
-
-    # 7. Create and setup team
+    # 7. Create and setup team with plugins
     team = PantheonTeam(
         agents=agents,
-        learning_pipeline=learning_pipeline,
+        plugins=plugins,
     )
     await team.async_setup()
 
-    # 8. Inject skills externally (after team creation, before run)
-    if skillbook is not None and enable_injection:
-        from pantheon.internal.learning import inject_skills_to_team
-
-        await inject_skills_to_team(team, skillbook)
-
-    logger.info(f"Team '{template_id}' created with {len(agents)} agents")
+    logger.info(f"Team '{template_id}' created with {len(agents)} agents and {len(plugins)} plugins")
     return team

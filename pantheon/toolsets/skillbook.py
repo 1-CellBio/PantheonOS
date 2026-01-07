@@ -18,6 +18,41 @@ if TYPE_CHECKING:
 
 
 # ===========================================================================
+# Skill Search Prompt Constants
+# ===========================================================================
+
+SKILL_SEARCH_PROMPT_TEMPLATE = """You are a skill search assistant. Find relevant skills based on the user's query.
+
+## Available Skills
+
+{skills_info}
+
+## User Query
+
+{query}
+
+## Task
+
+Select skills that match the user's query. Consider:
+- **Section names**: If query is "strategies" or "patterns", return skills from that section
+- **Semantic relevance**: If query describes a task, return skills that would help
+- Be INCLUSIVE - when in doubt, include the skill
+
+## Output Format
+
+Output a JSON array of skill IDs:
+["skill-id-1", "skill-id-2"]
+
+IMPORTANT: Return an empty array [] only if no skills are relevant.
+"""
+
+SKILL_SEARCH_SYSTEM_PROMPT = (
+    "You are a precise skill search assistant. "
+    "Always respond with valid JSON only, no explanations."
+)
+
+
+# ===========================================================================
 # SkillbookToolSet
 # ===========================================================================
 
@@ -432,78 +467,71 @@ class SkillbookToolSet(ToolSet):
         
         Args:
             query: Natural language search query
-            skills: List of skills to search
+                skills: List of skills to search
             
         Returns:
             Filtered list of matching skills
         """
-        from pantheon.toolset import get_current_context_variables
+        logger.info(f"Semantic search: query='{query}', total_skills={len(skills)}")
         
-        ctx = get_current_context_variables()
-        if ctx is None or not ctx.get("_call_agent"):
-            # Fallback to keyword search
+        # Get execution context (like observe_images)
+        context = self.get_context()
+        if context is None:
+            logger.info("Semantic search: No context available, fallback to keyword")
             query_lower = query.lower()
             return [s for s in skills if query_lower in s.content.lower()]
         
+        logger.debug("Semantic search: Context available, proceeding with LLM search")
+        
         # Format skills for LLM
         skills_info = self._format_skills_for_search(skills)
+        logger.debug(f"Semantic search: Formatted {len(skills)} skills for LLM")
         
-        prompt = f"""You are a skill search assistant. Find relevant skills based on the user's query.
-
-## Available Skills
-
-{skills_info}
-
-## User Query
-
-{query}
-
-## Task
-
-Select skills that match the user's query. Consider:
-- **Section names**: If query is "strategies" or "patterns", return skills from that section
-- **Semantic relevance**: If query describes a task, return skills that would help
-- Be INCLUSIVE - when in doubt, include the skill
-
-## Output Format
-
-Output a JSON array of skill IDs:
-["skill-id-1", "skill-id-2"]
-
-IMPORTANT: Return an empty array [] only if no skills are relevant.
-"""
+        # Build prompt from template
+        prompt = SKILL_SEARCH_PROMPT_TEMPLATE.format(
+            skills_info=skills_info,
+            query=query,
+        )
 
         try:
-            response = await ctx.call_agent(
+            logger.debug("Semantic search: Calling LLM for skill matching")
+            # Use context.call_agent (like observe_images)
+            response = await context.call_agent(
                 messages=[{"role": "user", "content": prompt}],
-                system_prompt=(
-                    "You are a precise skill search assistant. "
-                    "Always respond with valid JSON only, no explanations."
-                ),
-                model="low",
+                system_prompt=SKILL_SEARCH_SYSTEM_PROMPT,
+                model=None,  # Use agent's default model
                 use_memory=False,
             )
             
+            logger.debug(f"Semantic search: LLM response received: {type(response)}")
+            
             # Extract response content
             response_content = response.get("response", "") if isinstance(response, dict) else str(response)
+            logger.debug(f"Semantic search: Response content (first 200 chars): {response_content[:200]}")
             
             # Parse skill IDs from response
             matched_ids = self._parse_skill_ids(response_content)
             
             if not matched_ids:
+                logger.debug("Semantic search: No skill IDs matched")
                 return []
+            
+            logger.info(f"Semantic search: Parsed {len(matched_ids)} skill IDs from LLM response")
             
             # Filter skills by matched IDs
             id_set = set(mid.lower() for mid in matched_ids)
             results = [s for s in skills if s.id.lower() in id_set]
             
-            logger.debug(f"Semantic search matched {len(results)} skills for: {query}")
+            logger.info(f"Semantic search: Matched {len(results)} skills for query: '{query}'")
+            logger.debug(f"Semantic search: Matched skill IDs: {[s.id for s in results]}")
             return results
             
         except Exception as e:
             logger.warning(f"Semantic skill search failed, falling back to keyword: {e}")
             query_lower = query.lower()
-            return [s for s in skills if query_lower in s.content.lower()]
+            results = [s for s in skills if query_lower in s.content.lower()]
+            logger.info(f"Semantic search: Keyword fallback found {len(results)} skills")
+            return results
 
     def _format_skills_for_search(self, skills: List["Skill"]) -> str:
         """Format skills for LLM consumption."""

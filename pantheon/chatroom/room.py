@@ -139,8 +139,8 @@ class ChatRoom(ToolSet):
         # Auto chat name generation (disabled by default, enable for UI mode)
         self._enable_auto_chat_name = enable_auto_chat_name
 
-        # ACE (Agentic Context Engineering) long-term memory
-        self._init_learning(learning_config)
+        # Plugin system (learning, compression, etc.)
+        self._init_plugins(learning_config)
 
     async def _get_endpoint_service(self):
         """Get endpoint service object (instance or RemoteService)."""
@@ -166,14 +166,15 @@ class ChatRoom(ToolSet):
             endpoint_service, endpoint_method_name=endpoint_method_name, **kwargs
         )
 
-    def _init_learning(self, learning_config: dict | None = None) -> None:
-        """Initialize learning config (lazy creation).
+    def _init_plugins(self, learning_config: dict | None = None) -> None:
+        """Initialize plugin config (lazy creation).
         
-        Actual resources are created in background during run_setup().
+        Actual plugin instances are created in background during run_setup().
         """
         self._learning_config = learning_config
-        self._skillbook = None
-        self._learning_pipeline = None
+        self._learning_plugin = None
+        self._compression_plugin = None
+        self._plugins = []  # List of initialized plugins
 
     async def run(self, log_level: str | None = None, remote: bool = True):
         return await super().run(log_level=log_level, remote=remote)
@@ -219,52 +220,72 @@ class ChatRoom(ToolSet):
         else:
             logger.info("ChatRoom: NATS streaming disabled")
 
-        # Start learning resources initialization in background (non-blocking warmup)
+        # Start plugin initialization in background (non-blocking warmup)
         if self._learning_config:
-            task = asyncio.create_task(self._ensure_learning_resources())
+            task = asyncio.create_task(self._ensure_plugins())
             self._background_tasks.add(task)
 
-    async def _ensure_learning_resources(self) -> "Skillbook | None":
-        """Lazily initialize learning resources (idempotent).
+    async def _ensure_plugins(self, endpoint_service: object = None) -> list:
+        """Lazily initialize plugins (idempotent).
         
-        Creates skillbook and pipeline on first call, starts pipeline.
+        Creates LearningPlugin and CompressionPlugin on first call.
         Called in background during run_setup for warmup, and awaited
-        before team creation to ensure resources are ready.
+        before team creation to ensure plugins are ready.
+        
+        Args:
+            endpoint_service: Active endpoint service. If provided, used to 
+                              initialize team-based capabilities (e.g. learning team).
         """
-        if self._skillbook is not None:
-            return self._skillbook
+        if self._plugins:
+            # If endpoint_service is provided and we have a learning plugin,
+            # we MUST ensure the learning team is initialized (it might have been skipped during warmup)
+            if endpoint_service and self._learning_plugin:
+                await self._learning_plugin.initialize_learning_team(endpoint_service)
+            return self._plugins
         
         if not self._learning_config:
-            return None
+            return []
         
         try:
-            from pantheon.internal.learning import create_learning_resources
+            from pantheon.internal.learning.plugin import get_global_learning_plugin
+            from pantheon.internal.compression.plugin import CompressionPlugin
+            from pantheon.settings import get_settings
             
-            self._skillbook, self._learning_pipeline = create_learning_resources(
-                config=self._learning_config
-            )
+            settings = get_settings()
             
-            # Start pipeline if created
-            if self._learning_pipeline is not None:
-                endpoint_service = await self._get_endpoint_service()
-                await self._learning_pipeline.initialize_team(endpoint_service)
-                await self._learning_pipeline.start()
-                logger.info("ChatRoom: learning resources initialized")
+            # Create global learning plugin (singleton)
+            self._learning_plugin = await get_global_learning_plugin(self._learning_config)
+            
+            # Initialize learning team if endpoint_service available (now or in future calls)
+            if endpoint_service and self._learning_plugin:
+                await self._learning_plugin.initialize_learning_team(endpoint_service)
+                
+            self._plugins.append(self._learning_plugin)
+            
+            # Create compression plugin
+            compression_config = settings.get_compression_config()
+            if compression_config:
+                self._compression_plugin = CompressionPlugin(compression_config)
+                self._plugins.append(self._compression_plugin)
+            
+            logger.info(f"ChatRoom: {len(self._plugins)} plugins initialized")
         except Exception as e:
-            logger.error(f"ChatRoom: Failed to initialize learning resources: {e}")
+            logger.error(f"ChatRoom: Failed to initialize plugins: {e}")
+            import traceback
+            traceback.print_exc()
         
-        return self._skillbook
+        return self._plugins
 
     async def cleanup(self) -> None:
         """Clean up ChatRoom resources before exit.
         
-        Stops learning pipeline (saves skillbook), cancels background tasks,
-        and cleans up the endpoint.
+        Stops plugins, cancels background tasks, and cleans up the endpoint.
         """
-        # Stop learning pipeline (saves skillbook)
-        if self._learning_pipeline is not None:
+        # Shutdown global learning plugin (saves skillbook, stops pipeline)
+        if self._learning_plugin:
             try:
-                await self._learning_pipeline.stop()
+                from pantheon.internal.learning.plugin import shutdown_global_learning_plugin
+                await shutdown_global_learning_plugin()
             except Exception:
                 pass
         
@@ -432,20 +453,15 @@ class ChatRoom(ToolSet):
         all_agents = await create_agents_from_template(endpoint_service, agent_configs)
         logger.info(f"Created {len(all_agents)} agents")
 
-        # ===== STEP 4: Ensure learning resources are ready =====
-        await self._ensure_learning_resources()
+        # ===== STEP 4: Ensure plugins are ready (and init learning team) =====
+        plugins = await self._ensure_plugins(endpoint_service=endpoint_service)
         
-        # ===== STEP 5: Create and setup team =====
+        # ===== STEP 5: Create and setup team with plugins =====
         team = PantheonTeam(
             agents=all_agents,
-            learning_pipeline=self._learning_pipeline,
+            plugins=plugins,
         )
         await team.async_setup()
-
-        # ===== STEP 6: Inject skills externally (after team creation) =====
-        if self._skillbook is not None:
-            from pantheon.internal.learning import inject_skills_to_team
-            await inject_skills_to_team(team, self._skillbook)
 
         # Store source path for template persistence
         team._source_path = team_config.source_path

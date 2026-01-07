@@ -278,10 +278,13 @@ class Settings:
         enable_learning = learning.get("enable_learning", learning.get("enable", False))
         # enable_injection defaults to enable_learning if not explicitly set
         enable_injection = learning.get("enable_injection", enable_learning)
+        # enable_dynamic_injection defaults to enable_injection if not explicitly set
+        enable_dynamic_injection = learning.get("enable_dynamic_injection", enable_injection)
         
         return {
             "enable_learning": enable_learning,
             "enable_injection": enable_injection,
+            "enable_dynamic_injection": enable_dynamic_injection,
             # Keep 'enable' for backward compatibility (maps to enable_learning)
             "enable": enable_learning,
             "skillbook_path": str(
@@ -317,6 +320,7 @@ class Settings:
         
         return {
             "enable": compression.get("enable", False),  # Disabled by default
+            "compression_model": compression.get("compression_model"),  # None uses Agent's default
             "threshold": compression.get("threshold", 0.8),
             "preserve_recent_messages": compression.get("preserve_recent_messages", 5),
             "max_tool_arg_length": compression.get("max_tool_arg_length", 2000),
