@@ -7,6 +7,7 @@ import json
 
 import asyncio
 from datetime import datetime
+from pathlib import Path
 
 from .renderers import (
     DisplayMode,
@@ -684,6 +685,19 @@ class ReplUI:
         self.console.print(
             f"[dim]• History:  [/dim] {len(self.command_history)} commands"
         )
+
+        # Memory record path
+        chatroom = getattr(self, "_chatroom", None)
+        chat_id = getattr(self, "_chat_id", None)
+        if chatroom and chat_id:
+            try:
+                memory = chatroom.memory_manager.get_memory(chat_id)
+                file_path = getattr(memory, "_file_path", None)
+                if file_path:
+                    self.console.print(f"[dim]• Memory:   [/dim] {Path(file_path).absolute()}")
+            except Exception:
+                pass
+
         self.console.print()
 
         # Token usage statistics

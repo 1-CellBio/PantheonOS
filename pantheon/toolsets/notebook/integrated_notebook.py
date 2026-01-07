@@ -100,6 +100,10 @@ class IntegratedNotebookToolSet(ToolSet):
         # Completion service
         self.completion_service = EnhancedCompletionService()
 
+        # Notebook file locks to prevent concurrent edit operations
+        import asyncio
+        self._notebook_locks: Dict[str, asyncio.Lock] = {}
+
     async def run_setup(self):
         """Setup toolset"""
         await super().run_setup()
@@ -141,12 +145,8 @@ class IntegratedNotebookToolSet(ToolSet):
             logger.info(f"Registered FileLogHandler: {log_dir}")
 
         # Start unified IOPub listener
-        if (
-            self.kernel_toolset.use_unified_listener
-            and self.kernel_toolset.unified_listener
-        ):
-            await self.kernel_toolset.unified_listener.start_listening()
-            logger.info("Started unified IOPub listener")
+        await self.kernel_toolset.unified_listener.start_listening()
+        logger.info("Started unified IOPub listener")
 
         # Load persisted contexts
         await self._load_contexts()
@@ -344,6 +344,11 @@ class IntegratedNotebookToolSet(ToolSet):
 
         return True, ""
 
+    def _get_notebook_lock(self, notebook_path: str):
+        """Get or create lock for notebook file operations (thread-safe)"""
+        import asyncio
+        return self._notebook_locks.setdefault(notebook_path, asyncio.Lock())
+
     # ═══════════════════════════════════════════════════════════
     # Internal Execute Logic (shared by execute_cell, add_cell, update_cell)
     # ═══════════════════════════════════════════════════════════
@@ -520,6 +525,13 @@ class IntegratedNotebookToolSet(ToolSet):
             - Use parallel computing when available (scanpy: n_jobs=-1 etc...)
             - Use manage_kernel(action="interrupt") to stop long-running cells
             - IMPORTANT: To install R packages, use `%%R install.packages('pkg')`. Shell `Rscript` installs may not be visible.
+        
+        Note:
+            Only one execution can run at a time per kernel session. If you call
+            execute_cell, add_cell(execute=True), or update_cell(execute=True)
+            concurrently for the same notebook, subsequent calls will return a
+            "Kernel is busy" error. Wait for the current execution to complete
+            or use manage_kernel(action='interrupt') to stop it.
         """
         session_id = self.get_session_id()
         if not session_id:
@@ -569,46 +581,52 @@ class IntegratedNotebookToolSet(ToolSet):
                 - cell_id: The cell identifier
                 - memory_hint: (optional) Memory warning if usage > 75%
                 - error: Error message if execution failed
+        
+        Note:
+            Only one execution can run at a time per kernel session. Concurrent
+            execution calls (execute_cell, add_cell(execute=True), update_cell(execute=True))
+            for the same notebook will return "Kernel is busy" error.
         """
         session_id = self.get_session_id()
+        added_cell_id = None
 
-        try:
-            # NOTE: When execute=False, we don't trigger kernel (lightweight CRUD)
-            # Get context only if exists (don't create kernel for simple edit)
-            context = self._get_context(notebook_path, session_id) if session_id else None
+        # File lock only covers edit operation
+        async with self._get_notebook_lock(notebook_path):
+            try:
+                # NOTE: When execute=False, we don't trigger kernel (lightweight CRUD)
+                # Get context only if exists (don't create kernel for simple edit)
+                context = self._get_context(notebook_path, session_id) if session_id else None
 
-            # Call notebook_contents API
-            result = await self.notebook_contents.add_cell(
-                path=notebook_path,
-                cell_type=cell_type,
-                source=content,
-                cell_id=cell_id,
-                position=position,
+                # Call notebook_contents API
+                result = await self.notebook_contents.add_cell(
+                    path=notebook_path,
+                    cell_type=cell_type,
+                    source=content,
+                    cell_id=cell_id,
+                    position=position,
+                )
+
+                # Add context information only if context exists
+                if result["success"]:
+                    result.pop("file_path", None)
+                    result["notebook_path"] = notebook_path
+                    if context:
+                        result["kernel_session_id"] = context.kernel_session_id
+                    added_cell_id = result.get("cell_id")
+
+            except Exception as e:
+                logger.error(f"add_cell failed: {e}")
+                return {"success": False, "error": str(e)}
+
+        # Execute OUTSIDE file lock - uses separate execution lock
+        if result["success"] and execute and cell_type == "code" and session_id and added_cell_id:
+            exec_result = await self._execute_cell_internal(
+                notebook_path, added_cell_id, session_id
             )
+            exec_result.pop("notebook_path", None)
+            result["execution"] = exec_result
 
-            # Add context information only if context exists
-            if result["success"]:
-                result.pop("file_path", None)
-                result["notebook_path"] = notebook_path
-                if context:
-                    result["kernel_session_id"] = context.kernel_session_id
-
-                # Execute if requested and cell is code type
-                # NOTE: Kernel is started here only when execute=True
-                if execute and cell_type == "code" and session_id:
-                    exec_result = await self._execute_cell_internal(
-                        notebook_path, result["cell_id"], session_id
-                    )
-                    # Put all execution info in a dedicated field to avoid missing any fields
-                    # Remove redundant notebook_path (already in result)
-                    exec_result.pop("notebook_path", None)
-                    result["execution"] = exec_result
-
-            return result
-
-        except Exception as e:
-            logger.error(f"add_cell failed: {e}")
-            return {"success": False, "error": str(e)}
+        return result
 
     @tool
     async def update_cell(
@@ -658,76 +676,84 @@ class IntegratedNotebookToolSet(ToolSet):
             
             # Update only (no execution)
             update_cell(notebook_path, cell_id, content="x = 1")
+        
+        Note:
+            Only one execution can run at a time per kernel session. Concurrent
+            execution calls (execute_cell, add_cell(execute=True), update_cell(execute=True))
+            for the same notebook will return "Kernel is busy" error.
         """
         session_id = self.get_session_id()
+        should_execute = False
+        cell_type = "code"
 
-        try:
-            # NOTE: When execute=False, we don't trigger kernel (lightweight CRUD)
-            # Get context only if exists (don't create kernel for simple edit)
-            context = self._get_context(notebook_path, session_id) if session_id else None
+        # File lock only covers edit operation
+        async with self._get_notebook_lock(notebook_path):
+            try:
+                # NOTE: When execute=False, we don't trigger kernel (lightweight CRUD)
+                # Get context only if exists (don't create kernel for simple edit)
+                context = self._get_context(notebook_path, session_id) if session_id else None
 
-            # Read cell data for partial replacement and cell type check
-            cell_index, cell_data = await self._get_cell_by_id(notebook_path, cell_id)
-            if cell_index is None:
-                return {"success": False, "error": f"Cell {cell_id} not found"}
-            
-            cell_type = cell_data.get("cell_type", "code") if cell_data else "code"
-            replacement_count = None
+                # Read cell data for partial replacement and cell type check
+                cell_index, cell_data = await self._get_cell_by_id(notebook_path, cell_id)
+                if cell_index is None:
+                    return {"success": False, "error": f"Cell {cell_id} not found"}
+                
+                cell_type = cell_data.get("cell_type", "code") if cell_data else "code"
+                replacement_count = None
 
-            # Partial replacement mode: replace old_content with content
-            if old_content:
-                # Get source
-                source = self.notebook_contents._format_source(cell_data.get("source", ""))
+                # Partial replacement mode: replace old_content with content
+                if old_content:
+                    # Get source
+                    source = self.notebook_contents._format_source(cell_data.get("source", ""))
 
-                # Check if old_content exists
-                if old_content not in source:
-                    return {
-                        "success": False,
-                        "error": f"old_content not found in cell {cell_id}"
-                    }
+                    # Check if old_content exists
+                    if old_content not in source:
+                        return {
+                            "success": False,
+                            "error": f"old_content not found in cell {cell_id}"
+                        }
 
-                # Count replacements
-                replacement_count = source.count(old_content)
+                    # Count replacements
+                    replacement_count = source.count(old_content)
 
-                # Perform replacement
-                new_source = source.replace(old_content, content)
+                    # Perform replacement
+                    new_source = source.replace(old_content, content)
 
-                # Update content variable for the actual update
-                content = new_source
+                    # Update content variable for the actual update
+                    content = new_source
 
-            # Call notebook_contents API with final content
-            result = await self.notebook_contents.update_cell(
-                path=notebook_path,
-                cell_id=cell_id,
-                source=content,
+                # Call notebook_contents API with final content
+                result = await self.notebook_contents.update_cell(
+                    path=notebook_path,
+                    cell_id=cell_id,
+                    source=content,
+                )
+
+                # Add context information
+                if result["success"]:
+                    result.pop("file_path", None)
+                    result["notebook_path"] = notebook_path
+                    if context:
+                        result["kernel_session_id"] = context.kernel_session_id
+
+                    if replacement_count is not None:
+                        result["replacements"] = replacement_count
+                    
+                    should_execute = execute and cell_type == "code" and session_id
+
+            except Exception as e:
+                logger.error(f"update_cell failed: {e}")
+                return {"success": False, "error": str(e)}
+
+        # Execute OUTSIDE file lock - uses separate execution lock
+        if result["success"] and should_execute:
+            exec_result = await self._execute_cell_internal(
+                notebook_path, cell_id, session_id
             )
+            exec_result.pop("notebook_path", None)
+            result["execution"] = exec_result
 
-            # Add context information
-            if result["success"]:
-                result.pop("file_path", None)
-                result["notebook_path"] = notebook_path
-                if context:
-                    result["kernel_session_id"] = context.kernel_session_id
-
-                if replacement_count is not None:
-                    result["replacements"] = replacement_count
-
-                # Execute if requested and cell is code type
-                # NOTE: Kernel is started here only when execute=True
-                if execute and cell_type == "code" and session_id:
-                    exec_result = await self._execute_cell_internal(
-                        notebook_path, cell_id, session_id
-                    )
-                    # Put all execution info in a dedicated field to avoid missing any fields
-                    # Remove redundant notebook_path (already in result)
-                    exec_result.pop("notebook_path", None)
-                    result["execution"] = exec_result
-
-            return result
-
-        except Exception as e:
-            logger.error(f"update_cell failed: {e}")
-            return {"success": False, "error": str(e)}
+        return result
 
     @tool
     async def delete_cell(
@@ -750,28 +776,29 @@ class IntegratedNotebookToolSet(ToolSet):
         """
         session_id = self.get_session_id()
 
-        try:
-            # Get context if exists (don't create kernel for simple edit)
-            context = self._get_context(notebook_path, session_id) if session_id else None
+        async with self._get_notebook_lock(notebook_path):
+            try:
+                # Get context if exists (don't create kernel for simple edit)
+                context = self._get_context(notebook_path, session_id) if session_id else None
 
-            # Call notebook_contents API
-            result = await self.notebook_contents.delete_cell(
-                path=notebook_path,
-                cell_id=cell_id,
-            )
+                # Call notebook_contents API
+                result = await self.notebook_contents.delete_cell(
+                    path=notebook_path,
+                    cell_id=cell_id,
+                )
 
-            # Add context information only if context exists
-            if result["success"]:
-                result.pop("file_path", None)
-                result["notebook_path"] = notebook_path
-                if context:
-                    result["kernel_session_id"] = context.kernel_session_id
+                # Add context information only if context exists
+                if result["success"]:
+                    result.pop("file_path", None)
+                    result["notebook_path"] = notebook_path
+                    if context:
+                        result["kernel_session_id"] = context.kernel_session_id
 
-            return result
+                return result
 
-        except Exception as e:
-            logger.error(f"delete_cell failed: {e}")
-            return {"success": False, "error": str(e)}
+            except Exception as e:
+                logger.error(f"delete_cell failed: {e}")
+                return {"success": False, "error": str(e)}
 
     @tool
     async def move_cell(
@@ -796,29 +823,30 @@ class IntegratedNotebookToolSet(ToolSet):
         """
         session_id = self.get_session_id()
 
-        try:
-            # Get context if exists (don't create kernel for simple edit)
-            context = self._get_context(notebook_path, session_id) if session_id else None
+        async with self._get_notebook_lock(notebook_path):
+            try:
+                # Get context if exists (don't create kernel for simple edit)
+                context = self._get_context(notebook_path, session_id) if session_id else None
 
-            # Call notebook_contents API
-            result = await self.notebook_contents.move_cell(
-                path=notebook_path,
-                cell_id=cell_id,
-                below_cell_id=below_cell_id,
-            )
+                # Call notebook_contents API
+                result = await self.notebook_contents.move_cell(
+                    path=notebook_path,
+                    cell_id=cell_id,
+                    below_cell_id=below_cell_id,
+                )
 
-            # Add context information only if context exists
-            if result["success"]:
-                result.pop("file_path", None)
-                result["notebook_path"] = notebook_path
-                if context:
-                    result["kernel_session_id"] = context.kernel_session_id
+                # Add context information only if context exists
+                if result["success"]:
+                    result.pop("file_path", None)
+                    result["notebook_path"] = notebook_path
+                    if context:
+                        result["kernel_session_id"] = context.kernel_session_id
 
-            return result
+                return result
 
-        except Exception as e:
-            logger.error(f"move_cell failed: {e}")
-            return {"success": False, "error": str(e)}
+            except Exception as e:
+                logger.error(f"move_cell failed: {e}")
+                return {"success": False, "error": str(e)}
 
     @tool
     async def read_cells(
