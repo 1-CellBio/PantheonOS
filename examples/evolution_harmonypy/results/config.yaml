@@ -1,7 +1,7 @@
 max_iterations: 200
-checkpoint_interval: 20
+checkpoint_interval: 10
 early_stop_generations: 200
-num_workers: 8
+num_workers: 4
 num_islands: 3
 migration_interval: 20
 migration_rate: 0.1
@@ -19,9 +19,9 @@ num_top_programs: 3
 exploration_ratio: 0.2
 exploitation_ratio: 0.7
 evaluation_timeout: 120
-max_parallel_evaluations: 4
-function_weight: 0.9
-llm_weight: 0.1
+max_parallel_evaluations: 2
+function_weight: 1.0
+llm_weight: 0.0
 cascade_evaluation: false
 cascade_thresholds:
 - 0.3
@@ -36,12 +36,12 @@ max_retries: 3
 mutation_timeout: 120
 use_analyzer: true
 analyzer_model: normal
-analyzer_timeout: 180
+analyzer_timeout: 300
 top_programs_probability: 0.5
 inspirations_probability: 0.2
 mutator_model: normal
 feedback_model: normal
-db_path: results
+db_path: results/
 workspace_path: null
 save_prompts: true
 save_all_programs: false

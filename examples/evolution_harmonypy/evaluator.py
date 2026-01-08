@@ -359,10 +359,10 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
 
         # Combined score
         combined_score = (
-            0.4 * mixing_score +
-            0.3 * bio_score +
-            0.2 * speed_score +
-            0.1 * conv_score
+            0.45 * mixing_score +
+            0.45 * bio_score +
+            0.05 * speed_score +
+            0.05 * conv_score
         )
 
         return {
@@ -460,10 +460,10 @@ def _evaluate_on_split(workspace_path: str, split: str) -> Dict[str, Any]:
         conv_score = compute_convergence_score(objectives)
 
         combined_score = (
-            0.4 * mixing_score +
-            0.3 * bio_score +
-            0.2 * speed_score +
-            0.1 * conv_score
+            0.45 * mixing_score +
+            0.45 * bio_score +
+            0.05 * speed_score +
+            0.05 * conv_score
         )
 
         return {

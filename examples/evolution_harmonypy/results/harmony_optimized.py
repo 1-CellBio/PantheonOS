@@ -15,7 +15,13 @@ This implementation is designed to be optimized by Pantheon Evolution.
 
 import numpy as np
 from sklearn.cluster import KMeans
-from typing import Optional
+from typing import Optional, Tuple, List
+
+try:
+    from scipy.linalg import cho_factor, cho_solve
+except Exception:  # scipy is optional; fall back to np.linalg.solve
+    cho_factor = None
+    cho_solve = None
 
 
 class Harmony:
@@ -70,40 +76,48 @@ class Harmony:
         self.Z_corr = None
         self.R = None
         self.Y = None  # Cluster centroids
-        self.Phi = None  # (deprecated) Batch membership matrix (removed for perf/memory)
+        self.Phi = None  # Batch membership matrix
         self.objectives = []
 
-        # Batch bookkeeping (set during fit)
-        self.unique_batches = None
-        self.batch_id = None  # (n_cells,) integer ids in [0, n_batches)
-        self.batch_indices = None  # List[np.ndarray], indices per batch
-        self.batch_props = None  # (n_batches,)
+        # Internal dampening to reduce overcorrection (private; does not change public API)
+        self._correction_alpha = 0.5
+        self._epsilon_z = 1e-4  # embedding-based early stop threshold on mean ||delta||
 
-        # Removed dense batch indicator matrix (_H/_Ht) to avoid O(N*B) memory/time
-        self._H = None
-        self._Ht = None
+        # Cached / precomputed internals for performance
+        self._design = None  # (n_cells x p) with intercept + batch indicators (excluding ref batch)
+        self._design_T = None  # (p x n_cells) cached transpose for fast GEMMs in _correct
+        self._I_ridge = None  # (p x p) identity for ridge penalty in _correct
+        self._Z_sq = None  # (n_cells,) cached ||Z_corr||^2 per cell
+        self._Y_sq = None  # (n_clusters,) cached ||Y||^2 per cluster
+        self._last_dist = None  # (n_clusters x n_cells) last computed distances
 
-        # Diversity smoothing (EMA) cache
-        self._O_ema = None  # (K,B) exponential moving average of O
-        self._O_ema_beta = 0.8
+        # Optional cached transpose of Phi for fast O computation (N x B)
+        self._Phi_T = None
 
-        # Caches
-        self._dist = None  # (n_clusters x n_cells)
-        self._Z_sq = None  # (n_cells x 1) cache of ||Z_corr||^2
-        self._dist_valid = False
-        self._Z_version = 0
-        self._Y_version = 0
-        self._dist_Z_version = -1
-        self._dist_Y_version = -1
+        # Cache diversity stats from _update_R to avoid recomputation in _compute_objective
+        self._O_last = None  # (n_clusters x n_batches) last cluster-by-batch proportions
+        self._log_ratio_last = None  # (n_clusters x n_batches) last log-ratio for diversity penalty
 
-        # Diversity sufficient statistics cache (computed in _update_R, reused in objective)
-        self._R_version = 0
-        self._last_O_num = None  # (K,B)
-        self._last_R_sum = None  # (K,1)
-        self._last_O_num_R_version = -1
+        # Lagged diversity penalty state (used in _update_R single-pass update)
+        self._log_ratio_prev = None  # (n_clusters x n_batches) EMA-smoothed log-ratio for diversity penalty
 
-        # Cluster convergence sampling indices (set during fit)
-        self._cluster_sample_idx = None
+        # Diversity penalty stabilization (private; does not change public API)
+        self._diversity_ema_gamma = 0.3
+        self._diversity_clip = 5.0
+
+        # Effective theta (annealed over outer Harmony iterations)
+        self._theta_eff = theta
+
+        # Batch indexing cache (avoid dense Phi multiplies in hot loops)
+        self._batch_id = None  # (n_cells,) int in [0, n_batches)
+        self._batch_indices = None  # List[np.ndarray] indices per batch id
+        self._n_batches = None
+
+        # Preallocated buffers (hot-loop allocations in _update_R / _compute_distances)
+        self._buf_logR = None  # (n_clusters x n_cells)
+        self._buf_R = None  # (n_clusters x n_cells)
+        self._buf_cross = None  # (n_clusters x n_cells) reusable Y @ Z^T
+        self._buf_dist = None  # (n_clusters x n_cells) reusable distances
 
     def fit(
         self,
@@ -120,107 +134,88 @@ class Harmony:
         Returns:
             self with Z_corr containing corrected coordinates
         """
-        if self.sigma <= 0:
-            raise ValueError("sigma must be > 0")
-        if self.sigma < 1e-3:
-            raise ValueError("sigma must be >= 1e-3 to avoid degenerate (nearly hard) assignments")
-        if self.n_clusters <= 0:
-            raise ValueError("n_clusters must be > 0")
-        if self.max_iter <= 0:
-            raise ValueError("max_iter must be > 0")
-        if self.max_iter_kmeans <= 0:
-            raise ValueError("max_iter_kmeans must be > 0")
-        if self.lamb < 0:
-            raise ValueError("lamb must be >= 0")
-        if self.theta < 0:
-            raise ValueError("theta must be >= 0")
+        n_cells, n_features = X.shape
 
-        if X.ndim != 2:
-            raise ValueError("X must be a 2D array (n_cells x n_features)")
-        if batch_labels.shape[0] != X.shape[0]:
-            raise ValueError("batch_labels must have the same length as X has rows")
-        if not np.isfinite(X).all():
-            raise ValueError("X contains NaN or Inf")
-
-        n_cells, _ = X.shape
-
-        # Store original (use float32 for speed/memory; compute sensitive ops in float64 where needed)
-        X = np.asarray(X, dtype=np.float32)
+        # Store original
         self.Z_orig = X.copy()
         self.Z_corr = X.copy()
 
-        # Invalidate caches
-        self._dist = None
-        self._Z_sq = None
-        self._dist_valid = False
-        self._Z_version += 1
+        # Create batch membership matrix (one-hot encoding)
+        unique_batches = np.unique(batch_labels)
+        n_batches = len(unique_batches)
+        self._n_batches = n_batches
 
-        # Batch bookkeeping (no dense Phi)
-        self.unique_batches, inv = np.unique(batch_labels, return_inverse=True)
-        n_batches = len(self.unique_batches)
-        if n_batches < 1:
-            raise ValueError("No batches found in batch_labels")
+        # Map batch labels to contiguous ids [0..n_batches-1] and cache indices per batch
+        batch_to_id = {b: i for i, b in enumerate(unique_batches)}
+        self._batch_id = np.array([batch_to_id[b] for b in batch_labels], dtype=np.int64)
+        self._batch_indices = [np.where(self._batch_id == b)[0] for b in range(n_batches)]
 
-        self.batch_id = inv.astype(np.int64, copy=False)
-        self.batch_indices = [np.flatnonzero(self.batch_id == b) for b in range(n_batches)]
-        counts = np.bincount(self.batch_id, minlength=n_batches).astype(np.float64)
-        self.batch_props = counts / float(n_cells)
+        self.Phi = np.zeros((n_batches, n_cells))
+        for i in range(n_batches):
+            self.Phi[i, self._batch_indices[i]] = 1
 
-        # Do NOT build dense (N x B) one-hot matrix; use index reductions instead
-        self._H = None
-        self._Ht = None
+        # Compute batch proportions
+        self.batch_props = self.Phi.sum(axis=1) / n_cells
 
-        # Deprecated (kept for backward compatibility; no longer used)
-        self.Phi = None
+        # Precompute design matrix once: intercept + batch indicators (drop first batch as reference)
+        self._design = np.column_stack(
+            [
+                np.ones(n_cells),
+                self.Phi[1:, :].T,
+            ]
+        )  # (n_cells x p), where p = 1 + (n_batches - 1)
 
-        # Sample indices for cheaper clustering convergence checks
-        rng = np.random.default_rng(self.random_state)
-        sample_size = int(min(1000, n_cells))
-        self._cluster_sample_idx = (
-            rng.choice(n_cells, size=sample_size, replace=False) if sample_size > 0 else None
-        )
+        # Cache transpose/identity for fast weighted least squares in _correct()
+        self._design_T = self._design.T
+        self._I_ridge = np.eye(self._design.shape[1], dtype=np.float64)
+
+        # Cache Phi transpose for fast responsibility-by-batch aggregation
+        self._Phi_T = self.Phi.T  # (n_cells x n_batches)
+
+        # Initialize lagged diversity stats
+        self._log_ratio_prev = None
+
+        # Initialize cached norms
+        self._Z_sq = np.sum(self.Z_corr ** 2, axis=1)  # (n_cells,)
 
         # Initialize clusters
         self._init_clusters()
 
-        # Initialize diversity EMA after clusters exist (K is known)
-        # Will be updated on first _update_R call in the loop.
-        self._O_ema = None
-
         # Main Harmony loop
         self.objectives = []
+        prev_mean_delta = None
         for iteration in range(self.max_iter):
-            # Anneal theta (warmup -> ramp -> slight taper)
-            if self.max_iter <= 1:
-                theta_t = float(self.theta)
-            else:
-                t = float(iteration) / float(self.max_iter - 1)
-                warmup = 0.2
-                ramp_end = 0.8
-                if t < warmup:
-                    s = 0.3 + 0.7 * (t / warmup)  # 0.3 -> 1.0
-                elif t < ramp_end:
-                    s = 1.0
-                else:
-                    s = 1.0 - 0.1 * ((t - ramp_end) / max(1e-8, (1.0 - ramp_end)))  # 1.0 -> 0.9
-                theta_t = float(self.theta) * float(s)
+            # Anneal diversity penalty to preserve biology early, enforce mixing later
+            # Use a slower ramp: theta_eff = theta * t^2, where t in [0, 1]
+            t = iteration / max(1, self.max_iter - 1)
+            self._theta_eff = float(self.theta) * (t ** 2)
 
             # Clustering step
-            self._cluster(theta_t=theta_t)
+            self._cluster()
 
             # Correction step
-            self._correct(iteration=iteration)
+            mean_delta = self._correct()
+
+            # Adaptive correction strength: speed up when stabilizing, damp when diverging
+            if mean_delta is not None:
+                if prev_mean_delta is not None and prev_mean_delta > 0:
+                    if mean_delta < prev_mean_delta * 0.9:
+                        self._correction_alpha = min(self._correction_alpha * 1.05, 1.0)
+                    elif mean_delta > prev_mean_delta * 1.1:
+                        self._correction_alpha = max(self._correction_alpha * 0.7, 0.2)
+                prev_mean_delta = mean_delta
 
             # Check convergence
-            obj = self._compute_objective(theta_t=theta_t)
+            obj = self._compute_objective()
             self.objectives.append(obj)
 
+            # Embedding-based early stop (often more directly tied to correction stability)
+            if mean_delta is not None and mean_delta < self._epsilon_z:
+                break
+
             if iteration > 0:
-                prev = self.objectives[-2]
-                curr = self.objectives[-1]
-                denom = abs(prev) + 1e-8
-                rel_change = abs(prev - curr) / denom
-                if rel_change < self.epsilon_harmony:
+                obj_change = abs(self.objectives[-2] - self.objectives[-1])
+                if obj_change < self.epsilon_harmony:
                     break
 
         return self
@@ -230,263 +225,305 @@ class Harmony:
         kmeans = KMeans(
             n_clusters=self.n_clusters,
             random_state=self.random_state,
-            n_init="auto",
-            max_iter=self.max_iter_kmeans,
+            n_init=1,
+            max_iter=25,
         )
         kmeans.fit(self.Z_corr)
-        self.Y = kmeans.cluster_centers_.astype(np.float32, copy=False).T  # (n_features x n_clusters)
-        self._Y_version += 1
-        self._dist_valid = False
+        # Store centroids as (n_clusters x n_features) for faster distance GEMMs (KxN layout)
+        self.Y = kmeans.cluster_centers_  # (n_clusters x n_features)
+        self._Y_sq = np.sum(self.Y ** 2, axis=1)  # (n_clusters,)
 
         # Initialize soft assignments
         self._update_R()
 
-    def _cluster(self, theta_t: Optional[float] = None):
+    def _cluster(self):
         """Run clustering iterations."""
-        for it in range(self.max_iter_kmeans):
+        # Clear cached diversity stats at the start of clustering iterations to avoid stale objective terms
+        self._O_last = None
+        self._log_ratio_last = None
+
+        # Avoid full copies of R (K x N) and Y (F x K) each iteration by keeping scalar summaries
+        prev_Y_ss = float(np.sum(self.Y ** 2)) if self.Y is not None else None
+        prev_R_mean = float(self.R.mean()) if self.R is not None else None
+
+        for _ in range(self.max_iter_kmeans):
             # Update centroids
             self._update_centroids()
 
             # Update soft assignments
-            R_old = self.R.copy() if self.R is not None else None
-            self._update_R(theta_t=theta_t)
+            self._update_R()
 
-            # Check convergence on a sample (robust statistic) + periodic broader check
-            if R_old is not None and self._cluster_sample_idx is not None:
-                idx = self._cluster_sample_idx
-                diff = np.abs(self.R[:, idx] - R_old[:, idx])
-
-                # Use high percentile on sample (less likely to hide a subset of movers)
-                r_change = float(np.quantile(diff, 0.95))
-
-                # Every few iterations, tighten check with max on a larger sample
-                if (it + 1) % 5 == 0:
-                    rng = np.random.default_rng(self.random_state)
-                    n_cells = self.R.shape[1]
-                    big_n = int(min(5000, n_cells))
-                    big_idx = rng.choice(n_cells, size=big_n, replace=False) if big_n > 0 else idx
-                    r_change = max(r_change, float(np.max(np.abs(self.R[:, big_idx] - R_old[:, big_idx]))))
-
+            # Convergence checks using cheap summaries (no large allocations)
+            if prev_R_mean is not None:
+                r_mean = float(self.R.mean())
+                r_change = abs(r_mean - prev_R_mean)
+                prev_R_mean = r_mean
                 if r_change < self.epsilon_cluster:
+                    break
+
+            if prev_Y_ss is not None:
+                y_ss = float(np.sum(self.Y ** 2))
+                y_change = abs(y_ss - prev_Y_ss) / (prev_Y_ss + 1e-12)
+                prev_Y_ss = y_ss
+                if y_change < self.epsilon_cluster:
                     break
 
     def _update_centroids(self):
         """Update cluster centroids."""
         # Weighted average of cells
         weights = self.R  # (n_clusters x n_cells)
-        weights_sum = weights.sum(axis=1, keepdims=True) + 1e-8
+        weights_sum = weights.sum(axis=1, keepdims=True) + 1e-8  # (K x 1)
 
-        # Y = Z @ R.T / sum(R)
-        self.Y = (self.Z_corr.T @ weights.T) / weights_sum.T
-        self._Y_version += 1
-        self._dist_valid = False
+        # Y = (R @ Z) / sum(R)  -> (K x F)
+        self.Y = (weights @ self.Z_corr) / weights_sum
+        self._Y_sq = np.sum(self.Y ** 2, axis=1)  # (n_clusters,)
 
-    def _batch_sums_from_R(self, R: np.ndarray) -> np.ndarray:
-        """Compute per-batch sums of responsibilities: O_num[:, b] = sum_i in batch b R[:, i]."""
-        if self.batch_indices is None:
-            raise ValueError("batch_indices not initialized; call fit() first")
-        K = R.shape[0]
-        B = len(self.batch_indices)
-        out = np.zeros((K, B), dtype=np.float32)
-        for b, idx_b in enumerate(self.batch_indices):
-            if idx_b.size == 0:
-                continue
-            out[:, b] = R[:, idx_b].sum(axis=1, dtype=np.float32)
-        return out
-
-    def _update_R(self, theta_t: Optional[float] = None):
-        """Update soft cluster assignments with diversity penalty."""
+    def _update_R(self):
+        """Update soft cluster assignments with diversity penalty (single-pass softmax with lagged/EMA penalty)."""
         # Compute distances to centroids
         # dist[k, i] = ||z_i - y_k||^2
         dist = self._compute_distances()
+        self._last_dist = dist
 
-        # Work fully in log-space for stability and to avoid extra exp/multiply passes
-        # Gaussian kernel: exp(-dist / (2*sigma^2))
-        logR = (-dist / (2.0 * (self.sigma ** 2))).astype(np.float32, copy=False)  # (K,N)
+        theta_eff = float(getattr(self, "_theta_eff", self.theta))
 
-        # Apply batch-conditional diversity penalty (index-reduced, smoothed, size-aware)
-        theta_use = float(self.theta if theta_t is None else theta_t)
-        if (
-            theta_use > 0
-            and self.batch_id is not None
-            and self.batch_props is not None
-            and self.batch_indices is not None
-        ):
-            eps = 1e-8
+        # Preallocate / reuse buffers to reduce allocations in hot loop
+        if self._buf_logR is None or self._buf_logR.shape != dist.shape:
+            self._buf_logR = np.empty_like(dist, dtype=np.float64)
+        if self._buf_R is None or self._buf_R.shape != dist.shape:
+            self._buf_R = np.empty_like(dist, dtype=np.float64)
 
-            # First-pass (no penalty) soft weights, needed to compute O
-            logR0 = logR - logR.max(axis=0, keepdims=True)
-            R0 = np.exp(logR0, dtype=np.float32)
+        logR = self._buf_logR
+        R = self._buf_R
 
-            R_sum = R0.sum(axis=1, keepdims=True).astype(np.float32, copy=False) + eps  # (K,1)
+        # Base log responsibilities (in-place)
+        logR[:] = -(dist / self.sigma)
 
-            # O_num via index reductions (K,B)
-            O_num = self._batch_sums_from_R(R0)
-            O = O_num / R_sum  # (K,B)
-            expected = self.batch_props.astype(np.float32, copy=False)[np.newaxis, :]  # (1,B)
+        # Incorporate lagged diversity penalty in log-space (more stable than probability-space scaling)
+        if theta_eff > 0 and self._log_ratio_prev is not None:
+            logR -= theta_eff * self._log_ratio_prev[:, self._batch_id]
 
-            # Floor O to avoid extreme penalties when O ~= 0
-            o_floor = max(1e-4, 1.0 / (10.0 * float(self.Z_corr.shape[0])))
-            O = np.maximum(O, np.float32(o_floor))
-
-            # Smooth O across iterations (EMA) to reduce oscillation
-            if self._O_ema is None or self._O_ema.shape != O.shape:
-                self._O_ema = O.copy()
-            else:
-                beta = float(self._O_ema_beta)
-                self._O_ema = (beta * self._O_ema + (1.0 - beta) * O).astype(np.float32, copy=False)
-
-            O_use = self._O_ema
-
-            # Cluster-size aware weight to downweight tiny/noisy clusters
-            Nk = R_sum[:, 0]  # (K,)
-            c = 50.0
-            w_k = (Nk / (Nk + c)).astype(np.float32, copy=False)  # (K,)
-
-            # Stabilized log-space adjustment with clamp
-            L = 10.0
-            log_adjust = theta_use * (np.log(expected + eps) - np.log(O_use + eps))  # (K,B)
-            log_adjust = (log_adjust * w_k[:, None]).astype(np.float32, copy=False)
-            log_adjust = np.clip(log_adjust, -L, L).astype(np.float32, copy=False)
-
-            # Add penalty in log-space per-cell via batch lookup
-            logR = logR + log_adjust[:, self.batch_id]
-
-        # Stabilize once and exponentiate
-        logR = logR - logR.max(axis=0, keepdims=True)
-        R = np.exp(logR, dtype=np.float32)
-
-        # Normalize to get probabilities
-        R = R / (R.sum(axis=0, keepdims=True) + 1e-8)
-
+        # Single stabilized softmax (in-place)
+        logR -= logR.max(axis=0, keepdims=True)
+        np.exp(logR, out=R)
+        R /= (R.sum(axis=0, keepdims=True) + 1e-8)
         self.R = R
-        self._R_version += 1
 
-        # Cache sufficient statistics for objective reuse (versioning fixed)
-        if (
-            theta_use > 0
-            and self.batch_id is not None
-            and self.batch_props is not None
-            and self.batch_indices is not None
-        ):
-            self._last_R_sum = self.R.sum(axis=1, keepdims=True).astype(np.float32, copy=False) + 1e-8
-            self._last_O_num = self._batch_sums_from_R(self.R.astype(np.float32, copy=False))
-            self._last_O_num_R_version = self._R_version
-
-    def _compute_distances(self) -> np.ndarray:
-        """Compute squared distances from cells to centroids."""
-        # ||z - y||^2 = ||z||^2 + ||y||^2 - 2 * z @ y
-        if (
-            self._dist_valid
-            and self._dist is not None
-            and self._dist_Z_version == self._Z_version
-            and self._dist_Y_version == self._Y_version
-        ):
-            return self._dist
-
-        if self._Z_sq is None:
-            self._Z_sq = np.sum(self.Z_corr ** 2, axis=1, keepdims=True).astype(np.float32, copy=False)  # (n_cells x 1)
-        Z_sq = self._Z_sq  # (N,1) float32
-        Y_sq = np.sum(self.Y ** 2, axis=0, keepdims=True).astype(np.float32, copy=False)  # (1,K) float32
-
-        # Compute (K,N) directly to avoid transpose/memory traffic
-        cross = (self.Y.T @ self.Z_corr.T).astype(np.float32, copy=False)  # (K,N)
-
-        dist = (Z_sq.T + Y_sq.T - 2.0 * cross).astype(np.float32, copy=False)  # (K,N)
-
-        self._dist = dist
-        self._dist_valid = True
-        self._dist_Z_version = self._Z_version
-        self._dist_Y_version = self._Y_version
-        return dist
-
-    def _correct(self, iteration: int = 0):
-        """Apply mean-based correction to remove batch effects (fast + stable)."""
-        if self.batch_indices is None:
+        # Update diversity stats for objective reuse and for next iteration's lagged penalty
+        if theta_eff <= 0:
+            self._O_last = None
+            self._log_ratio_last = None
+            self._log_ratio_prev = None
             return
 
+        R_sum = R.sum(axis=1, keepdims=True) + 1e-8  # (K x 1)
+        B = self._n_batches if self._n_batches is not None else self.Phi.shape[0]
+
+        # Vectorized O_num via GEMM when Phi_T cached; fallback to cached indices
+        if self._Phi_T is not None:
+            O_num = R @ self._Phi_T  # (K x B)
+        else:
+            O_num = np.zeros((self.n_clusters, B), dtype=R.dtype)
+            for b in range(B):
+                idx = self._batch_indices[b] if self._batch_indices is not None else np.where(self._batch_id == b)[0]
+                if idx.size == 0:
+                    continue
+                O_num[:, b] = R[:, idx].sum(axis=1)
+
+        O = O_num / R_sum  # (K x B)
+        expected = self.batch_props[np.newaxis, :]  # (1 x B)
+        log_ratio = np.log((O + 1e-8) / (expected + 1e-8))  # (K x B)
+
+        # Clip extreme penalties to prevent late-iteration blow-ups
+        clip = float(getattr(self, "_diversity_clip", 0.0) or 0.0)
+        if clip > 0:
+            log_ratio = np.clip(log_ratio, -clip, clip)
+
+        self._O_last = O
+        self._log_ratio_last = log_ratio
+
+        # Smooth updates with EMA to reduce oscillations
+        gamma = float(getattr(self, "_diversity_ema_gamma", 0.3))
+        if self._log_ratio_prev is None:
+            self._log_ratio_prev = log_ratio
+        else:
+            self._log_ratio_prev = (1.0 - gamma) * self._log_ratio_prev + gamma * log_ratio
+
+    def _compute_distances(self) -> np.ndarray:
+        """Compute squared distances from cells to centroids using cached norms when possible (returns K x N)."""
+        # ||z - y||^2 = ||z||^2 + ||y||^2 - 2 * y @ z
+        if self._Z_sq is None:
+            self._Z_sq = np.sum(self.Z_corr ** 2, axis=1)  # (n_cells,)
+        if self._Y_sq is None:
+            self._Y_sq = np.sum(self.Y ** 2, axis=1)  # (n_clusters,)
+
+        K = self.Y.shape[0]
+        N = self.Z_corr.shape[0]
+
+        # Preallocate / reuse large buffers to reduce allocations
+        if self._buf_cross is None or self._buf_cross.shape != (K, N):
+            self._buf_cross = np.empty((K, N), dtype=np.float64)
+        if self._buf_dist is None or self._buf_dist.shape != (K, N):
+            self._buf_dist = np.empty((K, N), dtype=np.float64)
+
+        cross = self._buf_cross
+        dist = self._buf_dist
+
+        # cross = Y @ Z.T -> (K x N) into reusable buffer
+        # np.matmul supports out= for ndarray operands
+        np.matmul(self.Y, self.Z_corr.T, out=cross)
+
+        # dist = ||y||^2 + ||z||^2 - 2*cross (in-place)
+        dist[:] = self._Y_sq[:, None]
+        dist += self._Z_sq[None, :]
+        dist -= 2.0 * cross
+        return dist
+
+    def _correct(self) -> Optional[float]:
+        """
+        Apply correction to remove batch effects using per-cluster weighted ridge regression (WLS),
+        exploiting the special design structure (intercept + one-hot batches).
+
+        Uses sufficient statistics per (cluster, batch) to avoid building large Dw/Zw intermediates.
+
+        Returns mean ||applied_delta|| per cell (aligned with the actual applied step size).
+        """
+        n_cells, n_features = self.Z_corr.shape
+
+        if self._batch_indices is None or self._n_batches is None:
+            # Fallback: ensure batch indexing exists (should be set in fit)
+            unique_batches = np.unique(self._batch_id) if self._batch_id is not None else np.unique(
+                np.argmax(self.Phi, axis=0)
+            )
+            self._n_batches = len(unique_batches)
+            if self._batch_id is None:
+                self._batch_id = np.argmax(self.Phi, axis=0).astype(np.int64)
+            self._batch_indices = [np.where(self._batch_id == b)[0] for b in range(self._n_batches)]
+
+        B = int(self._n_batches)
+        p = 1 + max(0, B - 1)  # intercept + batch indicators (excluding reference batch 0)
+
+        R = self.R  # (K x N)
+        Z = self.Z_corr  # (N x F)
+        K = int(self.n_clusters)
+
+        # Scale-aware small-cluster gating to reduce unstable corrections
+        min_cluster_mass = max(5.0, 0.01 * (n_cells / max(1, K)))
+
+        # Sufficient statistics:
+        #   S[k,b] = sum_{i in batch b} R[k,i]           (K x B)
+        #   Zsum[k,b,:] = sum_{i in batch b} R[k,i]*Z[i] (K x B x F)
+        S = np.zeros((K, B), dtype=np.float64)
+        Zsum = np.zeros((K, B, n_features), dtype=np.float64)
+
+        for b in range(B):
+            idx = self._batch_indices[b]
+            if idx.size == 0:
+                continue
+            Rb = R[:, idx]  # (K x Nb)
+            S[:, b] = Rb.sum(axis=1)
+            Zsum[:, b, :] = Rb @ Z[idx, :]  # (K x F)
+
+        # Prepare per-batch effect matrices E_b (K x F), with E_0 = 0 (reference batch)
+        E_by_batch = np.zeros((B, K, n_features), dtype=np.float64)
+
+        # Ridge penalty: apply only to batch coefficients (not intercept) to reduce bias
+        lamb = float(self.lamb)
+        ridge_diag = np.zeros(p, dtype=np.float64)
+        if p > 1:
+            ridge_diag[1:] = lamb
+
         eps = 1e-8
-        Z = self.Z_corr  # (N,F) float32
 
-        # Damping/step size: stronger early, decays to reduce late oscillations/overcorrection
-        alpha0 = 0.8
-        alpha = max(0.3, alpha0 * (0.9 ** float(iteration)))
-
-        # Compute cluster means in float32/float64 mix (avoid casting large matrices repeatedly)
-        R = self.R.astype(np.float32, copy=False)  # (K,N)
-        Nk = R.sum(axis=1, dtype=np.float64) + eps  # (K,)
-        mu_k = (R @ Z).astype(np.float32, copy=False) / Nk[:, None].astype(np.float32, copy=False)  # (K,F)
-
-        # Compute a single global cap per iteration on a subsample (cheap + stable)
-        rng = np.random.default_rng(self.random_state)
-        n_cells = Z.shape[0]
-        sample_n = int(min(2000, n_cells))
-        sample_idx = rng.choice(n_cells, size=sample_n, replace=False) if sample_n > 0 else None
-        global_cap = None
-        if sample_idx is not None and sample_idx.size > 0:
-            C_sample = (R[:, sample_idx].T @ mu_k).astype(np.float32, copy=False)  # (n_s,F)
-            norms_s = np.linalg.norm(C_sample, axis=1) + 1e-12
-            global_cap = float(np.quantile(norms_s, 0.95))
-
-        for b, idx_b in enumerate(self.batch_indices):
-            if idx_b.size == 0:
+        # Build and solve small systems per cluster
+        for k in range(K):
+            S_k = S[k, :]  # (B,)
+            s_k = float(S_k.sum())
+            if s_k < min_cluster_mass:
                 continue
 
-            Rb = R[:, idx_b]  # (K, n_b) float32
+            # Build A (p x p) and C (p x F) using structured design
+            A = np.zeros((p, p), dtype=np.float64)
+            A[0, 0] = s_k
 
-            Nk_b = Rb.sum(axis=1, dtype=np.float64) + eps  # (K,)
-            mu_kb = (Rb @ Z[idx_b]).astype(np.float32, copy=False) / Nk_b[:, None].astype(np.float32, copy=False)  # (K,F)
+            if B > 1:
+                # A[0,j]=A[j,0]=S_k[j_batch], A[j,j]=S_k[j_batch], off-diagonal among batches is 0
+                A[0, 1:] = S_k[1:]
+                A[1:, 0] = S_k[1:]
+                A[1:, 1:] = np.diag(S_k[1:])
 
-            Delta_kb = (mu_kb - mu_k).astype(np.float32, copy=False)  # (K,F)
-            shrink_kb = (Nk_b / (Nk_b + float(self.lamb))).astype(np.float32, copy=False)  # (K,)
+            # Add ridge (batch terms only)
+            if lamb > 0:
+                A[np.diag_indices_from(A)] += ridge_diag
 
-            # Reorder: Delta2 = Delta * shrink, then Cb = Rb.T @ Delta2 (avoids n_b x K transient)
-            Delta2 = (Delta_kb * shrink_kb[:, None]).astype(np.float32, copy=False)  # (K,F)
-            Cb = (Rb.T @ Delta2).astype(np.float32, copy=False)  # (n_b,F)
+            C = np.zeros((p, n_features), dtype=np.float64)
+            C[0, :] = Zsum[k, :, :].sum(axis=0)
+            if B > 1:
+                C[1:, :] = Zsum[k, 1:, :]
 
-            # Apply a single global cap (if available) for consistency across batches
-            if global_cap is not None and global_cap > 0:
-                norms = np.linalg.norm(Cb, axis=1) + 1e-12
-                scale = np.minimum(1.0, global_cap / norms).astype(np.float32, copy=False)
-                Cb = Cb * scale[:, None]
+            # Solve A * beta = C
+            if cho_factor is not None and cho_solve is not None:
+                try:
+                    c, low = cho_factor(A, lower=True, check_finite=False)
+                    beta = cho_solve((c, low), C, check_finite=False)  # (p x F)
+                except Exception:
+                    beta = np.linalg.solve(A, C)
+            else:
+                beta = np.linalg.solve(A, C)
 
-            Z[idx_b] -= (alpha * Cb).astype(Z.dtype, copy=False)
+            # Batch effects (reference batch 0 is zero; other batches use beta[1:])
+            if B > 1:
+                E_by_batch[1:, k, :] = beta[1:, :]
 
-        # Invalidate caches because Z_corr changed
-        self._dist = None
-        self._Z_sq = None
-        self._dist_valid = False
-        self._Z_version += 1
+        # Apply correction without per-cell loops:
+        # delta[idx_b] += R[:, idx_b].T @ E_b  where E_b is (K x F)
+        delta = np.zeros_like(Z, dtype=np.float64)
+        for b in range(B):
+            idx = self._batch_indices[b]
+            if idx.size == 0:
+                continue
+            Eb = E_by_batch[b, :, :]  # (K x F)
+            if np.max(np.abs(Eb)) < eps:
+                continue
+            delta[idx, :] += R[:, idx].T @ Eb
 
-    def _compute_objective(self, theta_t: Optional[float] = None) -> float:
+        alpha = float(self._correction_alpha)
+        self.Z_corr = (self.Z_corr - alpha * delta).astype(self.Z_corr.dtype, copy=False)
+
+        # Update cached norms after correction
+        self._Z_sq = np.sum(self.Z_corr ** 2, axis=1)
+
+        # Distances computed before correction are now stale; force recompute for objective
+        self._last_dist = None
+
+        # Return mean per-cell applied delta norm for early stopping / alpha adaptation
+        mean_applied_delta = float(alpha * np.mean(np.linalg.norm(delta, axis=1)))
+        return mean_applied_delta
+
+    def _compute_objective(self) -> float:
         """Compute the Harmony objective function."""
-        dist = self._compute_distances()
-        cluster_obj = float(np.sum(self.R * dist))
+        # Clustering objective (within-cluster variance)
+        dist = self._last_dist if self._last_dist is not None else self._compute_distances()
+        cluster_obj = np.sum(self.R * dist)
 
-        theta_use = float(self.theta if theta_t is None else theta_t)
+        # Diversity objective (entropy of batch distribution per cluster)
+        expected = self.batch_props[np.newaxis, :]
 
-        # Diversity objective (entropy of batch distribution per cluster), computed via index reductions
-        if theta_use <= 0 or self.batch_indices is None:
-            return cluster_obj
+        # Reuse cached O if available (computed during _update_R for current iteration)
+        O = self._O_last
+        if O is None:
+            R_sum = self.R.sum(axis=1, keepdims=True) + 1e-8
+            B = self._n_batches if self._n_batches is not None else self.Phi.shape[0]
+            O = np.zeros((self.n_clusters, B), dtype=self.R.dtype)
+            for b in range(B):
+                idx = self._batch_indices[b] if self._batch_indices is not None else np.where(self._batch_id == b)[0]
+                if idx.size == 0:
+                    continue
+                O[:, b] = self.R[:, idx].sum(axis=1) / R_sum[:, 0]
 
-        eps = 1e-8
-        expected = self.batch_props.astype(np.float32, copy=False)[np.newaxis, :]  # (1,B)
-
-        # Reuse cached sufficient statistics from _update_R when possible
-        if (
-            self._last_O_num is not None
-            and self._last_R_sum is not None
-            and self._last_O_num_R_version == self._R_version
-        ):
-            O_num = self._last_O_num
-            R_sum = self._last_R_sum
-        else:
-            R_sum = self.R.sum(axis=1, keepdims=True).astype(np.float32, copy=False) + eps  # (K,1)
-            O_num = self._batch_sums_from_R(self.R.astype(np.float32, copy=False))
-
-        O = O_num / R_sum  # (K,B)
-        diversity_obj = float(
-            theta_use * np.sum(O * np.log((O + eps) / (expected + eps)))
+        theta_eff = float(getattr(self, "_theta_eff", self.theta))
+        diversity_obj = theta_eff * np.sum(
+            O * np.log((O + 1e-8) / (expected + 1e-8))
         )
 
         return cluster_obj + diversity_obj
