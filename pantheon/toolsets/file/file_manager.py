@@ -387,13 +387,24 @@ class FileManagerToolSetBase(ToolSet):
 
 
 def path_to_image_url(path: str) -> str:
+    """Convert an image file to a base64 PNG data URL.
+    
+    Reads file bytes into memory first to avoid PIL lazy loading issues
+    (e.g., 'PngImageFile' object has no attribute '_im').
+    All images are converted to PNG format for consistency.
+    """
     from PIL import Image
-    img = Image.open(path)
-    img.load()
-    with io.BytesIO() as buffer:
-        img.save(buffer, format="PNG")
-        buffer.seek(0)
-        return f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode()}"
+    
+    # Read file bytes into memory first to avoid lazy loading issues
+    with open(path, "rb") as f:
+        file_bytes = f.read()
+    
+    # Open from memory buffer - this forces complete loading
+    with Image.open(io.BytesIO(file_bytes)) as img:
+        with io.BytesIO() as buffer:
+            img.save(buffer, format="PNG")
+            buffer.seek(0)
+            return f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode()}"
 
 
 class FileManagerToolSet(FileManagerToolSetBase):
@@ -1213,6 +1224,10 @@ class FileManagerToolSet(FileManagerToolSetBase):
             # Search in gitignored directory
             pattern="version.*1.2.3", path="node_modules", respect_git_ignore=False
         """
+        # Get max results from settings to pass down for early termination
+        from pantheon.settings import get_settings
+        max_results = get_settings().max_glob_results
+        
         # Run in thread pool to avoid blocking event loop
         result = await asyncio.to_thread(
             grep_search,
@@ -1223,13 +1238,12 @@ class FileManagerToolSet(FileManagerToolSetBase):
             context_lines=context_lines,
             case_sensitive=case_sensitive,
             respect_git_ignore=respect_git_ignore,
+            max_results=max_results,
         )
         
         # Apply result limit from settings (same as glob)
+        # This is a backup in case grep_search returns more than expected
         if result.get("success") and result.get("matches"):
-            from pantheon.settings import get_settings
-            max_results = get_settings().max_glob_results
-            
             matches = result["matches"]
             total = len(matches)
             
@@ -1241,7 +1255,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
                     f"Results capped at {max_results}. Total matches: {total}. "
                     f"Refine pattern or use file_pattern to narrow results."
                 )
-            else:
+            elif not result.get("capped"):
                 result["capped"] = False
         
         return result

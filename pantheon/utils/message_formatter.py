@@ -49,6 +49,7 @@ def format_messages_to_text(
     extract_skills: bool = False,
     save_details_to: str | None = None,
     include_footer_note: bool = True,
+    use_smart_truncate: bool = False,  # Enable smart truncation for tool outputs
 ) -> FormattedConversation:
     """Format conversation messages to text (shared by ACE and Compression).
     
@@ -62,6 +63,8 @@ def format_messages_to_text(
         extract_skills: Whether to extract skill IDs from content
         save_details_to: If provided, save original messages to this path
         include_footer_note: Whether to append the truncation note at the end
+        use_smart_truncate: If True, use smart truncation (based on raw_content) for tool outputs
+                           to preserve JSON structure. Falls back to content if raw_content unavailable.
         
     Returns:
         FormattedConversation with text, files, skills, and metadata
@@ -146,9 +149,37 @@ def format_messages_to_text(
         
         elif role == "tool":
             tc_id = msg.get("tool_call_id", "")
-            result = content
-            if len(result) > max_output_length:
-                result = result[:max_output_length] + f"... [{len(result)} chars]"
+            
+            # Smart truncation: prefer raw_content to avoid cumulative information loss
+            if use_smart_truncate and "raw_content" in msg:
+                raw = msg.get("raw_content")
+                
+                # Only use smart truncation if raw_content is a dict
+                if isinstance(raw, dict):
+                    try:
+                        from pantheon.utils.truncate import smart_truncate_result
+                        result = smart_truncate_result(
+                            raw, 
+                            max_output_length,
+                            filter_base64=True  # Re-filter base64 from raw_content
+                        )
+                    except Exception as e:
+                        # Fallback to content if smart truncation fails
+                        logger.warning(f"Smart truncation failed: {e}, falling back to content")
+                        result = content
+                        if len(result) > max_output_length:
+                            result = result[:max_output_length] + f"... [{len(result)} chars]"
+                else:
+                    # raw_content is not a dict, use content
+                    result = content
+                    if len(result) > max_output_length:
+                        result = result[:max_output_length] + f"... [{len(result)} chars]"
+            else:
+                # Original logic: simple string truncation on content
+                result = content
+                if len(result) > max_output_length:
+                    result = result[:max_output_length] + f"... [{len(result)} chars]"
+            
             trajectory_parts.append(f"[TOOL_RESULT] id={tc_id}\n{result}")
         
         elif role == "compression":

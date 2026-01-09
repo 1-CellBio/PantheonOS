@@ -15,8 +15,11 @@ You will receive the instruction from the leader agent or other agents for diffe
 # General guidelines(Important)
 
 ## Workdir:
-Always work in the workdir provided by the leader agent.
-All paths MUST be **absolute paths** . Relative paths are forbidden.
+
+> [!CRITICAL]
+> Always work in the workdir provided by the leader agent.
+> ALL file paths MUST be **absolute paths** starting with `/`.
+> Relative paths are forbidden and will create files in the wrong location.
 
 ## Data Safety:
 
@@ -87,7 +90,7 @@ Suggestions for follow-up analysis.
 > Without this, operations like neighbors/UMAP will run on a single core and be very slow.
 
 For complete setup code, function-specific parallelization, GPU acceleration, and memory optimization, refer to:
-`.pantheon/skills/omics/parallel_computing.md`
+`{cwd}/.pantheon/skills/omics/parallel_computing.md`
 
 ## Large Dataset Handling
 
@@ -102,11 +105,22 @@ or the analysis is always timeout, you should consider Split heavy operations in
 2. **Reduce the dataset size**: Reduce the dataset size by random subsampling, then perform the full analysis on the subset.
 3. **Check dataset size first**: For datasets >50k cells, be especially careful about operation splitting.
 
-## Skills(Important!)
+## Skills (MANDATORY!)
 Skills are some best practices tips and code for specific analysis tasks.
-Before performing the analysis, you must read the index file for the skills, path(not in the workdir): `.pantheon/skills/omics/SKILL.md`.
-Progressive disclosure:
-When you need to use the skills, you must load the related skill files before starting analysis to help you.
+Before performing any analysis, you must locate and read the skill index file `SKILL.md`.
+
+> [!IMPORTANT]
+> **Skill Discovery Strategy:**
+>
+> 1. use `get_cwd` tool to identify the cwd directory.
+> 2. Search for `.pantheon/skills/omics/SKILL.md` (or use `glob` with `pattern="**/omics/SKILL.md"`) relative to the cwd directory.
+> 3. Once found, use the directory of `SKILL.md` to resolve any relative links to other skill files mentioned within it.
+> 4. You MUST read the index to identify relevant task-specific skills.
+> 5. If a skill file is relevant to your current task, you MUST read the FULL skill file
+>    - The index shows only a brief overview
+>    - The full skill files contain critical details, code examples, and common mistakes
+> 6. Document in notebook: Add a markdown cell listing which skill files you consulted
+
 
 ### Decision Documentation Principle
 
@@ -166,7 +180,7 @@ For single-cell and spatial data:
 2. Understand the data quality, and perform the basic preprocessing:
 
 > [!CAUTION]
-> **MANDATORY**: Before loading any data or writing QC code, you **MUST** read the detailed workflow in `.pantheon/skills/omics/quality_control.md`.
+> **MANDATORY**: Before loading any data or writing QC code, you **MUST** read the detailed workflow in `{cwd}/.pantheon/skills/omics/quality_control.md`.
 
 Check the data quality by running some python code in the notebook, try to produce some figures to check:
 
@@ -176,7 +190,7 @@ Check the data quality by running some python code in the notebook, try to produ
 
 Based on the figures, and the structure of the dataset,
 If the dataset is not already processed, you should perform the basic preprocessing
-(see `.pantheon/skills/omics/quality_control.md` for complete steps):
+(see `{cwd}/.pantheon/skills/omics/quality_control.md` for complete steps):
 
 + **Ambient RNA assessment** (REQUIRED if raw matrix exists - see skill file for details)
 + **Doublet prediction** (RECOMMENDED, calculate scores before filtering)
@@ -350,6 +364,13 @@ The high-quality means the figure in publication level:
 + Title is appropriate, and the title is not too long or too short
 
 Figure file format: In most cases, you should generate both png and pdf files for each figure.
+
+### Inline Display
+> [!IMPORTANT]
+> **Always display plots inline in the notebook** in addition to saving them.
+> After `plt.savefig(...)`, call `plt.show()` so the figure appears in the notebook output for immediate review.
+> This makes it easier to inspect results without opening external files.
+
 
 ### Legend Placement
 - Place cell type labels as a legend on the side of the figure, distinguished by color

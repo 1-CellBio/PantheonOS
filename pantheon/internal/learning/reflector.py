@@ -325,17 +325,29 @@ class Reflector:
     3. New generalizable learnings to add to the skillbook
     """
 
-    def __init__(self, model: str | None = None):
+    def __init__(self, model: str | None = None, learning_config: dict | None = None):
         self.model = model  # None uses Agent's default (normal quality)
+        self.learning_config = learning_config or {}  # Store for compression params
         self._agent: Optional[Agent] = None
     # TODO Add support for agent to read LeaningInput's detialed path for tool details.
-    def _ensure_agent(self) -> Agent:
-        """Lazy initialize the reflector agent."""
+    def _ensure_agent(self, skillbook: Optional[Skillbook] = None) -> Agent:
+        """Lazy initialize the reflector agent with tools."""
         if self._agent is None:
+            # Import tools
+            from pantheon.toolsets.file.file_manager import FileManagerToolSet
+            
+            # Create tools
+            tools = []
+            
+            # Add file manager tools (only read_file)
+            file_tools = FileManagerToolSet(name="file_manager")
+            tools.append(file_tools.read_file)
+            
             self._agent = Agent(
                 name="ACE-Reflector",
                 instructions=REFLECTOR_SYSTEM_PROMPT,
                 model=self.model,
+                tools=tools if tools else None,
             )
         return self._agent
 
@@ -361,7 +373,7 @@ class Reflector:
         from pantheon.utils.message_formatter import format_messages_to_text
         import json
         
-        agent = self._ensure_agent()
+        agent = self._ensure_agent(skillbook)
         
         # Compress messages from details_path
         if not input.details_path or not Path(input.details_path).exists():
@@ -369,14 +381,20 @@ class Reflector:
             return ReflectorOutput(analysis="No input data", confidence=0.0)
         
         # Compress trajectory
-        # Pipeline mode: disable truncation (agent has no tool calling ability,
-        # needs full context for reflection)
+        # Use settings-configured truncation limits or override from learning_config
+        # Enable smart truncation to preserve JSON structure and avoid cumulative information loss
         output_dir = str(Path(input.details_path).parent)
+        
+        # Get compression parameters from learning_config or fall back to None (uses settings)
+        max_arg_length = self.learning_config.get("max_tool_arg_length")
+        max_output_length = self.learning_config.get("max_tool_output_length")
+        
         compressed = compress_memory(
             memory_path=input.details_path,
             output_dir=output_dir,
-            max_arg_length=1_000_000,  # No truncation - keep full content
-            max_output_length=1_000_000,  # No truncation - keep full content
+            max_arg_length=max_arg_length,
+            max_output_length=max_output_length,
+            use_smart_truncate=True,  # Enable smart truncation based on raw_content
         )
         
         # Extract question and final_answer from messages
@@ -390,8 +408,8 @@ class Reflector:
             save_details_to=None,
         )
 
-        # Build the prompt
-        skillbook_content = skillbook.as_prompt(input.agent_name)
+        # Build the prompt (use learning-specific format)
+        skillbook_content = skillbook.as_prompt_for_learning(input.agent_name)
         if not skillbook_content:
             skillbook_content = "(Empty skillbook)"
 
@@ -407,7 +425,7 @@ class Reflector:
             return ReflectorOutput(analysis="Failed to analyze", confidence=0.0)
 
         try:
-            response = await agent.run(prompt)
+            response = await agent.run(prompt, use_memory=False, update_memory=False)
             if response and response.content:
                 # Parse JSON from text response
                 return parse_to_model(

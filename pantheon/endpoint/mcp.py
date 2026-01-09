@@ -315,7 +315,7 @@ class MCPServerInstance:
                 # Step 1: Stop HTTP server task
                 await self._cleanup_http_task()
 
-                # Step 2: Disconnect STDIO transport (FastMCP will manage process cleanup)
+                # Step 2: Disconnect STDIO transport
                 if self.stdio_transport:
                     try:
                         await self.stdio_transport.disconnect()
@@ -330,7 +330,17 @@ class MCPServerInstance:
                         self.stdio_transport = None
                         self.stdio_client = None
 
-                # Preserve error status if it was set (e.g., from failed pre-warm)
+                # Step 3: Clear any remaining client references to avoid session leaks
+                if self.http_client:
+                    try:
+                        # FastMCP client is an async context manager
+                        await self.http_client.__aexit__(None, None, None)
+                    except Exception:
+                        pass
+                    self.http_client = None
+                self.stdio_client = None
+
+                # Preserve error status if it was set
                 if self._status != "error":
                     self.status = "stopped"
                 logger.info(f"STDIO MCP server '{self.config.name}' stopped")
@@ -1016,7 +1026,10 @@ class MCPManager:
             running_names = [name for name, inst in self.instances.items() if inst.is_running()]
             if running_names:
                 logger.info(f"Stopping {len(running_names)} MCP servers during cleanup...")
-                await self.stop_services(running_names)
+                try:
+                    await self.stop_services(running_names)
+                except Exception as e:
+                    logger.error(f"Error stopping MCP services during cleanup: {e}")
             
             # Stop the gateway
             try:
@@ -1024,3 +1037,6 @@ class MCPManager:
                 logger.info("MCP Gateway stopped")
             except Exception as e:
                 logger.error(f"Error stopping MCP gateway: {e}")
+
+            # Clear references
+            self.instances.clear()

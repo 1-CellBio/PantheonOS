@@ -88,14 +88,21 @@ def create_learning_resources(
     if _enable_learning:
         pipeline = LearningPipeline(
             skillbook=skillbook,
-            reflector=Reflector(model=_config["learning_model"]),
-            skill_manager=SkillManager(model=_config["learning_model"]),
+            reflector=Reflector(
+                model=_config["learning_model"],
+                learning_config=_config,  # Config passed to Reflector
+            ),
+            skill_manager=SkillManager(
+                model=_config["learning_model"],
+                learning_config=_config,  # Config passed to SkillManager
+            ),
             learning_dir=_config["learning_dir"],
             cleanup_after_learning=_config.get("cleanup_after_learning", False),
             min_confidence_threshold=_config.get("min_confidence_threshold", 0.5),
             min_atomicity_score=_config.get("min_atomicity_score", 0.85),
             mode=_config.get("mode", "pipeline"),  # "pipeline" or "team"
             team_id=_config.get("team_id", "skill_learning_team"),
+            # Config not needed here - already in Reflector and SkillManager
         )
     
     # Logging

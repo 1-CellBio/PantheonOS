@@ -240,15 +240,17 @@ class SkillbookToolSet(ToolSet):
         skill = self.skillbook.get_skill(skill_id)
         if skill is None:
             return {"success": False, "error": f"Skill '{skill_id}' not found"}
+        
+        # CRITICAL: User-defined skills (type="user") cannot be modified programmatically
+        # They must be edited in their source files directly
+        if skill.is_user_defined():
+            return {
+                "success": False,
+                "error": f"Cannot modify user-defined skill '{skill_id}'. Edit the source file directly.",
+            }
 
         # Handle sources update first (before content update)
         if sources is not None:
-            # Check user-defined protection before modifying
-            if skill.is_user_defined():
-                return {
-                    "success": False,
-                    "error": f"Cannot modify user-defined skill '{skill_id}'. Edit the source file directly.",
-                }
             # Delete old sources
             if skill.sources:
                 self.skillbook.delete_sources(skill.sources)
@@ -265,7 +267,7 @@ class SkillbookToolSet(ToolSet):
                         section=skill.section,
                     )
 
-        # Update content using Skillbook.update_skill (handles auto-conversion + user-defined protection)
+        # Update content and description (stores as-is, no auto-conversion)
         if content is not None:
             result = self.skillbook.update_skill(skill_id, content=content, description=description)
             if result is None:
@@ -432,18 +434,28 @@ class SkillbookToolSet(ToolSet):
         if top_k is not None and top_k > 0:
             skills = skills[:top_k]
 
-        # Format output
+        # Format output - keep content and description separate
         skill_list = []
         for s in skills:
-            content = s.content if include_full_content else (
-                s.content[:100] + "..." if len(s.content) > 100 else s.content
-            )
+            # Content field: original content with optional truncation
+            if include_full_content:
+                content = s.content
+            else:
+                # Truncate content if too long
+                content = s.content if len(s.content) <= 100 else (
+                    s.content[:100] + "... [truncated]"
+                )
+            
             skill_list.append({
                 "id": s.id,
                 "section": s.section,
-                "content": content,
+                "content": content,  # Original content (possibly truncated)
+                "description": s.description,  # Separate description field
                 "sources": s.sources,
-                "stats": f"+{s.helpful}/-{s.harmful}/~{s.neutral}",
+                "helpful": s.helpful,  # Original numeric fields
+                "harmful": s.harmful,
+                "neutral": s.neutral,
+                "agent_scope": s.agent_scope,  # Also include scope
             })
 
         return {
@@ -534,10 +546,15 @@ class SkillbookToolSet(ToolSet):
             return results
 
     def _format_skills_for_search(self, skills: List["Skill"]) -> str:
-        """Format skills for LLM consumption."""
+        """Format skills for LLM semantic search (description only, no full content)."""
         lines = []
         for s in skills:
-            content_preview = s.content[:100] + "..." if len(s.content) > 100 else s.content
+            # Semantic search: include_content=False (only show description or truncated content)
+            content_preview = self.skillbook._get_display_text(
+                s, 
+                max_content_length=100, 
+                include_content=False
+            )
             lines.append(f"- {s.id} [{s.section}]: {content_preview}")
         return "\n".join(lines)
 

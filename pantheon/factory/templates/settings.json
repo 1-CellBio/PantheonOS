@@ -179,11 +179,18 @@
         // Max characters for single skill content (Skillbook limit)
         "max_content_length": 2000,
         // Max length for tool argument values in learning trajectory
-        "max_tool_arg_length": 100,
+        "max_tool_arg_length": 1000,
         // Max length for tool output in learning trajectory
-        "max_tool_output_length": 150,
+        "max_tool_output_length": 3000,
         // Delete learning trajectory files after processing, Set to true in production for privacy/disk space
         "cleanup_after_learning": false,
+        // === Static Injection Section Filter ===
+        // Control which skillbook sections are statically injected into agent instructions
+        // - null/undefined: Use default rules (user_rules + type="user" strategies only)
+        // - ["*"]: Inject all sections (enable all skills)
+        // - ["section1", "section2", ...]: Inject only specified sections
+        // Example sections: "user_rules", "strategies", "debugging", "data_analysis", etc.
+        // "static_injection_sections": null,
         // === Quality Control Thresholds ===
         // Minimum confidence to process reflection (skip if below)
         "min_confidence_threshold": 0.5,
@@ -203,9 +210,9 @@
         // Number of recent messages to preserve uncompressed
         "preserve_recent_messages": 5,
         // Max length for individual tool argument values in compressed output
-        "max_tool_arg_length": 200,
+        "max_tool_arg_length": 1000,
         // Max length for tool output in compressed output
-        "max_tool_output_length": 200,
+        "max_tool_output_length": 3000,
         // Wait this many messages before retrying after a compression failure
         "retry_after_messages": 10
     }

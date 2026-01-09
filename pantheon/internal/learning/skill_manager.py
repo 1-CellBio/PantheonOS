@@ -407,17 +407,29 @@ class SkillManager:
     - REMOVE: Marking consistently harmful skills for removal
     """
 
-    def __init__(self, model: str | None = None):
+    def __init__(self, model: str | None = None, learning_config: dict | None = None):
         self.model = model  # None uses Agent's default (normal quality)
+        self.learning_config = learning_config or {}  # Store for future extensibility
         self._agent: Optional[Agent] = None
 
-    def _ensure_agent(self) -> Agent:
-        """Lazy initialize the skill manager agent."""
+    def _ensure_agent(self, skillbook: Optional[Skillbook] = None) -> Agent:
+        """Lazy initialize the skill manager agent with tools."""
         if self._agent is None:
+            # Import tools
+            from pantheon.toolsets.file.file_manager import FileManagerToolSet
+            
+            # Create tools
+            tools = []
+            
+            # Add file manager tools (only read_file)
+            file_tools = FileManagerToolSet(name="file_manager")
+            tools.append(file_tools.read_file)
+            
             self._agent = Agent(
                 name="ACE-SkillManager",
                 instructions=SKILL_MANAGER_SYSTEM_PROMPT,
                 model=self.model,
+                tools=tools if tools else None,
             )
         return self._agent
 
@@ -440,7 +452,7 @@ class SkillManager:
         Returns:
             List of UpdateOperations to apply
         """
-        agent = self._ensure_agent()
+        agent = self._ensure_agent(skillbook)
 
         # Format learnings with atomicity scores
         learnings = "\n".join(
@@ -454,8 +466,8 @@ class SkillManager:
             for t in reflection.skill_tags
         ) or "None"
 
-        # Get skillbook content
-        skillbook_content = skillbook.as_prompt(agent_name)
+        # Get skillbook content (use learning-specific format)
+        skillbook_content = skillbook.as_prompt_for_learning(agent_name)
         if not skillbook_content:
             skillbook_content = "(Empty skillbook)"
 
@@ -471,7 +483,7 @@ class SkillManager:
             return SkillManagerOutput(reasoning="Parse failed", operations=[])
 
         try:
-            response = await agent.run(prompt)
+            response = await agent.run(prompt, use_memory=False, update_memory=False)
             if response and response.content:
                 # Parse JSON from text response
                 parsed = parse_to_model(

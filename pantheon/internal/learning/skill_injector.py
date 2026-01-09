@@ -17,13 +17,14 @@ if TYPE_CHECKING:
 async def inject_skills_to_team(
     team: "PantheonTeam",
     skillbook: "Skillbook",
+    config: dict | None = None,
 ) -> int:
     """
     Inject static skills into all agents in a team.
     
-    Static skills include:
-    - user_rules (user preferences/rules)
-    - type="user" strategies (user-defined strategies)
+    Static skills filtering:
+    - If config["static_injection_sections"] is set: use section-based filtering
+    - Otherwise: default rules (user_rules + type="user" strategies)
     
     This is a one-time operation, typically called after team creation
     and before team.run(). Skips agents that already have skills injected.
@@ -33,6 +34,7 @@ async def inject_skills_to_team(
     Args:
         team: PantheonTeam instance to inject skills into
         skillbook: Skillbook instance containing skills to inject
+        config: Learning config dict (optional, for section filtering)
         
     Returns:
         Number of agents that received skill injection
@@ -54,8 +56,8 @@ async def inject_skills_to_team(
             agent._static_skills_injected = True
             continue
         
-        # Load static skills only (user_rules + user-defined strategies)
-        prompt = load_static_skills(skillbook, agent.name)
+        # Load static skills with config-based filtering
+        prompt = load_static_skills(skillbook, agent.name, config=config)
         if prompt:
             agent.instructions += f"\n\n{prompt}"
             injected_count += 1
@@ -77,32 +79,44 @@ async def inject_skills_to_team(
 def load_static_skills(
     skillbook: "Skillbook",
     agent_name: str = "global",
+    config: dict | None = None,
 ) -> str:
     """
     Load static skill prompt for injection into agent instructions.
     
-    Static skills include:
-    - user_rules section (user preferences/rules)
-    - type="user" strategies (user-defined strategies)
+    Filtering logic:
+    1. If config["static_injection_sections"] is provided:
+       - ["*"]: Include all sections
+       - [section1, section2, ...]: Include only specified sections
+    2. If not provided: Use default rules (user_rules + type="user" strategies)
     
     These are EXCLUDED from dynamic injection to avoid duplication.
     
     Args:
         skillbook: Skillbook instance to load skills from
         agent_name: Agent name for scope filtering (default: "global")
+        config: Learning config dict (optional, for section filtering)
         
     Returns:
         Formatted skill prompt string for static injection
     """
-    from pantheon.internal.learning.skillbook import format_skills_by_section, _format_skillbook_for_injection
+    from pantheon.internal.learning.skillbook import _format_skillbook_for_injection
     
     # Get all skills for agent
     skills = skillbook.get_skills_for_agent(agent_name)
     if not skills:
         return ""
     
-    # Filter for static skills only
-    static_skills = _filter_static_skills(skills)
+    # Get section filter from config
+    section_filter = (config or {}).get("static_injection_sections")
+    
+    # Apply filtering logic
+    if section_filter is not None:
+        # Custom section-based filtering
+        static_skills = _filter_by_sections(skills, section_filter)
+    else:
+        # Default rule-based filtering (backward compatibility)
+        static_skills = _filter_static_skills(skills)
     
     if not static_skills:
         return ""
@@ -111,21 +125,17 @@ def load_static_skills(
     user_rules = [s for s in static_skills if s.section == "user_rules"]
     user_strategies = [s for s in static_skills if s.section != "user_rules"]
     
-    # Format user_rules (simple list, no section header)
+    # Format user_rules using NEW content-first logic
     user_rules_text = ""
     if user_rules:
         user_rules_text = "\n".join(
-            f"[{s.id}] {skillbook._format_skill_content(s)}" for s in user_rules
+            f"[{s.id}] {skillbook._format_skill_for_display(s)}" for s in user_rules
         )
     
-    # Format user-defined strategies by section
+    # Format user-defined strategies by section using NEW method
     strategies_text = ""
     if user_strategies:
-        strategies_text = format_skills_by_section(
-            user_strategies,
-            skillbook=skillbook,
-            max_content_length=500,  # Full content for static injection
-        )
+        strategies_text = skillbook._format_skills_by_section(user_strategies)
     
     return _format_skillbook_for_injection(user_rules_text, strategies_text)
 
@@ -133,6 +143,25 @@ def load_static_skills(
 def _filter_static_skills(skills: List["Skill"]) -> List["Skill"]:
     """Filter for static skills (user_rules, user-defined strategies)."""
     return [s for s in skills if _is_static_skill(s)]
+
+
+def _filter_by_sections(skills: List["Skill"], section_filter: List[str]) -> List["Skill"]:
+    """
+    Filter skills by section names.
+    
+    Args:
+        skills: List of skills to filter
+        section_filter: List of section names, or ["*"] for all sections
+        
+    Returns:
+        Filtered skills
+    """
+    # "*" means include all sections
+    if "*" in section_filter:
+        return skills
+    
+    # Filter by section names
+    return [s for s in skills if s.section in section_filter]
 
 
 def _is_static_skill(skill: "Skill") -> bool:
@@ -188,7 +217,7 @@ async def load_dynamic_skills(
         or empty string if no relevant skills found
     """
     from pantheon.utils.log import logger
-    from pantheon.internal.learning.skillbook import Skill, format_skills_by_section
+    from pantheon.internal.learning.skillbook import Skill
     
     logger.info(f"load_dynamic_skills: query='{user_input}', top_k={top_k}")
     logger.debug(f"load_dynamic_skills: context keys={list(context.keys())}")
@@ -215,6 +244,7 @@ async def load_dynamic_skills(
     if not dynamic_skills_dicts:
         return ""
 
+
     # Convert skill dicts to Skill objects
     # Note: list_skills returns dicts with 'stats' field (string), but Skill uses helpful/harmful/neutral
     skill_objects = []
@@ -223,12 +253,8 @@ async def load_dynamic_skills(
         skill_dict_clean = {k: v for k, v in skill_dict.items() if k != 'stats'}
         skill_objects.append(Skill(**skill_dict_clean))
 
-    # Format skills by section using shared function
-    skills_text = format_skills_by_section(
-        skill_objects,
-        skillbook=skillbook_toolset.skillbook,
-        max_content_length=200,  # Shorter for dynamic injection
-    )
+    # Format skills by section using NEW content-first method
+    skills_text = skillbook_toolset.skillbook._format_skills_by_section(skill_objects)
 
     # Use prompt constant
     return DYNAMIC_SKILLS_PROMPT.format(skills_text=skills_text)

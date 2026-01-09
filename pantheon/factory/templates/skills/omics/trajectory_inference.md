@@ -223,6 +223,7 @@ ax.legend()
 ax.set_xlabel('Pseudotime')
 ax.set_ylabel('Cell count')
 plt.savefig('pseudotime_comparison.pdf')
+plt.show()
 
 # Statistical test
 from scipy.stats import mannwhitneyu

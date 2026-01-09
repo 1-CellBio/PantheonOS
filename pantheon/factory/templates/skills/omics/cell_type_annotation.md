@@ -25,136 +25,148 @@ Methods for assigning cell type labels to clusters in single-cell RNA-seq data.
 
 ```python
 import scanpy as sc
+import pandas as pd
+import matplotlib.pyplot as plt
 
-# Compute differentially expressed genes per cluster
+# Check if .raw is populated (standard practice implies raw contains all genes)
+# If raw exists, use it to ensure we search ALL genes, not just HVGs.
+use_raw = True if adata.raw is not None else False
+
+# Compute differentially expressed genes
+# pts=True is required to calculate the percentage of cells expressing the gene
 sc.tl.rank_genes_groups(
     adata, 
-    groupby='leiden',  # or your cluster key
+    groupby='leiden', 
     method='wilcoxon',
-    pts=True,  # Include percentage expressed
+    pts=True,        
+    use_raw=use_raw
 )
 
-# View top markers for each cluster
+# Quick visual check of top ranking genes
 sc.pl.rank_genes_groups(adata, n_genes=10, sharey=False)
 plt.savefig('cluster_markers.png', dpi=150, bbox_inches='tight')
+plt.show()
 ```
 
 ### Step 2: Extract and Review Markers
 
 ```python
-# 1. Apply Strict Filters using Scanpy's native tool
-# This ensures markers are specific (low background) and representative (high in-group)
-sc.tl.filter_rank_genes_groups(
-    adata,
-    min_fold_change=0.5,           # LogFC > 0.5 (approx 1.4x higher). >1 is often too strict.
-    min_in_group_fraction=0.25,    # (pts) Gene must be expressed in >25% of the cluster cells.
-    max_out_group_fraction=0.20,   # (pts_rest) Gene must be expressed in <20% of other clusters.
-    use_raw=False
+# 1. Extract the full results table
+markers_df = sc.get.rank_genes_groups_df(adata, group=None)
+
+# 2. Map 'pts' (percentage in group) and 'pts_rest' (percentage in rest)
+# These are stored in adata.uns and need to be mapped to the dataframe
+pts = adata.uns['rank_genes_groups']['pts']
+pts_rest = adata.uns['rank_genes_groups']['pts_rest']
+
+markers_df['pct_nz_group'] = markers_df.apply(
+    lambda x: pts.loc[x['names'], x['group']], axis=1
+)
+markers_df['pct_nz_rest'] = markers_df.apply(
+    lambda x: pts_rest.loc[x['names'], x['group']], axis=1
 )
 
-# 2. Extract filtered markers (Failed genes become NaN)
-markers = sc.get.rank_genes_groups_df(adata, group=None)
-markers_filtered = markers.dropna().copy()
+# 3. Apply Quality Filters
+# LogFC > 0.5 (Significant upregulation)
+# pct_nz_group > 0.25 (Expressed in >25% of cluster cells)
+# pct_nz_rest < 0.3 (Specific, low background)
+markers_filtered = markers_df[
+    (markers_df['logfoldchanges'] > 0.5) & 
+    (markers_df['pct_nz_group'] > 0.25) & 
+    (markers_df['pct_nz_rest'] < 0.3) & 
+    (markers_df['pvals_adj'] < 0.05)
+].copy()
 
-# 3. Add 'pct_nz_group' (pts) column for visibility
-# (The filter function uses pts internally but doesn't output the values by default)
-pts_df = adata.uns['rank_genes_groups']['pts']
-markers_filtered['pct_nz_group'] = markers_filtered.apply(
-    lambda x: pts_df.loc[x['names'], x['group']], axis=1
-)
-
-# 4. Remove Biological Noise (Mitochondrial & Ribosomal genes)
-# These are rarely valid cell type markers
-final_markers = markers_filtered[
-    (~markers_filtered['names'].str.startswith('MT-')) & 
-    (~markers_filtered['names'].str.startswith('RPS')) & 
-    (~markers_filtered['names'].str.startswith('RPL'))
+# 4. Remove Biological Noise (Mitochondrial, Ribosomal, etc.)
+exclude_prefixes = ('MT-', 'RPS', 'RPL', 'MALAT1', 'HB') 
+markers_filtered = markers_filtered[
+    ~markers_filtered['names'].str.startswith(exclude_prefixes)
 ]
 
-# 5. Get Top 5 high-quality markers per cluster
-top_markers = final_markers.sort_values(
-    ['group', 'logfoldchanges'], 
-    ascending=[True, False]
+# 5. Get Top 5 Unique Markers per cluster for review
+top_markers = markers_filtered.sort_values(
+    ['group', 'logfoldchanges'], ascending=[True, False]
 ).groupby('group').head(5)
 
-# Display key metrics: Cluster, Gene, LogFC, P-val, % Expressed
-print(top_markers[['group', 'names', 'logfoldchanges', 'pvals_adj', 'pct_nz_group']])
-```
+print("Top specific markers per cluster:")
+print(top_markers[['group', 'names', 'logfoldchanges', 'pct_nz_group', 'pct_nz_rest']])
 
-### Step 3: Visualize Known Markers
-
-```python
-# Define known cell type markers (example for PBMC)
-markers_dict = {
-    'T cells': ['CD3D', 'CD3E', 'CD4', 'CD8A'],
-    'B cells': ['CD79A', 'MS4A1', 'CD19'],
-    'NK cells': ['NKG7', 'GNLY', 'KLRD1'],
-    'Monocytes': ['CD14', 'LYZ', 'S100A8'],
-    'Dendritic': ['FCER1A', 'CST3', 'CLEC10A'],
-    'Platelets': ['PPBP', 'PF4'],
-}
-
-> **IMPORTANT**: Dotplot must follow publication-standard axis semantics:
-> - **y-axis (left, rows) = cell types / clusters**
-> - **x-axis (bottom, columns) = genes**
-> - For "landscape layout" readability, use `figsize` and label rotation, **NOT `swap_axes=True`**
-
-# Dot plot
-dp = sc.pl.dotplot(
-    adata,
-    var_names=markers_dict,
-    groupby='leiden',
-    standard_scale='var',    # 'var'=by gene (recommended), 'obs'=by cell type, None=no scaling
-    dendrogram=True,         # Show hierarchical clustering
-    swap_axes=False,         # REQUIRED: y=cell types, x=genes (NOT swap!)
-    show=False,              # Return object for figure adjustments
+# 6. Convert to markers_dict format for visualization in Step 3
+markers_dict = (
+    top_markers
+    .groupby('group')['names']
+    .apply(list)
+    .to_dict()
 )
-
-# Adjust figure size for readability (NOT swap_axes!)
-dp.fig.set_size_inches(20, 7)  # Increase width based on gene count
-
-# Rotate gene labels to avoid overlap
-for ax in dp.fig.axes:
-    ax.tick_params(axis='x', labelrotation=90)
-
-dp.fig.tight_layout()
-dp.savefig('markers_dotplot.png', dpi=300, bbox_inches='tight')
-dp.savefig('markers_dotplot.pdf')  # Vector format for publication
 ```
 
-**Common Errors**:
-- ❌ **Axes swapped**: Used `swap_axes=True` → Fix: Use `swap_axes=False`
-- ❌ **Labels overlapping**: Increase figsize or rotate labels (see code above)
+> [!NOTE]
+> **Marker Gene Sources**:
+> - **Data-driven** (above): Use DEG results directly. Best for exploratory analysis or novel tissues.
+> - **Literature/Database**: Cross-reference the top markers with CellMarker, PanglaoDB, or tissue-specific publications for well-characterized tissues (e.g., PBMC, brain). This validates your data-driven markers. (Optional) You can inject Canonical Markers if you suspect a specific tissue type.
+
+### Step 3: Visualize Markers
+
+> **IMPORTANT**: Dotplot axis semantics: **y-axis = clusters, x-axis = genes**. Do NOT use `swap_axes=True`.
+
+> [!TIP]
+> **Diagonal Pattern**: Sort genes by their peak expression cluster, aligned with dendrogram order.
 
 ```python
-sc.pl.stacked_violin(adata, markers_dict, groupby='leiden', rotation=90)
-plt.savefig('markers_violin.png', dpi=150, bbox_inches='tight')
+# 1. Flatten and validate genes (check both .var and .raw for consistency)
+all_genes = set(adata.var_names) | (set(adata.raw.var_names) if adata.raw else set())
+flat_genes = list({g for genes in markers_dict.values() for g in genes if g in all_genes})
+
+if not flat_genes:
+    print("Warning: No valid markers found.")
+else:
+    # 2. Compute dendrogram and get visual cluster order
+    sc.tl.dendrogram(adata, groupby='leiden')
+    ordered_clusters = adata.uns['dendrogram_leiden']['categories_ordered']
+    cluster_order = {c: i for i, c in enumerate(ordered_clusters)}
+    
+    # 3. Find peak expression cluster for each gene
+    X = adata.raw[:, flat_genes].X if adata.raw else adata[:, flat_genes].X
+    if hasattr(X, "toarray"): X = X.toarray()
+    
+    expr_df = pd.DataFrame(X, columns=flat_genes)
+    expr_df['cluster'] = adata.obs['leiden'].values
+    peak_cluster = expr_df.groupby('cluster').mean().idxmax()
+    
+    # 4. Sort genes by dendrogram cluster order (creates diagonal)
+    sorted_genes = sorted(flat_genes, key=lambda g: (cluster_order.get(str(peak_cluster[g]), 999), g))
+    
+    # 5. Dotplot
+    sc.pl.dotplot(adata, var_names=sorted_genes, groupby='leiden',
+                  standard_scale='var', dendrogram=True, return_fig=True)
+    plt.savefig('markers_dotplot.png', bbox_inches='tight')
+    plt.show()
 ```
 
 ### Step 4: Assign Annotations
-
+> **TIP**: Reuse existing UMAP when only changing visualization (colors, title, legend).
+> Compute new UMAP if analysis changed (different clustering resolution, batch correction, etc.).
 ```python
-# Create mapping from cluster to cell type
+# Create mapping based on analysis of Step 2 and Step 3
 cluster_to_celltype = {
-    '0': 'CD4+ T cells',
-    '1': 'CD14+ Monocytes',
-    '2': 'B cells',
-    '3': 'NK cells',
-    '4': 'CD8+ T cells',
-    # ... add all clusters
+    # '0': 'T cells',
+    # '1': 'Monocytes',
+    # '2': 'B cells',
+    # ...
 }
 
 # Apply annotation
 adata.obs['cell_type'] = adata.obs['leiden'].map(cluster_to_celltype)
-```
 
-> **TIP**: Reuse existing UMAP when only changing visualization (colors, title, legend).
-> Compute new UMAP if analysis changed (different clustering resolution, batch correction, etc.).
+# Handle unmapped clusters
+if adata.obs['cell_type'].isnull().any():
+    print("Warning: Some clusters were not assigned types. Filling with 'Unknown'.")
+    adata.obs['cell_type'] = adata.obs['cell_type'].fillna('Unknown')
 
-```python
-# Visualize
-sc.pl.umap(adata, color='cell_type', title="Cell Type Annotation", legend_loc='right margin')
-plt.savefig('celltype_umap.png', dpi=150, bbox_inches='tight')
+# Final Visualization
+sc.pl.umap(adata, color='cell_type', title="Annotated Cell Types", legend_loc='on data')
+plt.savefig('annotation_umap.png', bbox_inches='tight')
+plt.show()
 ```
 
 ## 2. Reference-Based Annotation
@@ -253,6 +265,7 @@ sc.pl.heatmap(
     dendrogram=True,
 )
 plt.savefig('markers_heatmap.png', dpi=150, bbox_inches='tight')
+plt.show()
 ```
 
 ### Check for Mixed Clusters

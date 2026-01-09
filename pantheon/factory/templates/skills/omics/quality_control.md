@@ -486,6 +486,7 @@ sc.pp.highly_variable_genes(
 # Visualize
 sc.pl.highly_variable_genes(adata)
 plt.savefig('hvg_selection.png', dpi=150, bbox_inches='tight')
+plt.show()
 
 print(f"Highly variable genes: {sum(adata.var['highly_variable'])}")
 ```

@@ -448,16 +448,19 @@ class Endpoint(FileTransferToolSet):
 
     async def cleanup(self):
         """Clean up Endpoint resources (toolsets and MCP servers)"""
-        try:
-            if hasattr(self, "toolset_manager"):
+        if hasattr(self, "toolset_manager"):
+            try:
                 await self.toolset_manager.cleanup()
                 logger.info("ToolSet Manager cleanup complete")
-            
-            if hasattr(self, "mcp_manager"):
+            except Exception as e:
+                logger.error(f"Error during ToolSet Manager cleanup: {e}")
+        
+        if hasattr(self, "mcp_manager"):
+            try:
                 await self.mcp_manager.cleanup()
                 logger.info("MCP Manager cleanup complete")
-        except Exception as e:
-            logger.error(f"Error during Endpoint cleanup: {e}")
+            except Exception as e:
+                logger.error(f"Error during MCP Manager cleanup: {e}")
 
 
 

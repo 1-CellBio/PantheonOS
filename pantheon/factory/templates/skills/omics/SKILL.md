@@ -19,7 +19,7 @@ If you have both single-cell and spatial data for the same/similar sample,
 you can map single-cell data to spatial data to impute unobserved genes
 and enhance spatial resolution.
 
-**Skill file**: [single_cell_spatial_mapping.md](file:///single_cell_spatial_mapping.md)
+**Skill file**: [single_cell_spatial_mapping.md](./single_cell_spatial_mapping.md)
 
 **When to use**:
 - You have paired scRNA-seq and spatial transcriptomics data
@@ -33,7 +33,7 @@ and enhance spatial resolution.
 For visualizing 3D spatial transcriptomics data with interactive plots
 and animations.
 
-**Skill file**: [visualize_3d_spatial.md](file:///visualize_3d_spatial.md)
+**Skill file**: [visualize_3d_spatial.md](./visualize_3d_spatial.md)
 
 **When to use**:
 - Your spatial data has 3D coordinates
@@ -46,7 +46,7 @@ and animations.
 
 Standard quality control workflow for single-cell data.
 
-**Skill file**: [quality_control.md](file:///quality_control.md)
+**Skill file**: [quality_control.md](./quality_control.md)
 
 **When to use**:
 - Starting analysis of new single-cell dataset
@@ -59,7 +59,7 @@ Standard quality control workflow for single-cell data.
 
 Approaches for annotating cell types in single-cell data.
 
-**Skill file**: [cell_type_annotation.md](file:///cell_type_annotation.md)
+**Skill file**: [cell_type_annotation.md](./cell_type_annotation.md)
 
 **When to use**:
 - After clustering, need to assign cell type labels
@@ -73,7 +73,7 @@ Approaches for annotating cell types in single-cell data.
 Pseudotime analysis and trajectory inference for cell differentiation,
 neurogenesis, and lineage tracing studies.
 
-**Skill file**: [trajectory_inference.md](file:///trajectory_inference.md)
+**Skill file**: [trajectory_inference.md](./trajectory_inference.md)
 
 **When to use**:
 - Studying cell differentiation paths (e.g., stem cell → mature cell)
@@ -88,7 +88,7 @@ neurogenesis, and lineage tracing studies.
 Strategies for accelerating single-cell analysis using multi-core CPU,
 GPU acceleration, and memory optimization.
 
-**Skill file**: [parallel_computing.md](file:///parallel_computing.md)
+**Skill file**: [parallel_computing.md](./parallel_computing.md)
 
 **When to use**:
 - Analysis is running slowly on single core

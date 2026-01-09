@@ -16,13 +16,12 @@ leader:
   icon: 🧭
   toolsets:
     - file_manager
-    - python_interpreter
     - shell
     - package
     - task
     - code
     - integrated_notebook
-    - mcp
+    - mcp:context7
     - web
 ---
 

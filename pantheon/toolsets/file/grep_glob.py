@@ -352,6 +352,7 @@ def run_ripgrep(
     context_lines: int,
     case_sensitive: bool,
     respect_git_ignore: bool,
+    max_count_per_file: int = 100,  # Limit matches per file to prevent timeout
 ) -> dict:
     """Run ripgrep tool to search file contents.
 
@@ -363,6 +364,7 @@ def run_ripgrep(
         context_lines: Number of context lines before/after match.
         case_sensitive: Whether search is case-sensitive.
         respect_git_ignore: Whether to respect .gitignore.
+        max_count_per_file: Maximum matches per file (prevents timeout on broad patterns).
 
     Returns:
         Dictionary with matches and files_matched count.
@@ -382,6 +384,9 @@ def run_ripgrep(
         cmd.extend(["--no-ignore", "--hidden"])
     if file_pattern:
         cmd.extend(["--glob", file_pattern])
+    
+    # Limit matches per file to prevent timeout on overly broad patterns
+    cmd.extend(["--max-count", str(max_count_per_file)])
 
     cmd.append(str(search_path))
 
@@ -466,6 +471,7 @@ def run_grep_fallback(
     context_lines: int,
     case_sensitive: bool,
     respect_git_ignore: bool,
+    max_results: int = 100,  # Fallback limit, actual limit passed from grep_search
 ) -> dict:
     """Fallback grep implementation using Python re module.
 
@@ -477,9 +483,10 @@ def run_grep_fallback(
         context_lines: Number of context lines before/after match.
         case_sensitive: Whether search is case-sensitive.
         respect_git_ignore: Whether to respect .gitignore.
+        max_results: Maximum number of matches to collect before stopping search.
 
     Returns:
-        Dictionary with matches and files_matched count.
+        Dictionary with matches, files_matched count, and capped flag.
 
     Raises:
         ValueError: If regex pattern is invalid.
@@ -501,6 +508,7 @@ def run_grep_fallback(
 
     matches = []
     files_matched = set()
+    capped = False
 
     for file_path in files_to_search:
         if not file_path.is_file():
@@ -545,6 +553,15 @@ def run_grep_fallback(
                         ]
 
                     matches.append(match_dict)
+                    
+                    # Early termination: stop if we've hit the max results
+                    if len(matches) >= max_results:
+                        capped = True
+                        logger.warning(
+                            f"Python grep fallback hit max results limit ({max_results}). "
+                            f"Search terminated early. Refine your pattern to get complete results."
+                        )
+                        return {"matches": matches, "files_matched": len(files_matched), "capped": capped}
 
         except (UnicodeDecodeError, PermissionError):
             # Skip binary files and permission-denied files
@@ -553,7 +570,7 @@ def run_grep_fallback(
             logger.warning(f"Error reading file {file_path}: {e}")
             continue
 
-    return {"matches": matches, "files_matched": len(files_matched)}
+    return {"matches": matches, "files_matched": len(files_matched), "capped": capped}
 
 
 def grep_search(
@@ -564,6 +581,7 @@ def grep_search(
     context_lines: int = 0,
     case_sensitive: bool = False,
     respect_git_ignore: bool = True,
+    max_results: int = 100,
 ) -> dict:
     """Search for text patterns within file contents.
 
@@ -575,6 +593,7 @@ def grep_search(
         context_lines: Number of context lines before/after each match.
         case_sensitive: Whether search is case-sensitive.
         respect_git_ignore: Whether to respect .gitignore patterns.
+        max_results: Maximum number of results to collect (for early termination).
 
     Returns:
         Dictionary with search results or error.
@@ -607,7 +626,9 @@ def grep_search(
                     context_lines,
                     case_sensitive,
                     respect_git_ignore,
+                    max_count_per_file=max_results,
                 )
+                result["capped"] = False  # ripgrep doesn't have early termination yet
             else:
                 raise FileNotFoundError("ripgrep not available")
         except Exception as e:
@@ -620,9 +641,10 @@ def grep_search(
                 context_lines,
                 case_sensitive,
                 respect_git_ignore,
+                max_results=max_results,
             )
 
-        return {
+        response = {
             "success": True,
             "matches": result["matches"],
             "total_matches": len(result["matches"]),
@@ -630,6 +652,13 @@ def grep_search(
             "pattern": pattern,
             "message": f"Found {len(result['matches'])} match(es) in {result['files_matched']} file(s)",
         }
+        
+        # Add capped warning if search was terminated early
+        if result.get("capped", False):
+            response["capped"] = True
+            response["message"] += f" (search terminated early at {max_results} matches)"
+        
+        return response
 
     except ValueError as e:
         return {"success": False, "error": str(e)}

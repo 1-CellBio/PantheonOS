@@ -33,6 +33,7 @@ def compress_memory(
     output_dir: Optional[str] = None,
     max_arg_length: Optional[int] = None,
     max_output_length: Optional[int] = None,
+    use_smart_truncate: bool = False,  # Enable smart truncation for tool outputs
 ) -> CompressedMemory:
     """
     Compress a memory.json file into trajectory files.
@@ -46,6 +47,8 @@ def compress_memory(
         output_dir: Directory for trajectory output (default: temp dir)
         max_arg_length: Max chars for tool arguments (default: from settings)
         max_output_length: Max chars for tool outputs (default: from settings)
+        use_smart_truncate: If True, use smart truncation (based on raw_content) for tool outputs
+                           to preserve JSON structure and avoid cumulative information loss
         
     Returns:
         CompressedMemory with paths and content
@@ -86,6 +89,7 @@ def compress_memory(
         extract_skills=True,
         save_details_to=None,  # Don't create new details file
         include_footer_note=True,
+        use_smart_truncate=use_smart_truncate,  # Pass through smart truncation flag
     )
     
     # Create output directory

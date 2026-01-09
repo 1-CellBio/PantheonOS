@@ -187,6 +187,7 @@ class ContextCompressor:
             extract_files=True,
             save_details_to=details_path,
             include_footer_note=False,  # Disable footer note to avoid confusing the compression LLM
+            use_smart_truncate=True,  # Enable smart truncation to preserve JSON structure
         )
 
         # 4. Build files section with hints for LLM to describe each file

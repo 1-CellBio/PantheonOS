@@ -139,13 +139,19 @@ class UnifiedMCPGateway:
     async def stop_gateway(self) -> None:
         """Stop the HTTP gateway server."""
         if self._server_task is not None:
+            # Cancel the task
             self._server_task.cancel()
             try:
-                await self._server_task
-            except asyncio.CancelledError:
+                # Wait for task to finish cleanup
+                async with asyncio.timeout(5.0):
+                    await self._server_task
+            except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
-            self._server_task = None
-            logger.info("Unified MCP Gateway stopped")
+            except Exception as e:
+                logger.error(f"Error during gateway task cleanup: {e}")
+            finally:
+                self._server_task = None
+                logger.info("Unified MCP Gateway stopped")
 
     async def mount_server(
         self,

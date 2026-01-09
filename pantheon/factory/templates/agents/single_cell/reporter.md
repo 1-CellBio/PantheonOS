@@ -146,7 +146,9 @@ The HTML report is designed as an **interactive analysis report** for data deliv
 > [!CAUTION]
 > The following MUST NEVER appear in HTML reports - violation is a CRITICAL error:
 
-1. **No loop references in text content**: Never use "loop", "Loop1", "Loop2", etc. in visible text, section titles, or prose. Use descriptive analysis names instead. Note: Image `src="loop1/.../figure.png"` paths are acceptable (bundled by monolith).
+1. **No loop references in text content**: Never use "loop", "Loop1", "Loop2", etc. in visible text, section titles, or prose. Use descriptive analysis names instead. 
+   - **Image paths**: Use the ORIGINAL figure paths directly (e.g., `src="../loop1/analysis_expert/figures/xxx.png"`). Monolith will automatically bundle them.
+   - **DO NOT create mirror/copy folders**: Never copy figures to simplified paths like `loop1/figures/`. Always reference the original location where analysis_expert saved them.
 
 2. **No internal file/codes references in text**: Never mention or link to internal files (`.md`, `.ipynb`, `.py`, internal `.csv`) in visible text. Summarize content directly in HTML instead of referencing source files. Only allowed: original input data paths and final deliverable data files in Methods section.
 
@@ -252,7 +254,8 @@ Before running `monolith`, verify:
 - [ ] No footer with workflow instructions
 - [ ] No Pantheon branding
 - [ ] All figures display correctly
-- [ ] Image `src` paths can contain "loop" (these will be bundled by monolith)
+- [ ] Image `src` paths use ORIGINAL locations (e.g., `../loop1/analysis_expert/figures/xxx.png`)
+- [ ] No mirror/copy folders created (e.g., NO `loop1/figures/` folders - use original paths only)
 
 ## How to generate the HTML report
 

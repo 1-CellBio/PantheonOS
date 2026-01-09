@@ -125,11 +125,14 @@ def parse_skills_md(file_path: Path, skills_dir: Path) -> List[Skill]:
             skill_counter[prefix] = skill_counter.get(prefix, 0) + 1
             skill_id = f"user-{prefix}-{skill_counter[prefix]:03d}"
             
+            # SKILLS.md rules: short content + sources for traceability
+            # Special case: has both content and sources
+            # Display logic will NOT render sources for these
             skills.append(Skill(
                 id=skill_id,
                 section=current_section,
                 content=content,
-                sources=[str(relative_path)],  # Use sources list
+                sources=[],  # No sources needed for simple rules
                 type="user",  # User-defined skill from SKILLS.md
             ))
     
@@ -175,36 +178,37 @@ def parse_skill_from_file(file_path: Path, skills_dir: Path) -> Optional[Skill]:
     """
     Parse a skill file and create a Skill object from its front matter.
     
-    Requires 'id' and 'description' in front matter.
+    Requires 'id' in front matter. Description is optional but recommended.
     
-    For file-based skills:
-    - content = description (short summary for skillbook.json and prompt)
-    - Full content stays in the file only (accessed via sources)
+    For file-based skills (with sources):
+    - content = "" (empty - full content stays in source file)
+    - description = from front matter (recommended for display)
+    - sources = [this file] (full content accessed via source)
     
-    This matches the auto-conversion logic: avoid storing long content in skillbook.
+    This ensures:
+    - skillbook.json stays lightweight (no file content duplication)
+    - Full content is read from source files when needed
+    - All data stored as-is, no conversion
     """
-    front_matter, _ = parse_front_matter(file_path)
+    front_matter, _body = parse_front_matter(file_path)
     
     if not front_matter:
         return None
     
     skill_id = front_matter.get("id")
-    description = front_matter.get("description")
-    
-    if not skill_id or not description:
+    if not skill_id:
         return None
     
     relative_path = _get_relative_path(file_path, skills_dir)
     
-    # For file-based skills: content = description (short)
-    # Full content stays in file, accessed via sources
+    # For file-based skills: content is None, full content in source file
     return Skill(
         id=skill_id,
         section=front_matter.get("section", "workflows"),
-        content=description.strip(),  # Short description as content
-        description=description.strip(),  # Also set description field
+        content=None,  # None - full content in source file
+        description=front_matter.get("description"),  # Optional summary from front matter
         type=front_matter.get("type", "user"),
-        sources=[str(relative_path)],
+        sources=[str(relative_path)],  # Source file contains full content
         tags=front_matter.get("tags", []),
         learned_from=front_matter.get("learned_from"),
         created_at=front_matter.get("created_at", ""),
@@ -265,20 +269,29 @@ class SkillLoader:
         """
         Merge skill into skillbook.
         
-        Updates content, description and metadata from file. Type is always taken from
-        the file's front matter, ensuring consistency.
-        Always preserves existing ratings (helpful/harmful/neutral).
+        For file-based skills (with sources):
+        - Updates description, section, sources, tags, type from file
+        - NEVER updates content (stays empty)
+        - Preserves ratings (helpful/harmful/neutral)
+        
+        For programmatic skills (without sources):
+        - Updates all fields including content
+        - Preserves ratings
         """
         existing = self.skillbook.get_skill(skill.id)
         
         if existing:
-            # Update content and metadata, preserve ratings
-            existing.content = skill.content
-            existing.description = skill.description  # Sync description
+            # Update metadata, preserve ratings
+            existing.description = skill.description
             existing.section = skill.section
             existing.sources = skill.sources
             existing.tags = skill.tags if skill.tags else existing.tags
             existing.type = skill.type  # Always use file's type
+            
+            # Only update content for programmatic skills (no sources)
+            # File-based skills keep content empty
+            if not skill.sources:
+                existing.content = skill.content
         else:
             self._add_skill_to_skillbook(skill)
     

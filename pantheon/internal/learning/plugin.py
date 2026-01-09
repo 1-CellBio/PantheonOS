@@ -246,7 +246,7 @@ class LearningPlugin(TeamPlugin):
         """Inject static skills into agent instructions."""
         from pantheon.internal.learning import inject_skills_to_team
         
-        await inject_skills_to_team(team, self.skillbook)
+        await inject_skills_to_team(team, self.skillbook, config=self.config)
         logger.info("Static skill injection completed")
     
     async def _register_dynamic_injector(self, team: "PantheonTeam") -> None:

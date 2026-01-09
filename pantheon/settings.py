@@ -306,6 +306,8 @@ class Settings:
             # Mode switch: "pipeline" (default) or "team"
             "mode": learning.get("mode", "pipeline"),
             "team_id": learning.get("team_id", "skill_learning_team"),
+            # Static injection sections filter (None = use default rules)
+            "static_injection_sections": learning.get("static_injection_sections"),
         }
 
     def get_compression_config(self) -> Dict[str, Any]:

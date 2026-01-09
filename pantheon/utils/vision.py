@@ -121,28 +121,32 @@ def get_image_base64(file_path: str, max_size: int = MAX_IMAGE_DIMENSION) -> str
     if not path.exists():
         raise FileNotFoundError(f"Image file not found: {file_path}")
 
-    # Open with PIL
-    img = Image.open(path)
+    # Read file bytes into memory first to avoid lazy loading issues
+    # (e.g., 'PngImageFile' object has no attribute '_im')
+    with open(path, "rb") as f:
+        file_bytes = f.read()
+    
+    # Open from memory buffer - this forces complete loading
+    with Image.open(io.BytesIO(file_bytes)) as img:
+        # Resize if exceeds max dimension
+        if max(img.size) > max_size:
+            img.thumbnail((max_size, max_size), Image.LANCZOS)
 
-    # Resize if exceeds max dimension
-    if max(img.size) > max_size:
-        img.thumbnail((max_size, max_size), Image.LANCZOS)
+        # Encode to buffer
+        buffer = io.BytesIO()
 
-    # Encode to buffer
-    buffer = io.BytesIO()
+        if img.mode in ("RGBA", "LA", "P"):
+            # Preserve transparency with PNG
+            img.save(buffer, format="PNG", optimize=True)
+            mime = "png"
+        else:
+            # Use JPEG for RGB (smaller file size)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(buffer, format="JPEG", quality=85, optimize=True)
+            mime = "jpeg"
 
-    if img.mode in ("RGBA", "LA", "P"):
-        # Preserve transparency with PNG
-        img.save(buffer, format="PNG", optimize=True)
-        mime = "png"
-    else:
-        # Use JPEG for RGB (smaller file size)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.save(buffer, format="JPEG", quality=85, optimize=True)
-        mime = "jpeg"
-
-    return f"data:image/{mime};base64,{base64.b64encode(buffer.getvalue()).decode()}"
+        return f"data:image/{mime};base64,{base64.b64encode(buffer.getvalue()).decode()}"
 
 
 # Backward compatibility alias

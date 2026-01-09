@@ -11,8 +11,15 @@ __pycache__/
 *.so
 
 # Distribution / packaging
-/benchmarks
 .Python
+
+# Benchmarks - ignore data directories but keep code
+benchmarks/bixbench/data/
+benchmarks/bixbench/results/
+benchmarks/bixbench/workspaces/
+benchmarks/bixbench/groundtruth/
+benchmarks/bixbench/test_capsules/
+benchmarks/bixbench/__pycache__/
 build/
 develop-eggs/
 dist/

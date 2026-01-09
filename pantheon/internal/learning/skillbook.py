@@ -92,58 +92,14 @@ def _format_skillbook_for_injection(
     return "\n".join(parts).strip()
 
 
-def format_skills_by_section(
-    skills: List["Skill"],
-    skillbook: "Skillbook",
-    max_content_length: int = 500,
-) -> str:
-    """
-    Format a list of skills grouped by section.
-    
-    This is a shared utility used by:
-    - Static injection (as_prompt)
-    - Dynamic injection (load_dynamic_skills)
-    - Any other skill formatting needs
-    
-    Args:
-        skills: List of Skill objects to format
-        skillbook: Skillbook instance (required for _format_skill_content)
-        max_content_length: Maximum length for skill content before truncation
-        
-    Returns:
-        Formatted string with skills grouped by section
-    """
-    if not skills:
-        return ""
-    
-    # Group skills by section
-    sections: Dict[str, List["Skill"]] = {}
-    for skill in skills:
-        sections.setdefault(skill.section, []).append(skill)
-    
-    # Format each section
-    parts = []
-    for section_name in sorted(sections.keys()):
-        section_skills = sections[section_name]
-        parts.append(f"### {section_name.upper()}")
-        
-        for skill in section_skills:
-            # Always use skillbook's formatting method
-            content = skillbook._format_skill_content(skill, max_content_length=max_content_length)
-            parts.append(f"[{skill.id}] {content}")
-        
-        parts.append("")  # Empty line between sections
-    
-    return "\n".join(parts).strip()
-
-
+# ===========================================================================
 @dataclass
 class Skill:
     """Single skillbook entry representing a learned strategy or insight."""
 
     id: str  # Unique identifier, also used for /xxx trigger
     section: str  # user_rules | strategies | patterns | workflows | guidelines | mistakes
-    content: str  # Full skill content (no length limit)
+    content: Optional[str] = None  # Full skill content (None for file-based skills with sources)
     helpful: int = 0
     harmful: int = 0
     neutral: int = 0
@@ -306,21 +262,20 @@ class Skillbook:
 
         Args:
             section: Skill category (strategies, workflows, etc.)
-            content: Full skill content (no length limit)
+            content: Full skill content (stored as-is, no length limit)
             agent_scope: Agent scope for the skill
             skill_id: Optional custom ID
-            description: Optional short summary for long content (max 15 words)
-            sources: Optional source files (relative paths)
+            description: Optional short summary (stored as-is if provided)
+            sources: Optional source files (relative paths, stored as-is)
 
-        Auto-conversion:
-            If content > 2000 chars and sources not provided, automatically:
-            1. Generate description if not provided (truncate to ~15 words)
-            2. Write content to source file with front matter
-            3. Set sources to the generated file
-
-        Returns None if section is full, otherwise returns the created skill.
-        Note: Skills added through this method are marked as type='system'
-        (auto-learned), distinguishing them from user-defined file skills.
+        Returns:
+            None if section is full, otherwise returns the created skill.
+            
+        Note:
+            - All fields (content, description, sources) are stored exactly as provided
+            - No auto-conversion or auto-generation is performed
+            - Skills added through this method are marked as type='system'
+              (auto-learned), distinguishing them from user-defined file skills
         """
         # Check section limit
         section_skills = self._sections.get(section, [])
@@ -333,39 +288,14 @@ class Skillbook:
 
         skill_id = skill_id or self._generate_id(section)
         
-        
-        # Auto-conversion: long content without sources -> write to source file
-        CONTENT_THRESHOLD = self.max_content_length  # characters
-        final_sources = sources or []
-        final_description = description
-        final_content = content  # Default: store full content
-        
-        if len(content) > CONTENT_THRESHOLD and not sources:
-            # Auto-generate description if not provided (truncate to ~15 words)
-            if not final_description:
-                words = content.split()[:15]
-                final_description = " ".join(words)
-                if len(words) == 15:
-                    final_description += "..."
-            
-            # Write full content to source file with front matter
-            source_file = self._write_content_to_source(
-                skill_id, section, content, final_description
-            )
-            if source_file:
-                final_sources = [source_file]
-                # Store description as content (keep skillbook.json small)
-                final_content = final_description
-                logger.info(f"Auto-converted long content to source: {source_file}")
-        
         skill = Skill(
             id=skill_id,
             section=section,
-            content=final_content,  # description if converted, full content otherwise
+            content=content,  # Store as-is, no auto-conversion
             agent_scope=agent_scope,
             type="system",  # Mark as auto-learned by ACE pipeline
-            description=final_description,
-            sources=final_sources,
+            description=description,  # Store as-is, no auto-generation
+            sources=sources or [],
         )
         self._skills[skill_id] = skill
         self._sections.setdefault(section, []).append(skill_id)
@@ -378,15 +308,8 @@ class Skillbook:
         description: Optional[str] = None,
     ) -> Optional[Skill]:
         """
-        Update an existing skill's content.
+        Update an existing skill's content or description.
         
-        Auto-conversion:
-            If content > 500 chars and skill has no sources, automatically:
-            1. Generate description if not provided
-            2. Write content to source file with front matter
-            3. Set sources to the generated file
-            4. Update content to description (keep skillbook.json small)
-            
         Returns None if skill not found or is user-defined.
         """
         skill = self._skills.get(skill_id)
@@ -395,36 +318,14 @@ class Skillbook:
         
         # Protect user-defined skills
         if skill.is_user_defined():
-            logger.warning(f"Cannot modify user-defined skill '{skill_id}'. Edit source file directly.")
+            logger.info(f"Cannot modify user-defined skill '{skill_id}'. Edit source file directly.")
             return None
         
         if content is not None:
-            CONTENT_THRESHOLD = self.max_content_length
-            
-            # Auto-conversion: long content + no existing sources
-            if len(content) > CONTENT_THRESHOLD and not skill.sources:
-                # Generate description if not provided
-                final_description = description
-                if not final_description:
-                    words = content.split()[:15]
-                    final_description = " ".join(words)
-                    if len(words) == 15:
-                        final_description += "..."
-                
-                # Write to source file
-                source_file = self._write_content_to_source(
-                    skill_id, skill.section, content, final_description
-                )
-                if source_file:
-                    skill.sources = [source_file]
-                    skill.content = final_description  # Store description as content
-                    skill.description = final_description
-                    logger.info(f"Auto-converted long content to source: {source_file}")
-            else:
-                # Short content or has sources: update directly
-                skill.content = content
-                if description:
-                    skill.description = description
+            skill.content = content
+        
+        if description is not None:
+            skill.description = description
         
         skill.updated_at = datetime.now(timezone.utc).isoformat()
         return skill
@@ -454,7 +355,7 @@ class Skillbook:
         
         # Protect user-defined skills
         if skill.is_user_defined():
-            logger.warning(f"Cannot remove user-defined skill '{skill_id}'. Delete source file directly.")
+            logger.info(f"Cannot remove user-defined skill '{skill_id}'. Delete source file directly.")
             return False
 
         if soft:
@@ -556,63 +457,14 @@ class Skillbook:
     # Presentation
     # ------------------------------------------------------------------ #
 
-    def _format_skill_content(self, skill: Skill, max_content_length: int = 500) -> str:
-        """
-        Format skill content for display in prompts.
-
-        Priority:
-        1. Use description if available (for long content)
-        2. Truncate content if too long
-        3. Add file reference if sources exist
-        
-        Args:
-            skill: Skill object to format
-            max_content_length: Maximum length for content before truncation (default: 500)
-        """
-        # Include stats: (stats: +5/-0/~2)
-        stats = f"(stats: +{skill.helpful}/-{skill.harmful}/~{skill.neutral})"
-        
-        # Determine display content
-        if skill.description:
-            # Use description for summary
-            display = skill.description
-        elif len(skill.content) > max_content_length:
-            # Truncate long content
-            display = skill.content[:max_content_length] + "..."
-        else:
-            display = skill.content
-        
-        content = f"{stats} {display}"
-
-        # Add file reference for file-based skills (exclude SKILLS.md)
-        if skill.sources:
-            primary = skill.primary_source
-            if primary and not primary.endswith("SKILLS.md"):
-                from pantheon.settings import get_settings
-                if len(skill.sources) == 1:
-                    # Single file: show full path
-                    abs_path = get_settings().skills_dir / primary
-                    content = f"{content} (see `{abs_path}` for details)"
-                else:
-                    # Multiple files: show directory or list
-                    parts = primary.split('/')
-                    if len(parts) > 1:
-                        # Has subdirectory (e.g., "skill-id/workflow.md")
-                        skill_dir = get_settings().skills_dir / parts[0]
-                        content = f"{content} (see `{skill_dir}/` for details)"
-                    else:
-                        # Multiple files at root
-                        abs_paths = [str(get_settings().skills_dir / s) for s in skill.sources]
-                        content = f"{content} (see {', '.join(f'`{p}`' for p in abs_paths)} for details)"
-
-        return content
 
     def as_prompt(self, agent_name: str) -> str:
         """
         Format skillbook as a prompt section for LLM injection.
 
+        Now uses content-first formatting consistent with as_prompt_for_learning().
         User rules (user_rules section) are presented as MUST FOLLOW rules.
-        Other skills are presented as learned strategies with usage instructions.
+        Other skills are presented as learned strategies.
         Skills are sorted by helpfulness (helpful - harmful), highest first.
         Returns empty string if no applicable skills.
         """
@@ -625,26 +477,211 @@ class Skillbook:
         user_rules = [s for s in skills if s.section == "user_rules"]
         other_skills = [s for s in skills if s.section != "user_rules"]
 
-        # Format user_rules (simple list, no section header)
+        # Format user_rules using NEW content-first logic
         user_rules_text = ""
         if user_rules:
             user_rules_text = "\n".join(
-                f"[{s.id}] {self._format_skill_content(s)}" for s in user_rules
+                f"[{s.id}] {self._format_skill_for_display(s)}" for s in user_rules
             )
 
-        # Format other skills by section using shared function
+        # Format other skills by section using NEW method
         strategies_text = ""
         if other_skills:
-            strategies_text = format_skills_by_section(other_skills, skillbook=self)
+            strategies_text = self._format_skills_by_section(other_skills)
 
         return _format_skillbook_for_injection(user_rules_text, strategies_text)
+
+    def _format_skill_for_display(
+        self, 
+        skill: Skill, 
+        max_content_length: int | None = None,
+        include_content: bool = True
+    ) -> str:
+        """
+        Format skill for display.
+        
+        Logic:
+        1. Description always shown if present
+        2. If include_content=True: Show full content (in addition to description)
+        3. If include_content=False: Only show description (or truncated content if no description)
+        4. Always show sources with absolute path if present
+        
+        Args:
+            skill: Skill to format
+            max_content_length: Maximum length for content display when include_content=False.
+                               If None, content is not truncated.
+            include_content: If True (default), show full content. If False (semantic search only),
+                            only show description or truncated content.
+        
+        Returns:
+            Formatted string with stats and content
+        """
+        stats = f"(stats: +{skill.helpful}/-{skill.harmful}/~{skill.neutral})"
+        
+        # Add USER-DEFINED marker for user-defined skills
+        if skill.is_user_defined():
+            stats = f"[USER-DEFINED] {stats}"
+        
+        parts = []
+        
+        # Description always shown if present
+        if skill.description:
+            parts.append(f"Description: {skill.description}")
+        
+        # Content handling
+        if include_content:
+            # Show full content (all scenarios except semantic search)
+            if skill.content:
+                parts.append(skill.content)
+        else:
+            # Semantic search: only show truncated content if no description
+            if not skill.description:
+                if max_content_length is None or len(skill.content) <= max_content_length:
+                    parts.append(skill.content)
+                else:
+                    parts.append(skill.content[:max_content_length] + "... [truncated]")
+        
+        # Combine parts
+        display = "\n".join(parts) if len(parts) > 1 else (parts[0] if parts else "")
+        
+        # Show sources if present, EXCEPT for SKILLS.md rules
+        # SKILLS.md rules have both content and sources, but we only show content
+        if skill.sources:
+            # Skip sources display if skill has content (SKILLS.md case)
+            # Only show sources for file-based skills (empty content)
+            if not skill.content:
+                abs_path = self.skills_dir / skill.sources[0]
+                display += f" [source: `{abs_path}`]"
+        
+        return f"{stats} {display}"
+
+    def _get_display_text(
+        self, 
+        skill: Skill, 
+        max_content_length: int | None = None,
+        include_content: bool = True
+    ) -> str:
+        """
+        Get display text without stats prefix.
+        
+        Uses same logic as _format_skill_for_display but returns only the content part.
+        
+        Args:
+            skill: Skill to format
+            max_content_length: Maximum length for content display when include_content=False.
+            include_content: If True (default), show full content.
+        
+        Returns:
+            Formatted display text (without stats prefix)
+        """
+        parts = []
+        
+        # Description always shown if present
+        if skill.description:
+            parts.append(f"Description: {skill.description}")
+        
+        # Content handling
+        if include_content:
+            # Show full content
+            if skill.content:
+                parts.append(skill.content)
+        else:
+            # Semantic search: only if no description
+            if not skill.description:
+                if max_content_length is None or len(skill.content) <= max_content_length:
+                    parts.append(skill.content)
+                else:
+                    parts.append(skill.content[:max_content_length] + "... [truncated]")
+        
+        # Combine parts
+        display = "\n".join(parts) if len(parts) > 1 else (parts[0] if parts else "")
+        
+        # Show sources if present, EXCEPT for SKILLS.md rules
+        if skill.sources:
+            # Skip sources if skill has content (SKILLS.md case)
+            if not skill.content:
+                abs_path = self.skills_dir / skill.sources[0]
+                display += f" [source: `{abs_path}`]"
+        
+        return display
+
+    def as_prompt_for_learning(self, agent_name: str) -> str:
+        """
+        Format skillbook for learning agents (Reflector/SkillManager).
+        
+        Uses content-first formatting with tool hint at top.
+        Tool hint shown only once at the beginning.
+        
+        Returns:
+            Formatted string for learning agent prompts
+        """
+        skills = self.get_skills_for_agent(agent_name)
+        if not skills:
+            return ""
+        
+        parts = [
+            "## 📚 Available Skills",
+            "",
+            "Use `read_skills_content(skill_ids)` to read full content",
+            "",
+        ]
+        
+        # Separate user_rules from other sections
+        user_rules = [s for s in skills if s.section == "user_rules"]
+        other_skills = [s for s in skills if s.section != "user_rules"]
+        
+        # Format user_rules
+        if user_rules:
+            parts.append("### USER_RULES")
+            for skill in user_rules:
+                parts.append(f"[{skill.id}] {self._format_skill_for_display(skill)}")
+            parts.append("")
+        
+        # Format other skills by section
+        if other_skills:
+            sections = {}
+            for s in other_skills:
+                sections.setdefault(s.section, []).append(s)
+            
+            for section_name in sorted(sections.keys()):
+                parts.append(f"### {section_name.upper()}")
+                for skill in sections[section_name]:
+                    parts.append(f"[{skill.id}] {self._format_skill_for_display(skill)}")
+                parts.append("")
+        
+        return "\n".join(parts)
+
+    def _format_skills_by_section(self, skills: List[Skill]) -> str:
+        """
+        Format multiple skills by section using description-first logic.
+        
+        Uses _format_skill_for_display() for consistent formatting.
+        
+        Args:
+            skills: List of skills to format
+            
+        Returns:
+            Formatted string with skills grouped by section
+        """
+        sections = {}
+        for s in skills:
+            sections.setdefault(s.section, []).append(s)
+        
+        parts = []
+        for section_name in sorted(sections.keys()):
+            parts.append(f"### {section_name.upper()}")
+            for skill in sections[section_name]:
+                parts.append(f"[{skill.id}] {self._format_skill_for_display(skill)}")
+            parts.append("")
+        
+        return "\n".join(parts)
 
     # ------------------------------------------------------------------ #
     # Persistence
     # ------------------------------------------------------------------ #
 
     def save(self, path: Optional[str] = None) -> None:
-        """Save skillbook to JSON file."""
+        """Save skillbook to JSON file with validation warnings."""
         if path:
             save_path = Path(path)
         elif self.skillbook_path:
@@ -652,6 +689,22 @@ class Skillbook:
         else:
             logger.warning("No path specified for skillbook save")
             return
+
+        # Validation: warn about content/sources issues
+        for skill in self._skills.values():
+            has_content = bool(skill.content)
+            has_sources = bool(skill.sources)
+            
+            if has_content and has_sources:
+                logger.warning(
+                    f"Skill {skill.id}: has both content and sources. "
+                    f"Recommend using only one for clarity."
+                )
+            elif not has_content and not has_sources:
+                logger.warning(
+                    f"Skill {skill.id}: has neither content nor sources. "
+                    f"This skill may be incomplete."
+                )
 
         save_path.parent.mkdir(parents=True, exist_ok=True)
         with save_path.open("w", encoding="utf-8") as f:
@@ -1030,4 +1083,3 @@ class Skillbook:
             file_path.write_text(new_content, encoding="utf-8")
 
         logger.debug(f"Synced front matter in {file_path}")
-
