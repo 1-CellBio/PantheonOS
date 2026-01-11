@@ -21,10 +21,7 @@ jobs:
         image: nats:latest
         ports:
           - 4222:4222
-          - 8080:8080
           - 8222:8222
-        options: >-
-          -v "${{ github.workspace }}/nats-ws.conf:/etc/nats/nats-server.conf:ro"
 
     steps:
       - uses: actions/checkout@v4
