@@ -118,7 +118,7 @@ sc.pl.paga(adata, color=['leiden', 'cell_type'], edge_width_scale=0.5)
 
 # PAGA-guided UMAP for better trajectory visualization
 sc.tl.draw_graph(adata, init_pos='paga')
-sc.pl.draw_graph(adata, color=['dpt_pseudotime', 'cell_type'], legend_loc='on data')
+sc.pl.draw_graph(adata, color=['dpt_pseudotime', 'cell_type'], legend_loc='right margin')
 ```
 
 ## Workflow 3: RNA Velocity (scVelo)

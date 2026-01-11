@@ -184,7 +184,8 @@ async def _start_async(
             memory_dir=memory_dir,
             workspace_path=workspace,
             enable_nats_streaming=False,
-            earning_config=get_settings().get_learning_config(),
+            learning_config=get_settings().get_learning_config(),
+            enable_auto_chat_name=True,
         )
 
         # Setup ChatRoom (including auto-created Endpoint)
@@ -219,6 +220,7 @@ async def _start_async(
             workspace_path=workspace,
             enable_nats_streaming=False,
             learning_config=get_settings().get_learning_config(),
+            enable_auto_chat_name=True,
         )
         # Note: run_setup() is called in repl.run() AFTER UI display
         repl = Repl(

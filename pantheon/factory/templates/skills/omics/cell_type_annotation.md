@@ -162,7 +162,7 @@ if adata.obs['cell_type'].isnull().any():
     adata.obs['cell_type'] = adata.obs['cell_type'].fillna('Unknown')
 
 # Final Visualization
-sc.pl.umap(adata, color='cell_type', title="Annotated Cell Types", legend_loc='on data')
+sc.pl.umap(adata, color='cell_type', title="Annotated Cell Types", legend_loc='right margin')
 plt.savefig('annotation_umap.png', bbox_inches='tight')
 plt.show()
 ```

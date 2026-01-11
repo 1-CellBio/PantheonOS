@@ -29,6 +29,7 @@ from prompt_toolkit.layout import (
     DynamicContainer,
     ConditionalContainer,
 )
+from prompt_toolkit.shortcuts import set_title
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import TextArea
 from prompt_toolkit.layout.containers import Window
@@ -789,6 +790,30 @@ class PantheonInputApp:
             refresh_interval=0.125,  # 8 fps for smooth animation
         )
 
+
+
+    def _get_term_title(self) -> str:
+        """Get the terminal window title.
+        
+        Fetches the human-readable chat name from the memory manager.
+        """
+        # Default title if no active chat
+        if not self.repl or not self.repl._chat_id:
+             return "Pantheon"
+             
+        current_chat_id = self.repl._chat_id
+        
+        # Fetch new title
+        try:
+            # repl._chatroom is guaranteed to be initialized in Repl.__init__
+            memory = self.repl._chatroom.memory_manager.get_memory(current_chat_id)
+            chat_name = memory.name if memory else current_chat_id
+        except Exception:
+            # Fallback to ID if memory lookup fails (e.g. race condition during init)
+            chat_name = current_chat_id
+
+        return f"{chat_name}"
+
     def _create_horizontal_line(self, char: str = "─", style: str = "fg:ansiblue"):
         """Create a horizontal line that spans terminal width."""
 
@@ -1006,8 +1031,19 @@ class PantheonInputApp:
             usage_display += f" │ cost: ${self._total_cost:.4f}"
         status = "processing..." if self._is_processing else "ready"
 
+        # Update terminal title as part of status refresh
+        # This is a good place because it's called on every render/invalidate
+        title = self._get_term_title()
+        set_title(title)
+
+        # Define parts for the new HTML structure
+        model_part = f"⏺ {self._model_name} │ agent: {self._current_agent}"
+        separator = "│"
+        status_part = status
+        tokens_part = usage_display
+
         return HTML(
-            f'<style fg="#666666">⏺ {self._model_name} │ agent: {self._current_agent} │ {usage_display} │ {status}</style>'
+            f'<style class="status-bar">{model_part} {separator} {status_part} {separator} {tokens_part}</style>'
         )
 
     def start_processing(self, input_tokens: int = 0):
