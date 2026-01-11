@@ -40,12 +40,12 @@ def build_context_payload(
     extras: Mapping[str, Any] | None = None,
 ) -> dict:
     """Construct a normalized context payload ready for export."""
-
     normalized_workdir = _normalize_path(workdir)
-    
+    # remove key value with _ prefix from context_variables keys
+    context_variables = dict(context_variables or {})
     payload: dict[str, Any] = {
         "workdir": normalized_workdir,
-        "context_variables": dict(context_variables or {}),
+        "context_variables": {k: v for k, v in context_variables.items() if not k.startswith("_")},
     }
     
     # Auto-inject endpoint_mcp_uri from ENDPOINT_MCP_URI env var if available

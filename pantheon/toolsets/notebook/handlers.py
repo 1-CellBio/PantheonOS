@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pantheon.remote.backend.base import RemoteBackend, StreamMessage, StreamType
 from pantheon.utils.log import logger
+from pantheon.utils.misc import run_func
 
 if TYPE_CHECKING:
     from .jupyter_kernel import JupyterMessage
@@ -162,6 +163,12 @@ class FileLogHandler:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"FileLogHandler initialized: {self.log_dir}")
+
+    @staticmethod
+    def _write_log(log_file: Path, entry: dict) -> None:
+        """Write log entry to file (blocking)"""
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\\n")
     
     async def __call__(
         self, session_id: str, message: "JupyterMessage", metadata: dict
@@ -187,8 +194,8 @@ class FileLogHandler:
             if metadata:
                 entry["meta"] = metadata
             
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            # Use run_func to execute blocking I/O in thread pool
+            await run_func(self._write_log, log_file, entry)
         
         except Exception as e:
             logger.warning(f"FileLogHandler write failed: {e}")

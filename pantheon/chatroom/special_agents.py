@@ -360,7 +360,7 @@ class ChatNameGenerator:
         self._name_agent: Optional[Agent] = None
 
     async def generate_or_update_name(self, memory: Memory) -> str:
-        """Generate or update chat name - simplified logic"""
+        """Generate or update chat name"""
         agent_messages = memory.get_messages(None)
 
         # Only generate after first conversation (2+ messages)
@@ -386,35 +386,79 @@ class ChatNameGenerator:
     def _should_generate_name(
         self, memory: Memory, messages: List[Dict[str, Any]]
     ) -> bool:
-        """Simple logic: generate once after first conversation, update every 6 messages"""
+        """Milestone-based generation logic to handle exploratory phases"""
         message_count = len(messages)
-
-        # First generation
-        if message_count >= 2 and not memory.extra_data.get("name_generated"):
-            return True
-
-        # Periodic update
         last_count = memory.extra_data.get("last_name_generation_message_count", 0)
-        if message_count >= last_count + 6:
+        has_generated = memory.extra_data.get("name_generated", False)
+
+        # 0. Backfill: If never generated and we have context (2+ msgs)
+        if message_count >= 2 and not has_generated:
             return True
 
+        # 1. Milestones: Denser at the start [2, 3, 5, 10, 20, 50]
+        # To capture rapid intent shifts during initial exploratory phases
+        milestones = [2, 3, 5, 10, 20, 50]
+        for milestone in milestones:
+            if message_count >= milestone and last_count < milestone:
+                return True
+
+        # No further automatic updates to preserve stability
         return False
 
     async def _generate_with_ai(self, messages: List[Dict[str, Any]]) -> Optional[str]:
-        """Simple AI generation with timeout"""
+        """Generate name using the most informative user messages"""
         if not self._name_agent:
             self._name_agent = Agent(
                 name="ChatNameGen",
                 model="low",
-                instructions="Generate a 3-6 word chat title. Return only the title, no quotes or explanation.",
+                instructions=(
+                    "You are a helpful assistant that generates chat titles with relevant icons. "
+                    "Generate a concise (3-6 words) title based on the user's intent. "
+                    "Specific rules:\n"
+                    "- Start the title with a single relevant emoji (any suitable emoji) WITHOUT a space. The emoji should be highly relevant to the topic (e.g., 🧬, 💻, 📊, 🐞, 📝, etc.).\n"
+                    "- Be specific to the technical task or topic.\n"
+                    "- Avoid generic words like 'Chat', 'Question', 'Help', 'Analysis'.\n"
+                    "- Do not use file extensions unless relevant.\n"
+                    "- Return ONLY the emoji and the title text, no quotes or preamble."
+                ),
             )
 
-        # Build simple context (last 4 messages)
-        context_messages = messages[-4:]
-        context = ""
-        for msg in context_messages:
-            role = "User" if msg.get("role") == "user" else "AI"
-            content = msg.get("content", "")
+        # 1. Filter for USER messages only
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        if not user_msgs:
+            return None
+
+        # 2. Informative Strategy: Top 5 longest messages + Last message
+        # Exploratory messages (Hi, etc) are short; real tasks are usually longer.
+        # This global selection naturally filters 'noise' messages.
+        
+        # Always include the very last user message for latest focus
+        final_msg = user_msgs[-1]
+        other_msgs = user_msgs[:-1]
+
+        # Pick top 5 longest from the rest
+        msg_info = []
+        for i, m in enumerate(other_msgs):
+            length = len(str(m.get("_llm_content") or m.get("content") or ""))
+            msg_info.append((i, m, length))
+            
+        # Sort by length descending, take top 5
+        msg_info.sort(key=lambda x: x[2], reverse=True)
+        selected_info = msg_info[:5]
+        
+        # Create unique set of selected indices
+        selected_msgs_with_index = [(i, m) for i, m, _ in selected_info]
+        selected_msgs_with_index.append((len(user_msgs) - 1, final_msg))
+        
+        # Sort back by original index to keep chronological order
+        selected_msgs_with_index.sort(key=lambda x: x[0])
+        
+        # 3. Format Context
+        context_str = ""
+        for _, msg in selected_msgs_with_index:
+            # Prioritize _llm_content > content
+            content = msg.get("_llm_content") or msg.get("content") or ""
+            
             if isinstance(content, list):
                 # Extract text from multimodal
                 text_parts = [
@@ -423,10 +467,13 @@ class ChatNameGenerator:
                     if isinstance(item, dict) and item.get("type") == "text"
                 ]
                 content = " ".join(text_parts)
-            if content:
-                context += f"{role}: {content[:200]}\n"
+            
+            context_str += f"- {str(content)[:500]}\n"
 
-        prompt = f"Chat context:\n{context}\nGenerate a short title:"
+        prompt = (
+            f"User's Messages defining this chat:\n{context_str}\n"
+            f"Generate a concise title (3-6 words) that captures the core user intent:"
+        )
 
         try:
             # Suppress debug/info logs during LLM call
@@ -449,7 +496,7 @@ class ChatNameGenerator:
         """Simple fallback: use first user message"""
         for msg in messages:
             if msg.get("role") == "user":
-                content = msg.get("content", "")
+                content = msg.get("_llm_content") or msg.get("content", "")
                 if isinstance(content, list):
                     text_parts = [
                         item.get("text", "")
@@ -457,6 +504,8 @@ class ChatNameGenerator:
                         if isinstance(item, dict) and item.get("type") == "text"
                     ]
                     content = " ".join(text_parts)
+                
+                content = str(content)
                 if content:
                     fallback = content[:50].strip()
                     if len(content) > 50:

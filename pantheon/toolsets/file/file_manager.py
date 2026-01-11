@@ -766,7 +766,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
                         path = os.path.join(tmp_dir, f"page_{page_number}.png")
                         image.save(path)
                         image_paths.append(path)
-                    resp = await self.observe_images(question, image_paths)
+                    resp = await self.observe_images(question=question, image_paths=image_paths)
                     return resp
         except ImportError:
             return {

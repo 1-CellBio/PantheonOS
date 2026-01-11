@@ -1002,6 +1002,11 @@ class Agent:
                         #    await call_task
                     result = repr(e)
                     context_variables[tool_call_id] = result
+                finally:
+                    # Critical Fix: Ensure child task is cancelled if WE are cancelled
+                    if not call_task.done():
+                        logger.warning(f"Cancelling orphaned tool task for {func_name}")
+                        call_task.cancel()
 
             end_timestamp = time.time()
             execution_duration = end_timestamp - start_time

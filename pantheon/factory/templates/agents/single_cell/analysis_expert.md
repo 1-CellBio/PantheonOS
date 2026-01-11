@@ -377,6 +377,9 @@ Figure file format: In most cases, you should generate both png and pdf files fo
 - Avoid placing text labels directly on the plot, as it affects readability
 - Place legends **outside** the plot area if they obscure data points.
 
+> [!CAUTION]
+> **Forbidden**: `legend_loc='on data'` (clutters plot). Use `legend_loc='right margin'`.
+
 ### Consistent Visual Elements
 - Use consistent colors across all related figures
 - Use **uniform markers** (circles) for all groups; avoid mixing shapes

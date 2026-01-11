@@ -173,13 +173,18 @@ class KernelListener:
         self.socket_to_session: Dict[zmq.Socket, str] = {}
         self.session_handlers: Dict[str, Callable] = {}
         self.session_sockets: Dict[str, zmq.Socket] = {}
+        self.session_objects: Dict[zmq.Socket, Session] = {}
         self.is_running = False
         self.listener_task: Optional[asyncio.Task] = None
-        # Official Jupyter session for message parsing (disable signature validation for streaming)
+        # Fallback Jupyter session for message parsing
         self.jupyter_session = Session(key=b"", auth=None)
 
     async def add_kernel(
-        self, session_id: str, connection_info: dict, message_handler: Callable
+        self, 
+        session_id: str, 
+        connection_info: dict, 
+        message_handler: Callable,
+        session_obj: Optional[Session] = None
     ) -> bool:
         """Add kernel to unified listener"""
         try:
@@ -197,6 +202,11 @@ class KernelListener:
             self.socket_to_session[socket] = session_id
             self.session_handlers[session_id] = message_handler
             self.session_sockets[session_id] = socket
+            
+            if session_obj:
+                # Clone the session to avoid "Duplicate Signature" errors if the same 
+                # session is used elsewhere (e.g. by AsyncKernelClient)
+                self.session_objects[socket] = session_obj.clone()
 
             logger.info(f"Added kernel {session_id} to unified listener")
 
@@ -225,15 +235,15 @@ class KernelListener:
             del self.socket_to_session[socket]
             del self.session_handlers[session_id]
             del self.session_sockets[session_id]
+            self.session_objects.pop(socket, None)
 
             # Close socket
             socket.close()
 
             logger.info(f"Removed kernel {session_id} from unified listener")
 
-            # If no kernels left, stop listening
-            if not self.session_sockets and self.is_running:
-                await self.stop_listening()
+            # Listener loop continues running in background (idling)
+            # ready for next add_kernel call without restart overhead
 
             return True
 
@@ -270,21 +280,27 @@ class KernelListener:
         logger.info("Stopped unified kernel listener")
 
     async def _listen_loop(self):
-        """Unified listening loop - true event-driven, zero polling!"""
+        """Unified listening loop"""
         logger.info("Starting unified IOPub listening loop")
 
         try:
             while self.is_running:
-                # If no sessions registered yet, wait before checking again
-                # This prevents busy-waiting while allowing the listener to persist
-                if not self.session_sockets:
-                    await asyncio.sleep(0.5)  # Wait 500ms before checking again
-                    continue
-
+                # Poll sockets
                 try:
-                    # Event-driven waiting with periodic refresh for dynamic socket registration
-                    # timeout=100ms ensures newly registered sockets are picked up within 100ms,
-                    # preventing race conditions when add_kernel() is called during poll()
+                    # Poll for events
+                    # timeout is in milliseconds
+                    # Using a short timeout allows checking is_running flag
+                    # and responding to cancellation promptly
+                    # Check for empty sockets - basic sleep loop if no kernels attached
+                    # distinct from polling to avoid high CPU usage
+                    if not self.session_sockets:
+                        await asyncio.sleep(0.5)  # Wait 500ms before checking again
+                        continue
+
+                    events = {} 
+                    # ZMQ polling is not interruptible by asyncio cancellation natively in older pyzmq?
+                    # But we are using async poller which should be invalid.
+                    # Actually we use self.poller.poll() which IS awaitable.
                     events = await self.poller.poll(timeout=100)
 
                     # Process all sockets with messages
@@ -293,17 +309,23 @@ class KernelListener:
                             await self._handle_socket_message(socket)
 
                 except asyncio.CancelledError:
-                    logger.info("Unified listener loop cancelled")
-                    break
+                    if self.is_running:
+                        logger.warning("Unified listener loop received cancellation but is_running is True. Ignoring cancellation and continuing.")
+                        continue
+                    else:
+                        logger.info("Unified listener loop cancelled")
+                        break
                 except Exception as e:
                     logger.error(f"Error in unified listener loop: {e}")
                     await asyncio.sleep(0.01)  # Brief pause before retry
 
         finally:
+            self.is_running = False
             logger.info("Unified IOPub listening loop ended")
 
     async def _handle_socket_message(self, socket: zmq.Socket):
         """Handle individual socket message"""
+        session_id = "unknown"
         try:
             # Receive ZMQ multipart message
             multipart_msg = await socket.recv_multipart(flags=zmq.NOBLOCK)
@@ -315,18 +337,19 @@ class KernelListener:
                 )
                 return
 
+            # Get session object for this socket
+            session_obj = self.session_objects.get(socket)
+
             # Parse to Jupyter message
-            jupyter_msg = self._parse_zmq_message(multipart_msg)
-
-            # Skip error messages from parsing (they're already logged)
-            if (
-                jupyter_msg.msg_type == "error"
-                and "Failed to parse message" in jupyter_msg.content.get("error", "")
-            ):
-                return
-
+            jupyter_msg = self._parse_zmq_message(multipart_msg, session_obj=session_obj)
+            
             # Get corresponding session_id and handler
             session_id = self.socket_to_session.get(socket)
+            
+            # Log successful parsing at INFO level for debugging
+            if session_id:
+                logger.debug(f"Parsed {jupyter_msg.msg_type} message for session {session_id[:8]}")
+
             if session_id and session_id in self.session_handlers:
                 handler = self.session_handlers[session_id]
                 # Handle both sync and async handlers
@@ -342,25 +365,23 @@ class KernelListener:
             session_id = self.socket_to_session.get(socket, "unknown")
             logger.error(f"Error handling message for session {session_id}: {e}")
 
-    def _parse_zmq_message(self, multipart_msg: List[bytes]) -> JupyterMessage:
+    def _parse_zmq_message(
+        self, multipart_msg: List[bytes], session_obj: Optional[Session] = None
+    ) -> JupyterMessage:
         """
         Parse ZMQ multipart message using official Jupyter Session API.
         Simplified from 175+ lines to ~20 lines using jupyter_client.session.Session.
         """
+        # Use provided session_obj or fallback to default
+        session = session_obj or self.jupyter_session
+        
         try:
             # Use the same approach as jupyter_client:
             # 1. feed_identities() removes topic prefixes and returns standard format
             # 2. deserialize() processes the standard format
-            _, processed_msg = self.jupyter_session.feed_identities(
-                multipart_msg, copy=True
-            )
-            msg_dict = self.jupyter_session.deserialize(
-                processed_msg, content=True, copy=True
-            )
+            _, processed_msg = session.feed_identities(multipart_msg, copy=True)
+            msg_dict = session.deserialize(processed_msg, content=True, copy=True)
 
-            logger.debug(
-                f"Successfully parsed message: {msg_dict.get('msg_type', 'unknown')}"
-            )
             return JupyterMessage(
                 msg_type=msg_dict.get("msg_type", "unknown"),
                 content=msg_dict.get("content", {}),
@@ -385,6 +406,7 @@ class KernelListener:
 
     async def cleanup(self):
         """Clean up resources"""
+        logger.info("Cleaning up unified kernel listener")
         await self.stop_listening()
 
         # Close all sockets
@@ -482,17 +504,22 @@ class JupyterKernelToolSet(ToolSet):
         
         env = os.environ.copy()
         
-        # Export current process's sys.path to PYTHONPATH
-        # This ensures the kernel subprocess can find modules available in the parent process
-        # (e.g., pantheon package when running from source)
-        current_paths = [p for p in sys.path if p]  # Filter out empty strings
-        existing_pythonpath = env.get("PYTHONPATH", "")
-        if existing_pythonpath:
-            # Prepend current sys.path to existing PYTHONPATH
-            env["PYTHONPATH"] = os.pathsep.join(current_paths) + os.pathsep + existing_pythonpath
-        else:
-            env["PYTHONPATH"] = os.pathsep.join(current_paths)
+        # Prune unnecessary large environment variables to avoid E2BIG
+        # LS_COLORS can be several KB and is not needed for kernel operation
+        env.pop("LS_COLORS", None)
         
+        # Get paths from current sys.path and existing PYTHONPATH
+        # Prepend sys.path to give it priority for the kernel subprocess
+        current_paths = [p for p in sys.path if p]
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        existing_paths = [p for p in existing_pythonpath.split(os.pathsep) if p]
+        
+        # Combine and deduplicate while preserving order
+        all_paths = current_paths + existing_paths
+        unique_paths = list(dict.fromkeys(all_paths))
+        
+        env["PYTHONPATH"] = os.pathsep.join(unique_paths)
+
         return build_context_env(
             workdir=self.workdir,
             context_variables=self._current_context_dict(),
@@ -593,6 +620,12 @@ class JupyterKernelToolSet(ToolSet):
         if removed:
             logger.info(f"Unsubscribed IOPub handler: {handler_id}")
         return removed
+    async def _safe_exec_handler(self, handler_id: str, handler: Callable, *args):
+        """Execute IOPub handler safely catching exceptions"""
+        try:
+            await handler(*args)
+        except Exception as e:
+            logger.warning(f"IOPub handler '{handler_id}' failed: {e}")
 
     async def _handle_iopub_message(self, session_id: str, jupyter_msg: JupyterMessage):
         """Dispatch IOPub message to execution buffer and registered handlers"""
@@ -602,6 +635,9 @@ class JupyterKernelToolSet(ToolSet):
                 if jupyter_msg.parent_header
                 else None
             )
+
+            if parent_msg_id:
+                logger.debug(f"IOPub received {jupyter_msg.msg_type} for parent {parent_msg_id[:8]}")
 
             # Route message to execution buffer for correct result matching
             if parent_msg_id and session_id in self._execution_buffers:
@@ -614,11 +650,11 @@ class JupyterKernelToolSet(ToolSet):
                 stream_metadata.update(execution_metadata)
 
             # Dispatch to all registered handlers
+            # Dispatch to all registered handlers (Fire-and-Forget)
             for handler_id, handler in self._iopub_handlers.items():
-                try:
-                    await handler(session_id, jupyter_msg, stream_metadata)
-                except Exception as e:
-                    logger.warning(f"IOPub handler '{handler_id}' failed: {e}")
+                asyncio.create_task(
+                    self._safe_exec_handler(handler_id, handler, session_id, jupyter_msg, stream_metadata)
+                )
 
         except Exception as e:
             logger.error(f"Error handling IOPub message for session {session_id}: {e}")
@@ -735,6 +771,35 @@ class JupyterKernelToolSet(ToolSet):
 
             # Start kernel in specified working directory with Pantheon context
             env = self._build_kernel_env()
+            # DEBUG: Diagnose Argument list too long error
+            total_env_size = sum(len(str(k)) + len(str(v)) + 1 for k, v in env.items())
+            logger.info(f"jupyter_kernel:create_session - Total environment size: {total_env_size} bytes")
+
+            if total_env_size > 10000:  # Warn if > 100KB
+                logger.warning(f"Environment size {total_env_size} bytes is large.")
+                
+                # Identify largest environment variables
+                sorted_env = sorted(env.items(), key=lambda x: len(str(x[1])), reverse=True)
+                for k, v in sorted_env[:3]:
+                    logger.warning(f"Large Env Var: {k} (Size: {len(str(v))} bytes)")
+                
+                # If PANTHEON_CONTEXT is large, analyze it
+                if "PANTHEON_CONTEXT" in env:
+                    try:
+                        import json
+                        ctx = json.loads(env["PANTHEON_CONTEXT"])
+                        if "context_variables" in ctx:
+                            cv = ctx["context_variables"]
+                            # Use str(v) for approximation to avoid expensive json.dumps if possible, 
+                            # but json.dumps is more accurate for size.
+                            sorted_cv = sorted(cv.items(), key=lambda x: len(json.dumps(x[1])) if x[1] else 0, reverse=True)
+                            logger.warning("Top 5 largest context_variables in PANTHEON_CONTEXT:")
+                            for k, v in sorted_cv[:5]:
+                                size = len(json.dumps(v))
+                                logger.warning(f"  - {k}: {size} bytes")
+                    except Exception as e:
+                        logger.error(f"Failed to analyze PANTHEON_CONTEXT: {e}")
+
             await km.start_kernel(cwd=self.workdir, env=env)
 
             # Wait for kernel to be ready
@@ -1252,7 +1317,6 @@ class JupyterKernelToolSet(ToolSet):
         self, session_id: str, km: AsyncKernelManager, kc: AsyncKernelClient = None
     ):
         """Setup unified IOPub monitoring for a session."""
-        _ = kc  # Unused, kept for compatibility
         
         try:
             connection_info = km.get_connection_info()
@@ -1269,6 +1333,7 @@ class JupyterKernelToolSet(ToolSet):
                 session_id,
                 formatted_connection_info,
                 self._handle_iopub_message,
+                session_obj=kc.session if kc else None,
             )
 
             if success:
@@ -1365,6 +1430,7 @@ class JupyterKernelToolSet(ToolSet):
 
     async def cleanup(self):
         """Cleanup all resources"""
+        logger.info("JupyterKernelToolSet cleaning up")
         # Cleanup unified listener
         await self.unified_listener.cleanup()
 
@@ -1378,7 +1444,6 @@ class JupyterKernelToolSet(ToolSet):
                 self.completion_service.clear_session_context(session_id)
             await self.shutdown_session(session_id)
 
-        logger.info("JupyterKernelToolSet cleanup complete")
 
 
 # Export

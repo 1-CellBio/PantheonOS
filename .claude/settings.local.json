@@ -52,7 +52,12 @@
       "Bash(C:/Users/wzxu/miniconda3/envs/pantheon-test/python.exe:*)",
       "Bash(timeout 10 C:/Users/wzxu/miniconda3/envs/pantheon-test/python.exe -m pantheon.repl:*)",
       "Bash(echo:*)",
-      "Bash(conda env remove:*)"
+      "Bash(conda env remove:*)",
+      "Bash(uv pip install google-generativeai httpx)",
+      "Bash(curl -v -X POST -H \"Content-Type: application/json\" -d '{\"\"test\"\": \"\"data\"\"}' http://127.0.0.1:9999/test/path)",
+      "Bash(tee diagnose_output.log)",
+      "Bash(pip freeze)",
+      "Bash(pkill:*)"
     ],
     "deny": [],
     "ask": []

@@ -995,15 +995,21 @@ class ChatRoom(ToolSet):
             logger.info(f"Chat {chat_id} was cancelled/interrupted")
             raise  # Re-raise to propagate cancellation
         finally:
-            # Always clean up the thread from the registry, whether successful or interrupted
-            memory.extra_data["running"] = False
-            memory.extra_data["last_activity_date"] = datetime.now().isoformat()
-            try:
-                await run_func(self.memory_manager.save)
-            except Exception as e:
-                logger.error(f"Failed to save memory on cleanup: {e}")
+            # Always clean up the thread from the registry FIRST
+            # This ensures subsequent chat attempts can proceed even if cleanup is interrupted
             if chat_id in self.threads:
                 del self.threads[chat_id]
+
+            # Protect persistent state updates from cancellation
+            async def _cleanup_persistent_state():
+                memory.extra_data["running"] = False
+                memory.extra_data["last_activity_date"] = datetime.now().isoformat()
+                try:
+                    await run_func(self.memory_manager.save)
+                except Exception as e:
+                    logger.error(f"Failed to save memory on cleanup: {e}")
+
+            await asyncio.shield(_cleanup_persistent_state())
 
     @tool
     async def stop_chat(self, chat_id: str):
