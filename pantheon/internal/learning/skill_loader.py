@@ -241,14 +241,16 @@ class SkillLoader:
         loaded_count = 0
         self._loaded_skill_ids.clear()
 
-        # 1. Load package-level upstream skills (shipped with pantheon)
+        # 1. Load packaged template skills (shipped with pantheon)
         # These are loaded first so user skills can override them
-        package_skills_dir = Path(__file__).parent.parent.parent.parent / "upstream_skills"
+        package_skills_dir = (
+            Path(__file__).parent.parent.parent / "factory" / "templates" / "skills"
+        )
         if package_skills_dir.exists():
             for file_path in scan_skill_files(package_skills_dir):
                 skill = parse_skill_from_file(file_path, package_skills_dir)
                 if skill:
-                    self._merge_skill(skill, is_user_defined=False)
+                    self._merge_skill(skill)
                     self._loaded_skill_ids.add(skill.id)
                     loaded_count += 1
             logger.debug(f"Loaded {loaded_count} upstream skills from {package_skills_dir}")
@@ -349,4 +351,3 @@ def load_skills_into_skillbook(
     """Convenience function to load skills into a skillbook."""
     loader = SkillLoader(skills_dir, skillbook)
     return loader.load_and_merge(cleanup_orphans=cleanup_orphans)
-

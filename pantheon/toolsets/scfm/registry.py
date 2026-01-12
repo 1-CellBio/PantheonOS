@@ -2,7 +2,7 @@
 Model Registry for Single-Cell Foundation Models
 
 Defines model capabilities, I/O contracts, and hardware requirements.
-Based on fm_documentation/MODEL_CAPABILITIES.md
+See pantheon/factory/templates/skills/omics/_scfm_docs/ for runbooks and checkpoint conventions.
 """
 
 from dataclasses import dataclass, field

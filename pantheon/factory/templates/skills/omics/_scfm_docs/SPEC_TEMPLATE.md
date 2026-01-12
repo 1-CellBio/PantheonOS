@@ -202,5 +202,5 @@ from .model import ModelAdapter
 - [ ] Register in registry.py
 - [ ] Export from adapters/__init__.py
 - [ ] Add tests
-- [ ] Document in fm_documentation/models/
+- [ ] Document in pantheon/factory/templates/skills/omics/_scfm_docs/models/
 - [ ] Update status matrix

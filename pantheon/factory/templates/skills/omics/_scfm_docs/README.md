@@ -9,7 +9,7 @@ The SCFM toolset provides a unified interface for 21+ foundation models trained 
 ## Directory Structure
 
 ```
-fm_documentation/
+_scfm_docs/
 ├── README.md                 # This file
 ├── SPEC_TEMPLATE.md          # Template for adding new model specs
 ├── checkpoint_layout.md      # Standard checkpoint organization
@@ -53,8 +53,8 @@ See [checkpoint_layout.md](./checkpoint_layout.md) for detailed conventions.
 
 1. Create adapter in `pantheon/toolsets/scfm/adapters/<model>.py`
 2. Register model in `pantheon/toolsets/scfm/registry.py`
-3. Add documentation in `fm_documentation/models/<model>.md`
-4. Update status matrix in `upstream_skills/scfm-models.md`
+3. Add documentation in `pantheon/factory/templates/skills/omics/_scfm_docs/models/<model>.md`
+4. Update status matrix in `pantheon/factory/templates/skills/omics/scfm-models.md`
 
 See [SPEC_TEMPLATE.md](./SPEC_TEMPLATE.md) for the model spec format.
 
@@ -89,4 +89,4 @@ result = toolset.scfm_run(
 - **Toolset:** `pantheon/toolsets/scfm/toolset.py`
 - **Registry:** `pantheon/toolsets/scfm/registry.py`
 - **Adapters:** `pantheon/toolsets/scfm/adapters/`
-- **Skill Doc:** `upstream_skills/scfm-models.md`
+- **Skill Doc:** `pantheon/factory/templates/skills/omics/scfm-models.md`
