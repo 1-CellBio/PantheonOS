@@ -46,6 +46,27 @@ def think(thought: str) -> str:
     return "Thought recorded. Continue your analysis."
 
 
+def extract_cost_from_response(response) -> float:
+    """
+    Extract LLM cost from an agent response.
+
+    Args:
+        response: AgentResponse from agent.run()
+
+    Returns:
+        Cost in USD, or 0.0 if not available
+    """
+    try:
+        if response and response.details and response.details.messages:
+            # Find the last assistant message which contains cost info
+            for msg in reversed(response.details.messages):
+                if msg.get("role") == "assistant" and "_metadata" in msg:
+                    return msg.get("_metadata", {}).get("current_cost", 0.0)
+    except Exception:
+        pass
+    return 0.0
+
+
 class EvolutionTeam:
     """
     Evolution team coordinating mutation, evaluation, and selection.
@@ -527,6 +548,7 @@ class EvolutionTeam:
 
         # Build prompt (with or without analyzer)
         analysis_text = ""  # Store analyzer output for program record
+        iteration_cost = 0.0  # Track LLM cost for this iteration
         if self.config.use_analyzer:
             # === Analyzer Phase (full context) ===
             analysis_start = time.time()
@@ -545,8 +567,9 @@ class EvolutionTeam:
                     timeout=self.config.analyzer_timeout
                 )
                 analysis_text = analysis_response.content
+                iteration_cost += extract_cost_from_response(analysis_response)
                 analysis_time = time.time() - analysis_start
-                logger.info(f"{log_prefix} Analysis: {analysis_time:.1f}s")
+                logger.info(f"{log_prefix} Analysis: {analysis_time:.1f}s (${iteration_cost:.4f})")
             except asyncio.TimeoutError:
                 analysis_time = time.time() - analysis_start
                 logger.warning(f"{log_prefix} Analyzer timeout after {analysis_time:.1f}s, skipping iteration")
@@ -604,8 +627,10 @@ class EvolutionTeam:
                 mutator.run(prompt, update_memory=False),
                 timeout=self.config.mutation_timeout
             )
+            mutation_cost = extract_cost_from_response(response)
+            iteration_cost += mutation_cost
             mutation_time = time.time() - mutation_start
-            logger.info(f"{log_prefix} Mutation: {mutation_time:.1f}s")
+            logger.info(f"{log_prefix} Mutation: {mutation_time:.1f}s (${mutation_cost:.4f})")
         except asyncio.TimeoutError:
             mutation_time = time.time() - mutation_start
             logger.warning(f"{log_prefix} Mutation timeout after {mutation_time:.1f}s")
@@ -621,6 +646,7 @@ class EvolutionTeam:
                 evaluation_time=0,
                 total_time=time.time() - iter_start,
                 error="mutation_timeout",
+                llm_cost=iteration_cost,
             )
 
         # Apply mutation
@@ -676,7 +702,8 @@ class EvolutionTeam:
         # Log result
         result_str = "✓ Improved" if improvement > 0 else "✗ No improvement"
         accepted_str = "(accepted)" if accepted else "(rejected)"
-        logger.info(f"{log_prefix} Result: {result_str} ({improvement:+.4f}) {accepted_str} [{total_time:.1f}s]")
+        cost_str = f"${iteration_cost:.4f}" if iteration_cost > 0 else ""
+        logger.info(f"{log_prefix} Result: {result_str} ({improvement:+.4f}) {accepted_str} [{total_time:.1f}s] {cost_str}")
 
         return IterationResult(
             iteration=iteration,
@@ -689,6 +716,7 @@ class EvolutionTeam:
             mutation_time=mutation_time,
             evaluation_time=eval_time,
             total_time=total_time,
+            llm_cost=iteration_cost,
         )
 
     async def _worker(

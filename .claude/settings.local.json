@@ -57,7 +57,11 @@
       "Bash(curl -v -X POST -H \"Content-Type: application/json\" -d '{\"\"test\"\": \"\"data\"\"}' http://127.0.0.1:9999/test/path)",
       "Bash(tee diagnose_output.log)",
       "Bash(pip freeze)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(git fetch:*)",
+      "Bash(git checkout:*)",
+      "Bash(ls:*)",
+      "Bash(timeout 300 python:*)"
     ],
     "deny": [],
     "ask": []

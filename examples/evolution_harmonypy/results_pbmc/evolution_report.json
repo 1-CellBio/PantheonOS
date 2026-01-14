@@ -1,0 +1,96 @@
+{
+  "summary": {
+    "total_iterations": 384,
+    "improvements": 77,
+    "best_program_id": "0ceeac8d",
+    "improvement_rate": 0.20052083333333334,
+    "archive_size": 96
+  },
+  "best_program": {
+    "id": "0ceeac8d",
+    "metrics": {
+      "combined_score": 0.7328652647777016,
+      "function_score": 0.7328652647777016,
+      "llm_score": 0.5,
+      "mixing_score": 0.8920539175478653,
+      "bio_conservation_score": 0.5649403408169746,
+      "speed_score": 0.7161159484229005,
+      "convergence_score": 0.8282410218475722,
+      "correction_magnitude": 0.3912369092680933,
+      "execution_time": 0.3964219093322754,
+      "iterations": 11,
+      "n_cells": 2800
+    },
+    "order": 218,
+    "generation": 10,
+    "parent_id": "63c778cc"
+  },
+  "feature_ranges": {
+    "mixing_score": [
+      0.5,
+      0.8921674972976523
+    ],
+    "speed_score": [
+      0.04860105108088076,
+      0.917075210022114
+    ],
+    "bio_conservation_score": [
+      0.4646262973546982,
+      0.6172017753124237
+    ]
+  },
+  "config": {
+    "max_iterations": 500,
+    "checkpoint_interval": 10,
+    "early_stop_generations": 200,
+    "num_workers": 4,
+    "num_islands": 3,
+    "migration_interval": 20,
+    "migration_rate": 0.1,
+    "feature_dimensions": [
+      "mixing_score",
+      "speed_score",
+      "bio_conservation_score"
+    ],
+    "feature_bins": 10,
+    "feature_range_padding": 0.1,
+    "feature_range_adaptive": true,
+    "archive_ratio": 0.25,
+    "population_size": 500,
+    "num_inspirations": 2,
+    "num_top_programs": 3,
+    "exploration_ratio": 0.2,
+    "exploitation_ratio": 0.7,
+    "evaluation_timeout": 120,
+    "max_parallel_evaluations": 2,
+    "function_weight": 1.0,
+    "llm_weight": 0.0,
+    "cascade_evaluation": false,
+    "cascade_thresholds": [
+      0.3,
+      0.6,
+      0.8
+    ],
+    "feedback_max_lines_per_file": null,
+    "diff_based_evolution": true,
+    "max_code_length": 50000,
+    "max_diff_size": 5000,
+    "temperature": 0.7,
+    "max_retries": 3,
+    "mutation_timeout": 120,
+    "use_analyzer": true,
+    "analyzer_model": "normal",
+    "analyzer_timeout": 180,
+    "top_programs_probability": 0.5,
+    "inspirations_probability": 0.2,
+    "mutator_model": "normal",
+    "feedback_model": "normal",
+    "db_path": "/Users/wzxu/Projects/Pantheon/pantheon-agents/examples/evolution_harmonypy/results_pbmc",
+    "workspace_path": null,
+    "save_prompts": true,
+    "save_all_programs": false,
+    "log_level": "INFO",
+    "log_iterations": true,
+    "log_improvements": true
+  }
+}
