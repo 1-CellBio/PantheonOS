@@ -74,12 +74,13 @@ async def run_evolution(
         # Create default configuration
         config = EvolutionConfig(
             max_iterations=iterations,
-            num_workers=4,  # Parallel workers for evolution
+            num_workers=8,  # Parallel workers for evolution
             num_islands=3,
             num_inspirations=2,
             num_top_programs=3,
             max_parallel_evaluations=2,
             evaluation_timeout=120,
+            analyzer_timeout=120,  # Increased timeout for analyzer (uses think tool)
             feature_dimensions=["mixing_score", "speed_score", "bio_conservation_score"],
             early_stop_generations=200,
             function_weight=1.0,
@@ -109,13 +110,6 @@ async def run_evolution(
 4. **Biological Conservation** (30% weight): Preserve biological variance.
    - Don't over-correct and remove biological signal
    - Maintain cluster separation
-
-Key areas to consider:
-- The _update_R() method computes soft cluster assignments
-- The _correct() method applies linear corrections
-- The _compute_distances() method is called frequently
-- Ridge regression in _correct() could be optimized
-- The diversity penalty in _update_R() balances batch mixing
 
 Constraints:
 - Keep the public API (run_harmony function signature)

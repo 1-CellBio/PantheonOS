@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python run_evolution.py:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

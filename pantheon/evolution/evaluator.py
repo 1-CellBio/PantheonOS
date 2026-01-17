@@ -149,25 +149,20 @@ class HybridEvaluator:
                     except Exception as e:
                         llm_result = {"error": str(e)}
 
-                # Calculate combined score
-                func_score = func_result.get("combined_score", 0.0)
-                llm_score = llm_result.get("score", 50) / 100.0  # Normalize to 0-1
+                # Get LLM score (normalized to 0-1)
+                llm_score = llm_result.get("score", 50) / 100.0
 
-                combined_score = (
-                    func_score * self.function_weight +
-                    llm_score * self.llm_weight
-                )
-
-                # Build metrics dict
+                # Build metrics dict - include all metrics from function evaluation
                 metrics = {
-                    "combined_score": combined_score,
-                    "function_score": func_score,
                     "llm_score": llm_score,
                 }
-                # Include other metrics from function evaluation
                 for k, v in func_result.items():
-                    if k not in ["combined_score", "error"] and isinstance(v, (int, float)):
+                    if k not in ["error", "fitness_weights"] and isinstance(v, (int, float)):
                         metrics[k] = v
+
+                # Pass through fitness_weights if provided by evaluator
+                if "fitness_weights" in func_result:
+                    metrics["fitness_weights"] = func_result["fitness_weights"]
 
                 # Build artifacts
                 artifacts = {
@@ -192,7 +187,7 @@ class HybridEvaluator:
                 return EvaluationResult(
                     success=False,
                     error=str(e),
-                    metrics={"combined_score": 0.0},
+                    metrics={"function_score": 0.0},
                 )
 
     async def evaluate_batch(
@@ -249,9 +244,9 @@ os.chdir(r"{workspace_path}")
 try:
     result = evaluate(r"{workspace_path}")
     if not isinstance(result, dict):
-        result = {{"combined_score": float(result) if result else 0.0}}
+        result = {{"function_score": float(result) if result else 0.0}}
 except Exception as e:
-    result = {{"error": str(e), "combined_score": 0.0}}
+    result = {{"error": str(e), "function_score": 0.0}}
 '''
         try:
             response = await asyncio.wait_for(
@@ -264,15 +259,15 @@ except Exception as e:
                 if isinstance(result, dict):
                     return result
                 else:
-                    return {"combined_score": float(result) if result else 0.0}
+                    return {"function_score": float(result) if result else 0.0}
             else:
                 error = response.get("stderr", "") or response.get("error", "Unknown error")
-                return {"error": error, "combined_score": 0.0}
+                return {"error": error, "function_score": 0.0}
 
         except asyncio.TimeoutError:
-            return {"error": "Evaluation timed out", "combined_score": 0.0}
+            return {"error": "Evaluation timed out", "function_score": 0.0}
         except Exception as e:
-            return {"error": str(e), "combined_score": 0.0}
+            return {"error": str(e), "function_score": 0.0}
 
     async def _run_with_subprocess(self, workspace_path: str) -> Dict[str, Any]:
         """Run evaluation using subprocess (fallback)."""
@@ -291,10 +286,10 @@ os.chdir(r"{workspace_path}")
 try:
     result = evaluate(r"{workspace_path}")
     if not isinstance(result, dict):
-        result = {{"combined_score": float(result) if result else 0.0}}
+        result = {{"function_score": float(result) if result else 0.0}}
     print(json.dumps(result))
 except Exception as e:
-    print(json.dumps({{"error": str(e), "combined_score": 0.0}}))
+    print(json.dumps({{"error": str(e), "function_score": 0.0}}))
 '''
 
         try:
@@ -317,14 +312,14 @@ except Exception as e:
                     pass
 
             if stderr:
-                return {"error": stderr.decode(), "combined_score": 0.0}
+                return {"error": stderr.decode(), "function_score": 0.0}
 
-            return {"error": "No output from evaluator", "combined_score": 0.0}
+            return {"error": "No output from evaluator", "function_score": 0.0}
 
         except asyncio.TimeoutError:
-            return {"error": "Evaluation timed out", "combined_score": 0.0}
+            return {"error": "Evaluation timed out", "function_score": 0.0}
         except Exception as e:
-            return {"error": str(e), "combined_score": 0.0}
+            return {"error": str(e), "function_score": 0.0}
 
     async def _get_llm_feedback(
         self,
@@ -516,7 +511,7 @@ class FunctionEvaluator:
             )
 
             if not isinstance(metrics, dict):
-                metrics = {"combined_score": float(metrics) if metrics else 0.0}
+                metrics = {"function_score": float(metrics) if metrics else 0.0}
 
             return EvaluationResult(
                 success=True,
@@ -527,13 +522,13 @@ class FunctionEvaluator:
             return EvaluationResult(
                 success=False,
                 error="Evaluation timed out",
-                metrics={"combined_score": 0.0},
+                metrics={"function_score": 0.0},
             )
         except Exception as e:
             return EvaluationResult(
                 success=False,
                 error=str(e),
-                metrics={"combined_score": 0.0},
+                metrics={"function_score": 0.0},
             )
 
 

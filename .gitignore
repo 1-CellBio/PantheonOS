@@ -218,7 +218,6 @@ backup/
 evolution_results/
 
 # Evolution example results (only programs/ with individual JSON files)
-examples/evolution_harmonypy/results/programs/
-examples/evolution_harmonypy/results_pbmc/programs/
+examples/evolution_harmonypy/*/programs/
 
 .DS_Store

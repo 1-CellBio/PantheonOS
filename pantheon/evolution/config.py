@@ -73,6 +73,21 @@ class EvolutionConfig:
     top_programs_probability: float = 0.5  # Probability of including top programs in prompt
     inspirations_probability: float = 0.2  # Probability of including inspirations in prompt
 
+    # === Analyzer Strategy Parameters ===
+    # Controls exploration vs exploitation balance based on generation
+    # Exploration: algorithm-level, mathematical, architectural improvements
+    # Exploitation: code-level, implementation, fine-grained optimizations
+    analyzer_exploration_initial: float = 0.9  # Exploration probability at generation 0
+    analyzer_exploration_final: float = 0.1  # Minimum exploration probability
+    analyzer_exploration_decay_generations: int = 10  # Generations to decay to final probability
+
+    # === Evolution History Parameters ===
+    # Used to construct evolution history for prompts
+    summarizer_timeout: int = 30  # Timeout for summarizer agent (seconds)
+    evolution_history_max_siblings: int = 5  # Max sibling attempts to show in prompt
+    evolution_history_max_ancestors: int = 10  # Max ancestor chain steps to show
+    evolution_history_max_chars: int = 2000  # Max total characters for history section
+
     # === Model Configuration ===
     mutator_model: str = "normal"
     feedback_model: str = "normal"
@@ -168,6 +183,13 @@ class EvolutionConfig:
             "analyzer_timeout": self.analyzer_timeout,
             "top_programs_probability": self.top_programs_probability,
             "inspirations_probability": self.inspirations_probability,
+            "analyzer_exploration_initial": self.analyzer_exploration_initial,
+            "analyzer_exploration_final": self.analyzer_exploration_final,
+            "analyzer_exploration_decay_generations": self.analyzer_exploration_decay_generations,
+            "summarizer_timeout": self.summarizer_timeout,
+            "evolution_history_max_siblings": self.evolution_history_max_siblings,
+            "evolution_history_max_ancestors": self.evolution_history_max_ancestors,
+            "evolution_history_max_chars": self.evolution_history_max_chars,
             "mutator_model": self.mutator_model,
             "feedback_model": self.feedback_model,
             "db_path": self.db_path,
@@ -218,6 +240,13 @@ class EvolutionConfig:
             "analyzer_timeout",
             "top_programs_probability",
             "inspirations_probability",
+            "analyzer_exploration_initial",
+            "analyzer_exploration_final",
+            "analyzer_exploration_decay_generations",
+            "summarizer_timeout",
+            "evolution_history_max_siblings",
+            "evolution_history_max_ancestors",
+            "evolution_history_max_chars",
             "mutator_model",
             "feedback_model",
             "db_path",

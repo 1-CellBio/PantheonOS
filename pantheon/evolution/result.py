@@ -29,6 +29,8 @@ class IterationResult:
     evaluation_time: float = 0.0
     total_time: float = 0.0
     error: Optional[str] = None
+    # LLM cost tracking
+    llm_cost: float = 0.0  # Cost in USD for this iteration
 
 
 @dataclass
@@ -51,6 +53,9 @@ class EvolutionResult:
     start_time: str = field(default_factory=lambda: datetime.now().isoformat())
     end_time: str = ""
     total_duration: float = 0.0
+
+    # LLM cost tracking
+    total_cost: float = 0.0  # Total LLM cost in USD
 
     # Scores over time
     score_history: List[float] = field(default_factory=list)
@@ -84,6 +89,9 @@ class EvolutionResult:
         self.improvements = sum(
             1 for r in self.iteration_results if r.improvement > 0
         )
+
+        # Calculate total LLM cost
+        self.total_cost = sum(r.llm_cost for r in self.iteration_results)
 
     def get_improvement_rate(self) -> float:
         """Get the rate of successful improvements."""
@@ -120,6 +128,9 @@ class EvolutionResult:
             f"",
             f"Duration: {self.total_duration:.1f}s",
             f"Avg time/iteration: {self.get_avg_iteration_time():.2f}s",
+            f"",
+            f"LLM Cost: ${self.total_cost:.4f}",
+            f"Avg cost/iteration: ${self.total_cost / max(self.total_iterations, 1):.4f}",
             "=" * 50,
         ]
         return "\n".join(lines)
@@ -135,6 +146,8 @@ class EvolutionResult:
             "start_time": self.start_time,
             "end_time": self.end_time,
             "total_duration": self.total_duration,
+            "total_cost": self.total_cost,
+            "avg_cost_per_iteration": self.total_cost / max(self.total_iterations, 1),
             "score_history": self.score_history,
             "best_score_history": self.best_score_history,
             "improvement_rate": self.get_improvement_rate(),
@@ -162,6 +175,7 @@ class EvolutionResult:
                     "improvement": r.improvement,
                     "accepted": r.accepted,
                     "error": r.error,
+                    "llm_cost": r.llm_cost,
                 }
                 for r in self.iteration_results
             ],

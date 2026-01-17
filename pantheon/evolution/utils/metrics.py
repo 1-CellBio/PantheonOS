@@ -265,44 +265,103 @@ def compute_features(
     return features
 
 
+def compute_function_score(
+    metrics: Dict[str, float],
+    fitness_weights: Optional[Dict[str, float]],
+    metric_ranges: Optional[Dict[str, Tuple[float, float]]] = None,
+) -> float:
+    """
+    Compute function_score from normalized metrics with weights.
+
+    Args:
+        metrics: Dict of metric name -> value
+        fitness_weights: Weight for each metric (from evaluator)
+        metric_ranges: Dict of metric name -> (min, max) for normalization
+
+    Returns:
+        Normalized weighted function score (0.0 to 1.0)
+    """
+    if not metrics or not fitness_weights:
+        return 0.0
+
+    total_weight = 0.0
+    weighted_sum = 0.0
+
+    for metric_name, weight in fitness_weights.items():
+        if metric_name not in metrics:
+            continue
+        value = metrics[metric_name]
+        if not isinstance(value, (int, float)):
+            continue
+
+        # Normalize using observed range
+        if metric_ranges and metric_name in metric_ranges:
+            min_val, max_val = metric_ranges[metric_name]
+            range_size = max_val - min_val
+            if range_size > 1e-8:
+                normalized = (float(value) - min_val) / range_size
+            else:
+                normalized = 0.5  # All values are the same
+        else:
+            # Assume [0, 1] range for metrics without range info
+            normalized = max(0.0, min(1.0, float(value)))
+
+        weighted_sum += weight * normalized
+        total_weight += weight
+
+    if total_weight < 1e-8:
+        return 0.0
+
+    return weighted_sum / total_weight
+
+
 def compute_fitness_score(
     metrics: Dict[str, float],
     feature_dimensions: List[str],
+    metric_ranges: Optional[Dict[str, Tuple[float, float]]] = None,
+    function_weight: float = 1.0,
+    llm_weight: float = 0.0,
 ) -> float:
     """
     Compute overall fitness score from metrics.
 
-    Excludes feature dimensions from fitness calculation.
+    fitness = function_score × function_weight + llm_score × llm_weight
 
     Args:
-        metrics: Dict of metric name -> value
+        metrics: Dict of metric name -> value (may include fitness_weights dict)
         feature_dimensions: List of feature dimension names to exclude
+        metric_ranges: Optional dict of metric name -> (min, max) for normalization
+        function_weight: Weight for function_score (default 1.0)
+        llm_weight: Weight for llm_score (default 0.0)
 
     Returns:
-        Fitness score (higher is better)
+        Fitness score (higher is better, 0.0 to 1.0 if normalized)
     """
     if not metrics:
         return 0.0
 
-    # Filter out feature dimensions
-    fitness_metrics = {
-        k: v for k, v in metrics.items()
-        if k not in feature_dimensions and isinstance(v, (int, float))
-    }
+    # Get fitness_weights for function_score calculation
+    fitness_weights = metrics.get("fitness_weights")
 
-    if not fitness_metrics:
-        return 0.0
+    # Compute function_score (normalized weighted score from evaluator metrics)
+    if fitness_weights and isinstance(fitness_weights, dict):
+        function_score = compute_function_score(metrics, fitness_weights, metric_ranges)
+    else:
+        # No fitness_weights means evaluation failed or incomplete
+        # Return 0.0 instead of using fallback logic
+        function_score = 0.0
 
-    # Use function_score if available (pure evaluation score without LLM influence)
-    if "function_score" in fitness_metrics:
-        return fitness_metrics["function_score"]
+    # Get llm_score (already normalized to 0-1)
+    llm_score = metrics.get("llm_score", 0.5)
 
-    # Fall back to combined_score if no function_score
-    if "combined_score" in fitness_metrics:
-        return fitness_metrics["combined_score"]
+    # Compute final fitness
+    # fitness = function_score × function_weight + llm_score × llm_weight
+    total_weight = function_weight + llm_weight
+    if total_weight < 1e-8:
+        return function_score
 
-    # Otherwise average all numeric metrics
-    return sum(fitness_metrics.values()) / len(fitness_metrics)
+    fitness = (function_score * function_weight + llm_score * llm_weight) / total_weight
+    return fitness
 
 
 def feature_coordinates_to_bin(

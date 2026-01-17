@@ -10,7 +10,9 @@ Constructs prompts for the mutator agent with:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import math
+import random
+from typing import Any, Dict, List, Optional, Tuple
 
 from .program import Program
 
@@ -129,6 +131,143 @@ Do NOT output SEARCH/REPLACE blocks - just describe what should be changed.
 """
 
 
+# Exploration direction section (algorithm-level improvements)
+ANALYZER_EXPLORATION_SECTION = """
+## Optimization Direction: Algorithm-Level Exploration
+
+You are in the **EXPLORATION** phase. Focus on **fundamental algorithmic changes**, NOT code-level optimizations.
+
+### IMPORTANT: What IS vs IS NOT Algorithm-Level
+
+**IS Algorithm-Level (what you should propose):**
+- Changing the objective function or loss function
+- Replacing the optimization method (e.g., EM → gradient descent, coordinate descent → Newton)
+- Modifying the mathematical model (e.g., soft clustering → hard clustering, different distance metrics)
+- Adding/removing regularization terms or constraints
+- Changing convergence criteria fundamentally
+- Introducing new algorithmic components (e.g., momentum, adaptive learning rates)
+- Reformulating the problem mathematically
+
+**IS NOT Algorithm-Level (avoid these - save for exploitation phase):**
+- Vectorizing loops
+- Caching intermediate results
+- Memory optimization
+- Using faster library functions
+- Numerical stability tricks (log-sum-exp, etc.)
+- Code refactoring without changing the math
+
+### How to Think
+
+1. **Understand the Problem First**: What is this algorithm trying to solve? What is the objective?
+2. **Question Core Assumptions**: Why this particular formulation? Are there alternatives in the literature?
+3. **Consider Trade-offs**: Could a different approach achieve better quality even if slower?
+
+### Example Algorithmic Changes (for inspiration)
+
+- Replace one optimization method with another (e.g., iterative → closed-form, greedy → global)
+- Change the objective function (add/remove/modify terms)
+- Use a different mathematical formulation for the same problem
+- Introduce adaptive or learnable parameters where fixed constants exist
+- Change hard constraints to soft penalties or vice versa
+- Replace a heuristic with a principled approach, or simplify an over-engineered solution
+
+### Your Task
+
+Propose **1-2 bold algorithmic changes** that modify the mathematical formulation or optimization strategy. Do NOT propose code optimizations like "vectorize this loop" or "cache this computation".
+"""
+
+
+# Exploitation direction section (implementation-level improvements)
+ANALYZER_EXPLOITATION_SECTION = """
+## Optimization Direction: Implementation-Level Exploitation
+
+You are in the **EXPLOITATION** phase. Focus on fine-grained, code-level improvements.
+
+### What to Analyze
+1. **Computational Efficiency**:
+   - Redundant calculations that can be cached or eliminated
+   - Operations that can be better vectorized or parallelized
+   - Unnecessary memory allocations or copies
+2. **Numerical Details**:
+   - Numerical stability issues (overflow, underflow, precision loss)
+   - Convergence threshold tuning
+   - Better numerical methods for specific operations (e.g., log-sum-exp trick)
+3. **Code Structure**:
+   - Loop optimizations (fusion, unrolling, early termination)
+   - Better use of library functions (numpy, torch operations)
+   - Memory access patterns and cache efficiency
+
+### What to Propose
+- **Targeted, surgical changes** to specific lines or functions
+- Optimizations that preserve the algorithm's logic but improve execution
+- Parameter tuning and threshold adjustments
+
+### Mindset
+Think like a performance engineer. The algorithm is sound; your job is to make the implementation as efficient as possible. Ask "How can I compute the same result faster?" rather than "Is there a different approach?"
+"""
+
+
+# Summarizer prompt for extracting exploration directions
+SUMMARIZER_SYSTEM_PROMPT = """You are a technical summarizer. Your job is to identify which optimization direction was ACTUALLY IMPLEMENTED in code changes.
+
+You will receive:
+1. An ANALYSIS that proposes one or more optimization directions
+2. A DIFF showing the actual code changes made
+
+Your task: Determine which proposed direction (if any) was actually implemented in the diff.
+
+Output a JSON object with exactly these fields:
+{
+    "direction": "One sentence describing the change that was ACTUALLY IMPLEMENTED (10-20 words)",
+    "category": "One of: objective_function | optimization_method | regularization | convergence | mathematical_formulation | implementation | other",
+    "is_algorithmic": true or false,
+    "match_confidence": "high | medium | low"
+}
+
+Guidelines:
+- "direction": Describe what was ACTUALLY changed in the code, not what was proposed
+- "category": Classify the type of change based on what was implemented
+- "is_algorithmic": true if the change modifies mathematical formulation or algorithm logic; false for code optimizations (vectorization, caching, etc.)
+- "match_confidence":
+  - "high": The diff clearly implements one of the proposed directions
+  - "medium": The diff partially implements or is related to a proposed direction
+  - "low": The diff doesn't clearly match any proposed direction
+
+If the diff is empty or doesn't implement any meaningful change:
+{"direction": "No implementation found", "category": "other", "is_algorithmic": false, "match_confidence": "low"}
+
+If the diff implements something completely different from the analysis:
+{"direction": "<describe what was actually implemented>", "category": "...", "is_algorithmic": ..., "match_confidence": "low"}
+
+Output ONLY the JSON object, no other text.
+"""
+
+
+def format_metrics_delta(metrics_delta: Dict[str, float], max_metrics: int = 3) -> str:
+    """
+    Format metrics delta for display in prompts.
+
+    Shows the metrics with the largest changes.
+
+    Args:
+        metrics_delta: Dict of metric name -> change value
+        max_metrics: Maximum number of metrics to show
+
+    Returns:
+        Formatted string like "mixing:+2.3%, bio:-0.5%"
+    """
+    if not metrics_delta:
+        return ""
+    # Sort by absolute value, take largest changes
+    sorted_items = sorted(metrics_delta.items(), key=lambda x: abs(x[1]), reverse=True)
+    parts = []
+    for key, val in sorted_items[:max_metrics]:
+        # Shorten metric names: remove "_score" suffix and underscores
+        short_key = key.replace("_score", "").replace("_", "")[:8]
+        parts.append(f"{short_key}:{val:+.1%}")
+    return ", ".join(parts)
+
+
 class EvolutionPromptBuilder:
     """
     Builds prompts for the mutation agent.
@@ -164,6 +303,82 @@ class EvolutionPromptBuilder:
     def get_system_prompt(self, is_codebase: bool = True) -> str:
         """Get the appropriate system prompt."""
         return MUTATION_SYSTEM_PROMPT_CODEBASE if is_codebase else MUTATION_SYSTEM_PROMPT
+
+    def compute_exploration_probability(
+        self,
+        generation: int,
+        initial_prob: float = 0.9,
+        final_prob: float = 0.1,
+        decay_generations: int = 10,
+    ) -> float:
+        """
+        Compute exploration probability based on generation.
+
+        Uses exponential decay: P(t) = final + (initial - final) * exp(-t / tau)
+        where tau is calibrated so P(decay_generations) ≈ final + 0.1 * (initial - final)
+
+        Args:
+            generation: Current generation number
+            initial_prob: Exploration probability at generation 0
+            final_prob: Minimum exploration probability
+            decay_generations: Generations to decay to near-final probability
+
+        Returns:
+            Exploration probability in [final_prob, initial_prob]
+        """
+        if generation <= 0:
+            return initial_prob
+
+        # Exponential decay with tau = decay_generations / 2.3
+        # At t = decay_generations, we're at ~10% of the way from final to initial
+        tau = decay_generations / 2.3
+        prob = final_prob + (initial_prob - final_prob) * math.exp(-generation / tau)
+
+        return max(final_prob, min(initial_prob, prob))
+
+    def get_analyzer_system_prompt(
+        self,
+        generation: int,
+        initial_prob: float = 0.9,
+        final_prob: float = 0.1,
+        decay_generations: int = 10,
+    ) -> Tuple[str, str, float]:
+        """
+        Get analyzer system prompt with generation-appropriate optimization direction.
+
+        The base ANALYZER_SYSTEM_PROMPT is always included. Based on generation,
+        either ANALYZER_EXPLORATION_SECTION or ANALYZER_EXPLOITATION_SECTION is
+        appended with probability determined by exponential decay.
+
+        Args:
+            generation: Current program generation
+            initial_prob: Initial exploration probability (at generation 0)
+            final_prob: Final exploration probability (asymptotic)
+            decay_generations: Generations to decay to near-final probability
+
+        Returns:
+            Tuple of (full_prompt, direction, exploration_probability) where:
+            - full_prompt: Complete system prompt for analyzer
+            - direction: "exploration" or "exploitation"
+            - exploration_probability: The probability used for this decision
+        """
+        # Compute probability and sample direction
+        exploration_prob = self.compute_exploration_probability(
+            generation, initial_prob, final_prob, decay_generations
+        )
+
+        use_exploration = random.random() < exploration_prob
+        direction = "exploration" if use_exploration else "exploitation"
+
+        # Build full prompt: base rules + direction section
+        direction_section = (
+            ANALYZER_EXPLORATION_SECTION if use_exploration
+            else ANALYZER_EXPLOITATION_SECTION
+        )
+
+        full_prompt = ANALYZER_SYSTEM_PROMPT + "\n" + direction_section
+
+        return full_prompt, direction, exploration_prob
 
     def build_mutation_prompt(
         self,
@@ -226,14 +441,14 @@ class EvolutionPromptBuilder:
 
     def _build_current_program_section(self, program: Program) -> str:
         """Build the current program section."""
-        combined = program.metrics.get("combined_score", 0)
-        parts = [f"## Current Program (Combined Score: {combined:.4f})"]
+        function_score = program.metrics.get("function_score", 0)
+        parts = [f"## Current Program (Function Score: {function_score:.4f})"]
 
         # Show all detailed metrics
         if program.metrics:
             metrics_lines = []
             for key, value in sorted(program.metrics.items()):
-                if key != "combined_score" and isinstance(value, (int, float)):
+                if key not in ("function_score", "fitness_weights") and isinstance(value, (int, float)):
                     metrics_lines.append(f"  - {key}: {value:.4f}")
             if metrics_lines:
                 parts.append("\nDetailed Metrics:")
@@ -256,14 +471,14 @@ class EvolutionPromptBuilder:
         parts.append("Learn from these high-scoring examples:\n")
 
         for i, prog in enumerate(programs[: self.max_top_programs]):
-            combined = prog.metrics.get("combined_score", 0)
-            parts.append(f"### #{i+1} (Combined Score: {combined:.4f})")
+            function_score = prog.metrics.get("function_score", 0)
+            parts.append(f"### #{i+1} (Function Score: {function_score:.4f})")
 
             # Show detailed metrics
             if prog.metrics:
                 metrics_lines = []
                 for key, value in sorted(prog.metrics.items()):
-                    if key != "combined_score" and isinstance(value, (int, float)):
+                    if key not in ("function_score", "fitness_weights") and isinstance(value, (int, float)):
                         metrics_lines.append(f"  - {key}: {value:.4f}")
                 if metrics_lines:
                     parts.append("Metrics:")
@@ -286,14 +501,14 @@ class EvolutionPromptBuilder:
         parts.append("Consider these alternative approaches:\n")
 
         for i, prog in enumerate(programs[: self.max_inspirations]):
-            combined = prog.metrics.get("combined_score", 0)
-            parts.append(f"### Inspiration {i+1} (Combined Score: {combined:.4f})")
+            function_score = prog.metrics.get("function_score", 0)
+            parts.append(f"### Inspiration {i+1} (Function Score: {function_score:.4f})")
 
             # Show detailed metrics
             if prog.metrics:
                 metrics_lines = []
                 for key, value in sorted(prog.metrics.items()):
-                    if key != "combined_score" and isinstance(value, (int, float)):
+                    if key not in ("function_score", "fitness_weights") and isinstance(value, (int, float)):
                         metrics_lines.append(f"  - {key}: {value:.4f}")
                 if metrics_lines:
                     parts.append("Metrics:")
@@ -366,6 +581,70 @@ Provide your changes now:"""
 
         return truncated + "\n# ... (truncated)"
 
+    def build_evolution_history_section(
+        self,
+        sibling_summaries: List[Dict[str, Any]],
+        ancestor_summaries: List[Dict[str, Any]],
+        parent_order: int,
+        max_siblings: int = 5,
+        max_ancestors: int = 10,
+        max_chars: int = 2000,
+    ) -> str:
+        """
+        Build evolution history section for analyzer prompt.
+
+        Combines sibling attempts (same parent) and ancestor chain evolution path.
+
+        Args:
+            sibling_summaries: List of sibling mutation summaries from database
+            ancestor_summaries: List of ancestor mutation summaries from database
+            parent_order: Order number of the parent program
+            max_siblings: Maximum number of sibling attempts to show
+            max_ancestors: Maximum number of ancestor steps to show
+            max_chars: Maximum total characters for history section
+
+        Returns:
+            Formatted history string for inclusion in prompt
+        """
+        lines = ["## Evolution History\n"]
+
+        # Part A: Sibling attempts (same parent)
+        if sibling_summaries:
+            lines.append(f"### Sibling Attempts (same parent #{parent_order})")
+            for s in sibling_summaries[:max_siblings]:
+                fd = s.get("fitness_delta") or 0
+                icon = "✓" if fd > 0.01 else "✗" if fd < -0.01 else "·"
+                # Show fitness_delta and detailed metrics
+                fitness_str = f"{fd:+.1%}" if s.get("fitness_delta") is not None else "?"
+                detail_str = format_metrics_delta(s.get("metrics_delta", {}))
+                delta_str = f"{fitness_str}" + (f" [{detail_str}]" if detail_str else "")
+                tag = "algo" if s.get("is_algorithmic", True) else "impl"
+                summary_text = s.get("summary", "")[:60]
+                lines.append(f"- {icon} \"{summary_text}\" ({delta_str}) [{tag}]")
+            lines.append("")
+
+        # Part B: Ancestor chain evolution path
+        if ancestor_summaries:
+            lines.append("### Evolution Path (root → current parent)")
+            for i, s in enumerate(ancestor_summaries[:max_ancestors]):
+                fd = s.get("fitness_delta")
+                if fd is not None:
+                    fitness_str = f"{fd:+.1%}"
+                    detail_str = format_metrics_delta(s.get("metrics_delta", {}))
+                    delta_str = f"{fitness_str}" + (f" [{detail_str}]" if detail_str else "")
+                else:
+                    delta_str = "base"
+                order = s.get("order", "?")
+                summary_text = s.get("summary", "")[:50]
+                lines.append(f"- Step {i}: #{order} \"{summary_text}\" ({delta_str})")
+            lines.append("")
+
+        if sibling_summaries or ancestor_summaries:
+            lines.append("NOTE: Learn from successful directions. Avoid repeating failed attempts.")
+
+        result = "\n".join(lines)
+        return result[:max_chars] if len(result) > max_chars else result
+
     def build_analysis_prompt(
         self,
         parent: Program,
@@ -374,6 +653,7 @@ Provide your changes now:"""
         inspirations: Optional[List[Program]] = None,
         artifacts: Optional[Dict[str, Any]] = None,
         iteration: Optional[int] = None,
+        exploration_history: Optional[str] = None,
     ) -> str:
         """
         Build prompt for analyzer agent with full context.
@@ -388,6 +668,7 @@ Provide your changes now:"""
             inspirations: Diverse inspiration programs
             artifacts: Evaluation artifacts/feedback
             iteration: Current iteration number
+            exploration_history: Pre-formatted exploration history text (for exploration mode)
 
         Returns:
             Formatted prompt string for analyzer
@@ -396,6 +677,10 @@ Provide your changes now:"""
 
         # Header with objective
         parts.append(self._build_objective_section(objective, iteration))
+
+        # Exploration history (if provided, appears early to inform analysis)
+        if exploration_history and exploration_history.strip():
+            parts.append(exploration_history)
 
         # Current program with full details
         parts.append(self._build_current_program_section(parent))

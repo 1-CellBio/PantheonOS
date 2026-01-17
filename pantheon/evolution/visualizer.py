@@ -119,7 +119,27 @@ class EvolutionVisualizer:
 
         def build_node(prog_id: str) -> Dict[str, Any]:
             prog = self.programs[prog_id]
-            score = prog.metrics.get("combined_score", 0.0)
+
+            # Check for evaluation error
+            has_error = bool(prog.artifacts.get("evaluation_error"))
+
+            # Use dynamic fitness_score calculation with current metric_ranges
+            score = prog.fitness_score(
+                self.database.config.feature_dimensions,
+                self.database.metric_ranges,
+                self.database.config.function_weight,
+                self.database.config.llm_weight,
+            )
+
+            # Build display_metrics with dynamically computed function_score and fitness_score
+            display_metrics = {k: v for k, v in prog.metrics.items() if k != "fitness_weights"}
+            fitness_weights = prog.metrics.get("fitness_weights")
+            if fitness_weights and isinstance(fitness_weights, dict):
+                display_metrics["function_score"] = self.database.compute_function_score(
+                    prog.metrics, fitness_weights
+                )
+            # Add fitness_score to display metrics
+            display_metrics["fitness_score"] = score
 
             # Use program.order if available, otherwise fall back to -1
             order = prog.order if prog.order is not None else -1
@@ -132,7 +152,8 @@ class EvolutionVisualizer:
                 "generation": prog.generation,
                 "island_id": prog.island_id,
                 "score": score,
-                "metrics": prog.metrics,
+                "metrics": display_metrics,
+                "has_error": has_error,
                 "diff": prog.diff_from_parent or "",
                 "llm_feedback": prog.llm_feedback or prog.artifacts.get("llm_feedback", ""),
                 "created_at": prog.created_at,
@@ -176,16 +197,21 @@ class EvolutionVisualizer:
         Returns:
             List of {iteration, order, program_id, <metric_name>: value, best_<metric_name>: value, ...}
         """
-        # Collect all metric keys from all programs
+        # Collect all metric keys from all programs (excluding fitness_weights)
         all_metric_keys = set()
         for prog in self.programs.values():
-            all_metric_keys.update(prog.metrics.keys())
+            for k in prog.metrics.keys():
+                if k != "fitness_weights":
+                    all_metric_keys.add(k)
 
         # Sort programs by order (use order if available, otherwise fall back to created_at)
         sorted_programs = sorted(
             self.programs.values(),
             key=lambda p: p.order if p.order is not None else float('inf')
         )
+
+        # Get metric_ranges for dynamic function_score calculation
+        metric_ranges = self.database.metric_ranges if hasattr(self.database, 'metric_ranges') else {}
 
         history = []
         best_scores: Dict[str, float] = {}  # Track best value for each metric
@@ -198,9 +224,38 @@ class EvolutionVisualizer:
                 "program_id": prog.id,
             }
 
-            # Add all metrics and their best values
+            # Dynamically compute function_score using current metric_ranges
+            fitness_weights = prog.metrics.get("fitness_weights")
+            if fitness_weights and isinstance(fitness_weights, dict):
+                function_score = self.database.compute_function_score(
+                    prog.metrics, fitness_weights
+                )
+                entry["function_score"] = function_score
+                # Update best function_score
+                if "function_score" not in best_scores or function_score > best_scores["function_score"]:
+                    best_scores["function_score"] = function_score
+                entry["best_function_score"] = best_scores.get("function_score", 0.0)
+
+            # Dynamically compute fitness_score (weighted combination of function_score and llm_score)
+            fitness_score = prog.fitness_score(
+                self.database.config.feature_dimensions,
+                metric_ranges,
+                self.database.config.function_weight,
+                self.database.config.llm_weight,
+            )
+            entry["fitness_score"] = fitness_score
+            # Update best fitness_score
+            if "fitness_score" not in best_scores or fitness_score > best_scores["fitness_score"]:
+                best_scores["fitness_score"] = fitness_score
+            entry["best_fitness_score"] = best_scores.get("fitness_score", 0.0)
+
+            # Add all other metrics and their best values
             for key in all_metric_keys:
+                if key == "function_score":
+                    continue  # Already handled above
                 value = prog.metrics.get(key, 0.0)
+                if not isinstance(value, (int, float)):
+                    continue
                 entry[key] = value
 
                 # Update best score for this metric
@@ -222,6 +277,9 @@ class EvolutionVisualizer:
         all_metric_keys = set()
         for prog in self.programs.values():
             all_metric_keys.update(prog.metrics.keys())
+        # Add dynamically computed scores
+        all_metric_keys.add("fitness_score")
+        all_metric_keys.add("best_fitness_score")
         return sorted(all_metric_keys)
 
     def get_programs_data(self) -> Dict[str, Dict[str, Any]]:
@@ -235,13 +293,50 @@ class EvolutionVisualizer:
 
         for prog_id, prog in self.programs.items():
             order = prog.order if prog.order is not None else -1
+
+            # Compute fitness_delta dynamically using current metric_ranges
+            prog_fitness = prog.fitness_score(
+                self.database.config.feature_dimensions,
+                self.database.metric_ranges,
+                self.database.config.function_weight,
+                self.database.config.llm_weight,
+            )
+            if prog.parent_id and prog.parent_id in self.programs:
+                parent = self.programs[prog.parent_id]
+                parent_fitness = parent.fitness_score(
+                    self.database.config.feature_dimensions,
+                    self.database.metric_ranges,
+                    self.database.config.function_weight,
+                    self.database.config.llm_weight,
+                )
+                fitness_delta = prog_fitness - parent_fitness
+
+                # Compute metrics_delta dynamically
+                metrics_delta = {}
+                for k, v in prog.metrics.items():
+                    if k in parent.metrics and isinstance(v, (int, float)):
+                        metrics_delta[k] = v - parent.metrics[k]
+            else:
+                fitness_delta = None
+                metrics_delta = {}
+
+            # Build metrics with dynamically computed function_score and fitness_score
+            display_metrics = {k: v for k, v in prog.metrics.items() if k != "fitness_weights"}
+            fitness_weights = prog.metrics.get("fitness_weights")
+            if fitness_weights and isinstance(fitness_weights, dict):
+                display_metrics["function_score"] = self.database.compute_function_score(
+                    prog.metrics, fitness_weights
+                )
+            # Add fitness_score to display metrics
+            display_metrics["fitness_score"] = prog_fitness
+
             programs_data[prog_id] = {
                 "id": prog_id,
                 "order": order,
                 "parent_id": prog.parent_id,
                 "generation": prog.generation,
                 "island_id": prog.island_id,
-                "metrics": prog.metrics,
+                "metrics": display_metrics,
                 "diff": prog.diff_from_parent or "",
                 "llm_feedback": prog.llm_feedback or prog.artifacts.get("llm_feedback", ""),
                 "issues": prog.artifacts.get("issues", []),
@@ -250,6 +345,14 @@ class EvolutionVisualizer:
                 "is_best": prog_id == self.database.best_program_id,
                 "code_files": self._get_code_files(prog),
                 "analysis_used": prog.analysis_used or "",
+                "analysis_prompt_used": prog.analysis_prompt_used or "",
+                "mutator_prompt_used": prog.mutator_prompt_used or "",
+                # Mutation summary fields
+                "mutation_summary": prog.mutation_summary,
+                "mutation_category": prog.mutation_category,
+                "is_algorithmic": prog.is_algorithmic,
+                "fitness_delta": fitness_delta,
+                "metrics_delta": metrics_delta,
             }
 
         return programs_data
@@ -264,17 +367,27 @@ class EvolutionVisualizer:
         """
         Get MAP-Elites grid data for heatmap visualization.
 
+        Uses dynamic bin calculation based on current feature ranges.
+
         Returns:
             List of {coords, score, program_id, metrics, ...} for each filled cell
         """
         cells = []
         feature_dims = self.metadata.get("config", {}).get("feature_dimensions", [])
+        num_islands = self.database.config.num_islands
 
-        for island_id, feature_map in enumerate(self.database.island_feature_maps):
-            for coords, prog_id in feature_map.items():
+        for island_id in range(num_islands):
+            # Use iter_filled_bins for dynamic bin calculation
+            for coords, prog_id in self.database.iter_filled_bins(island_id):
                 if prog_id in self.programs:
                     prog = self.programs[prog_id]
-                    score = prog.metrics.get("combined_score", 0.0)
+                    # Use dynamic fitness_score calculation
+                    score = prog.fitness_score(
+                        self.database.config.feature_dimensions,
+                        self.database.metric_ranges,
+                        self.database.config.function_weight,
+                        self.database.config.llm_weight,
+                    )
 
                     # Store full coordinates as dict mapping dimension name to bin index
                     coords_dict = {}
@@ -282,12 +395,16 @@ class EvolutionVisualizer:
                         if i < len(coords):
                             coords_dict[dim] = coords[i]
 
+                    # Build display metrics: filter out fitness_weights, add fitness_score
+                    display_metrics = {k: v for k, v in prog.metrics.items() if k != "fitness_weights"}
+                    display_metrics["fitness_score"] = score
+
                     cells.append({
                         "coords": coords_dict,  # Full coordinates by dimension name
                         "score": score,
                         "program_id": prog_id,
                         "island_id": island_id,
-                        "metrics": prog.metrics,
+                        "metrics": display_metrics,
                         "generation": prog.generation,
                     })
 
@@ -297,8 +414,16 @@ class EvolutionVisualizer:
         """Get summary statistics for the evolution run."""
         stats = self.database.get_statistics()
 
-        # Calculate additional stats
-        scores = [p.metrics.get("combined_score", 0.0) for p in self.programs.values()]
+        # Calculate additional stats using dynamic fitness_score
+        scores = [
+            p.fitness_score(
+                self.database.config.feature_dimensions,
+                self.database.metric_ranges,
+                self.database.config.function_weight,
+                self.database.config.llm_weight,
+            )
+            for p in self.programs.values()
+        ]
 
         best_prog = self.database.get_best_program()
         initial_score = 0.0
@@ -306,7 +431,12 @@ class EvolutionVisualizer:
         # Find initial program (generation 0)
         for prog in self.programs.values():
             if prog.generation == 0:
-                initial_score = prog.metrics.get("combined_score", 0.0)
+                initial_score = prog.fitness_score(
+                    self.database.config.feature_dimensions,
+                    self.database.metric_ranges,
+                    self.database.config.function_weight,
+                    self.database.config.llm_weight,
+                )
                 break
 
         # Get effective feature ranges from database
@@ -502,6 +632,9 @@ class EvolutionVisualizer:
             border-bottom: 1px solid #30363d;
             font-size: 1.2em;
             color: #c9d1d9;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }}
 
         .section-content {{
@@ -566,7 +699,7 @@ class EvolutionVisualizer:
             border-radius: 6px;
             padding: 10px;
             pointer-events: none;
-            z-index: 1000;
+            z-index: 2000;
             max-width: 300px;
         }}
 
@@ -628,6 +761,21 @@ class EvolutionVisualizer:
 
         .ancestry-path .path-separator {{
             color: #484f58;
+        }}
+
+        .ancestry-path .path-node.future {{
+            background: #161b22;
+            color: #484f58;
+            border: 1px dashed #30363d;
+        }}
+
+        .ancestry-path .path-node.future:hover {{
+            background: #21262d;
+            color: #8b949e;
+        }}
+
+        .ancestry-path .path-separator.future {{
+            color: #30363d;
         }}
 
         .path-analysis {{
@@ -1203,6 +1351,225 @@ class EvolutionVisualizer:
         .tab-content.active {{
             display: block;
         }}
+
+        .prompt-subtabs {{
+            display: flex;
+            gap: 8px;
+            padding: 10px 15px;
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+        }}
+
+        .prompt-subtab {{
+            padding: 6px 12px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s;
+        }}
+
+        .prompt-subtab:hover {{
+            background: #30363d;
+            color: #c9d1d9;
+        }}
+
+        .prompt-subtab.active {{
+            background: #388bfd;
+            border-color: #388bfd;
+            color: white;
+        }}
+
+        .expand-btn {{
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #8b949e;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1.2em;
+        }}
+
+        .expand-btn:hover {{
+            background: #30363d;
+            color: #c9d1d9;
+        }}
+
+        /* Tree Explorer Modal */
+        .modal {{
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+        }}
+
+        .modal.active {{
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }}
+
+        .modal-content.tree-explorer {{
+            width: 100vw;
+            height: 100vh;
+            background: #0d1117;
+            border-radius: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }}
+
+        .modal-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+        }}
+
+        .modal-header h2 {{
+            margin: 0;
+            color: #c9d1d9;
+            font-size: 1.3em;
+        }}
+
+        .modal-close-btn {{
+            background: none;
+            border: none;
+            color: #8b949e;
+            font-size: 28px;
+            cursor: pointer;
+            padding: 0 8px;
+            line-height: 1;
+        }}
+
+        .modal-close-btn:hover {{
+            color: #f85149;
+        }}
+
+        .modal-body {{
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }}
+
+        .explorer-left {{
+            width: 60%;
+            min-width: 300px;
+            overflow: auto;
+            padding: 15px;
+            background: #0d1117;
+        }}
+
+        .explorer-resizer {{
+            width: 6px;
+            background: #30363d;
+            cursor: col-resize;
+            transition: background 0.2s;
+            flex-shrink: 0;
+        }}
+
+        .explorer-resizer:hover,
+        .explorer-resizer.dragging {{
+            background: #58a6ff;
+        }}
+
+        .explorer-right {{
+            width: 40%;
+            min-width: 300px;
+            overflow: auto;
+            background: #161b22;
+        }}
+
+        #explorer-tree-container {{
+            min-height: 100%;
+        }}
+
+        #explorer-detail-panel {{
+            height: 100%;
+        }}
+
+        #explorer-detail-panel .explorer-detail-title {{
+            padding: 15px 20px;
+            background: #21262d;
+            border-bottom: 1px solid #30363d;
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #c9d1d9;
+        }}
+
+        #explorer-detail-panel .ancestry-path {{
+            padding: 10px 20px;
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            margin-bottom: 0;
+        }}
+
+        #explorer-detail-panel .explorer-metrics {{
+            padding: 15px 20px;
+            border-bottom: 1px solid #30363d;
+        }}
+
+        #explorer-detail-panel .explorer-metrics-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }}
+
+        #explorer-detail-panel .explorer-metric-item {{
+            background: #21262d;
+            padding: 10px;
+            border-radius: 4px;
+        }}
+
+        #explorer-detail-panel .explorer-metric-label {{
+            font-size: 0.75em;
+            color: #8b949e;
+            margin-bottom: 2px;
+        }}
+
+        #explorer-detail-panel .explorer-metric-value {{
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #c9d1d9;
+        }}
+
+        .explorer-empty-state {{
+            color: #8b949e;
+            text-align: center;
+            padding: 40px 20px;
+        }}
+
+        .explorer-mutation-summary {{
+            padding: 15px 20px;
+            background: #21262d;
+            border-bottom: 1px solid #30363d;
+            color: #8b949e;
+            font-size: 0.9em;
+        }}
+
+        .explorer-mutation-summary strong {{
+            color: #c9d1d9;
+        }}
+
+        /* Explorer tab content padding */
+        #explorer-detail-panel .tab-content {{
+            padding: 15px 20px;
+            height: auto;
+            overflow-y: visible;
+        }}
+
+        /* Explorer tab content active state - override default */
+        #explorer-detail-panel .tab-content.active {{
+            display: block;
+        }}
     </style>
 </head>
 <body>
@@ -1261,7 +1628,10 @@ class EvolutionVisualizer:
 
         <!-- Evolution Tree -->
         <section>
-            <h2>Evolution Tree</h2>
+            <h2>
+                Evolution Tree
+                <button class="expand-btn" onclick="openTreeExplorer()" title="Open fullscreen explorer">&#x26F6;</button>
+            </h2>
             <div class="section-content">
                 <p style="color: #8b949e; margin-bottom: 15px;">
                     Click on a node to view details. Green = high score, Red = low score.
@@ -1295,6 +1665,7 @@ class EvolutionVisualizer:
                 <div class="tabs">
                     <div class="tab active" data-tab="diff">Diff</div>
                     <div class="tab" data-tab="analysis">Analysis</div>
+                    <div class="tab" data-tab="prompt">Prompt</div>
                     <div class="tab" data-tab="feedback">LLM Feedback</div>
                     <div class="tab" data-tab="code">Code Preview</div>
                 </div>
@@ -1305,6 +1676,14 @@ class EvolutionVisualizer:
 
                 <div class="tab-content" id="tab-analysis">
                     <div class="analysis-section" id="analysis-view"></div>
+                </div>
+
+                <div class="tab-content" id="tab-prompt">
+                    <div class="prompt-subtabs">
+                        <button class="prompt-subtab active" data-prompt="analyzer">Analyzer Prompt</button>
+                        <button class="prompt-subtab" data-prompt="mutator">Mutator Prompt</button>
+                    </div>
+                    <div class="prompt-section" id="prompt-view"></div>
                 </div>
 
                 <div class="tab-content" id="tab-feedback">
@@ -1374,8 +1753,8 @@ class EvolutionVisualizer:
 
         // Color palette for metrics
         const metricColors = {{
-            'function_score': '#58a6ff',
-            'combined_score': '#79c0ff',
+            'fitness_score': '#58a6ff',
+            'function_score': '#e3b341',
             'llm_score': '#a371f7',
             'mixing_score': '#f778ba',
             'bio_conservation_score': '#3fb950',
@@ -1393,10 +1772,10 @@ class EvolutionVisualizer:
         }}
 
         // Track which metrics are visible
-        const visibleMetrics = new Set(['combined_score', 'best_combined_score']);
+        const visibleMetrics = new Set(['fitness_score', 'best_fitness_score']);
 
         // Currently selected metric for coloring
-        let selectedMetric = 'combined_score';
+        let selectedMetric = 'fitness_score';
 
         // Store tree root for ancestry path lookup
         let treeRoot = null;
@@ -1497,7 +1876,7 @@ class EvolutionVisualizer:
                 const option = document.createElement('option');
                 option.value = metric;
                 option.textContent = metric.replace(/_/g, ' ');
-                if (metric === 'combined_score') {{
+                if (metric === 'fitness_score') {{
                     option.selected = true;
                 }}
                 select.appendChild(option);
@@ -1949,7 +2328,9 @@ class EvolutionVisualizer:
                     step: i,
                     id: n.data.id,
                     label: n.data.order >= 0 ? `#${{n.data.order}}` : n.data.name,
-                    metrics: prog ? prog.metrics : {{}}
+                    metrics: prog ? prog.metrics : {{}},
+                    mutation_summary: prog ? prog.mutation_summary : '',
+                    fitness_delta: prog ? prog.fitness_delta : null
                 }};
             }});
 
@@ -1962,8 +2343,8 @@ class EvolutionVisualizer:
                 return;
             }}
 
-            // Track visible metrics for this chart
-            const pathVisibleMetrics = new Set(scoreMetrics);
+            // Track visible metrics for this chart (default to function_score only)
+            const pathVisibleMetrics = new Set(scoreMetrics.includes('fitness_score') ? ['fitness_score'] : (scoreMetrics.includes('function_score') ? ['function_score'] : scoreMetrics.slice(0, 1)));
 
             // Chart dimensions
             const width = container.clientWidth || 400;
@@ -2120,6 +2501,14 @@ class EvolutionVisualizer:
                     html += `<p style="color: #8b949e; font-size: 0.85em;">ID: ${{dataPoint.id ? dataPoint.id.substring(0, 8) : '-'}}</p>`;
                     html += '<hr style="border-color: #30363d; margin: 8px 0;">';
 
+                    // Show mutation summary if available
+                    if (dataPoint.mutation_summary) {{
+                        const deltaStr = dataPoint.fitness_delta !== null
+                            ? ` (${{dataPoint.fitness_delta >= 0 ? '+' : ''}}${{(dataPoint.fitness_delta * 100).toFixed(1)}}%)`
+                            : '';
+                        html += `<p style="color: #a5d6ff; font-style: italic; margin-bottom: 8px;">"${{dataPoint.mutation_summary}}"${{deltaStr}}</p>`;
+                    }}
+
                     // Show values for all visible metrics
                     scoreMetrics.forEach((metric, idx) => {{
                         if (!pathVisibleMetrics.has(metric)) return;
@@ -2250,7 +2639,7 @@ class EvolutionVisualizer:
 
             // Helper to check if node evaluation failed
             function isFailed(d) {{
-                return !d.data.metrics || !d.data.metrics.function_score;
+                return d.data.has_error || !d.data.metrics;
             }}
 
             // Circles - bind click events directly to circles
@@ -2314,7 +2703,7 @@ class EvolutionVisualizer:
         function showTooltip(event, data) {{
             const tooltip = document.getElementById('tooltip');
             // Check if evaluation failed
-            const evalFailed = !data.metrics || !data.metrics.function_score;
+            const evalFailed = data.has_error || !data.metrics;
             // Build metrics HTML
             let metricsHtml = '';
             if (data.metrics && Object.keys(data.metrics).length > 0) {{
@@ -2350,6 +2739,7 @@ class EvolutionVisualizer:
 
         // Currently selected node
         let selectedNodeId = null;
+        let currentFullPath = [];  // Store full path for navigation persistence
 
         // Show program detail panel
         function showProgramDetail(programId) {{
@@ -2403,16 +2793,32 @@ class EvolutionVisualizer:
                     const node = findNodeById(treeRoot, programId);
                     if (node) {{
                         const ancestors = node.ancestors().reverse();  // Root to current
-                        pathContainer.innerHTML = ancestors.map((n, i) => {{
-                            // Use order if available, otherwise fall back to iteration or name
-                            const order = n.data.order !== undefined ? n.data.order : n.data.iteration;
-                            const label = order >= 0 ? `#${{order}}` : n.data.name;
-                            const isLast = i === ancestors.length - 1;
-                            const nodeHtml = `<span class="path-node${{isLast ? ' current' : ''}}" onclick="showProgramDetail('${{n.data.id}}')">${{label}}</span>`;
-                            return isLast ? nodeHtml : nodeHtml + '<span class="path-separator">→</span>';
+                        const newPathIds = ancestors.map(n => n.data.id);
+
+                        // Check if clicked node is in current path
+                        const indexInCurrentPath = currentFullPath.indexOf(programId);
+                        if (indexInCurrentPath === -1) {{
+                            // Not in current path, rebuild full path
+                            currentFullPath = newPathIds;
+                        }}
+                        // Otherwise keep currentFullPath unchanged for easy comparison
+
+                        // Render path with current/future styling
+                        const currentIndex = currentFullPath.indexOf(programId);
+                        pathContainer.innerHTML = currentFullPath.map((nodeId, i) => {{
+                            const nodeData = findNodeById(treeRoot, nodeId);
+                            if (!nodeData) return '';
+                            const order = nodeData.data.order !== undefined ? nodeData.data.order : nodeData.data.iteration;
+                            const label = order >= 0 ? `#${{order}}` : nodeData.data.name;
+                            const isCurrent = i === currentIndex;
+                            const isFuture = i > currentIndex;
+                            const nodeClass = isCurrent ? ' current' : (isFuture ? ' future' : '');
+                            const sepClass = isFuture ? ' future' : '';
+                            const nodeHtml = `<span class="path-node${{nodeClass}}" onclick="showProgramDetail('${{nodeId}}')">${{label}}</span>`;
+                            return i === currentFullPath.length - 1 ? nodeHtml : nodeHtml + `<span class="path-separator${{sepClass}}">→</span>`;
                         }}).join('');
 
-                        // Highlight nodes and links on path in the tree
+                        // Highlight nodes and links on path in the tree (use ancestors for highlighting)
                         const ancestorIds = new Set(ancestors.map(n => n.data.id));
 
                         d3.selectAll('.node').each(function(d) {{
@@ -2533,6 +2939,24 @@ class EvolutionVisualizer:
                     }}
                 }});
 
+                // Prompt view - render prompts with sub-tab switching
+                // Store current program for prompt switching
+                window.currentPromptProgram = program;
+
+                // Render the currently selected prompt type
+                const activeSubtab = document.querySelector('.prompt-subtab.active');
+                const promptType = activeSubtab ? activeSubtab.dataset.prompt : 'analyzer';
+                renderPromptContent(promptType);
+
+                // Set up sub-tab click handlers
+                document.querySelectorAll('.prompt-subtab').forEach(btn => {{
+                    btn.onclick = function() {{
+                        document.querySelectorAll('.prompt-subtab').forEach(b => b.classList.remove('active'));
+                        this.classList.add('active');
+                        renderPromptContent(this.dataset.prompt);
+                    }};
+                }});
+
                 // Code preview with multi-file support
                 const codeContainer = document.getElementById('code-files-container');
                 codeContainer.innerHTML = '';
@@ -2592,6 +3016,43 @@ class EvolutionVisualizer:
             }}
         }}
 
+        // Render prompt content based on selected type
+        function renderPromptContent(promptType) {{
+            const program = window.currentPromptProgram;
+            if (!program) return;
+
+            let promptText = '';
+            let emptyMessage = '';
+
+            if (promptType === 'analyzer') {{
+                promptText = program.analysis_prompt_used || '';
+                emptyMessage = 'No analyzer prompt available (initial program or analyzer disabled)';
+            }} else {{
+                promptText = program.mutator_prompt_used || '';
+                emptyMessage = 'No mutator prompt available (initial program)';
+            }}
+
+            let promptHtml = '';
+            if (promptText && promptText.trim()) {{
+                if (typeof marked !== 'undefined') {{
+                    promptHtml = `<div class="prompt-content markdown-body">${{marked.parse(promptText)}}</div>`;
+                }} else {{
+                    promptHtml = `<div class="prompt-content" style="white-space: pre-wrap;">${{escapeHtml(promptText)}}</div>`;
+                }}
+            }} else {{
+                promptHtml = `<p class="empty-state">${{emptyMessage}}</p>`;
+            }}
+
+            document.getElementById('prompt-view').innerHTML = promptHtml;
+
+            // Apply syntax highlighting to code blocks
+            document.querySelectorAll('#prompt-view pre code').forEach(block => {{
+                if (typeof hljs !== 'undefined') {{
+                    hljs.highlightElement(block);
+                }}
+            }});
+        }}
+
         // Helper function to escape HTML
         function escapeHtml(text) {{
             const div = document.createElement('div');
@@ -2618,6 +3079,7 @@ class EvolutionVisualizer:
             // Clear selection highlight
             d3.selectAll('.node circle').attr('stroke-width', 2);
             selectedNodeId = null;
+            currentFullPath = [];  // Clear saved path
             // Clear path highlighting
             d3.selectAll('.node').classed('on-path', false);
             d3.selectAll('.link').classed('on-path', false);
@@ -2627,6 +3089,879 @@ class EvolutionVisualizer:
             }}
             // Clear path analysis chart
             document.getElementById('path-chart-container').innerHTML = '';
+        }}
+
+        // Tree Explorer Modal Functions
+        let explorerSelectedId = null;
+        let explorerTreeRoot = null;
+
+        function openTreeExplorer() {{
+            const modal = document.getElementById('tree-explorer-modal');
+            modal.classList.add('active');
+
+            // Disable body scroll to prevent scroll leakage
+            document.body.style.overflow = 'hidden';
+
+            // Setup resizable panels
+            setupExplorerResizer();
+
+            // Render tree in explorer
+            renderExplorerTree();
+
+            // If a node is selected in main view, show its detail
+            if (selectedNodeId) {{
+                showExplorerDetail(selectedNodeId);
+            }}
+
+            // ESC to close
+            document.addEventListener('keydown', handleExplorerEsc);
+        }}
+
+        function closeTreeExplorer() {{
+            const modal = document.getElementById('tree-explorer-modal');
+            modal.classList.remove('active');
+            document.removeEventListener('keydown', handleExplorerEsc);
+
+            // Restore body scroll
+            document.body.style.overflow = '';
+        }}
+
+        function handleExplorerEsc(e) {{
+            if (e.key === 'Escape') {{
+                closeTreeExplorer();
+            }}
+        }}
+
+        function renderExplorerTree() {{
+            const container = document.getElementById('explorer-tree-container');
+            container.innerHTML = '';
+
+            const width = container.clientWidth || 800;
+            const nodeCount = countNodes(treeData);
+            const height = Math.max(600, nodeCount * 35);
+
+            const svg = d3.select('#explorer-tree-container')
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            if (!treeData.id || treeData.id === 'empty') {{
+                svg.append('text')
+                    .attr('x', width / 2)
+                    .attr('y', height / 2)
+                    .attr('text-anchor', 'middle')
+                    .attr('fill', '#8b949e')
+                    .text('No evolution tree data available');
+                return;
+            }}
+
+            const margin = {{top: 40, right: 120, bottom: 40, left: 120}};
+
+            const g = svg.append('g')
+                .attr('transform', `translate(${{margin.left}},${{margin.top}})`);
+
+            const treeLayout = d3.tree()
+                .size([width - margin.left - margin.right, height - margin.top - margin.bottom]);
+
+            const root = d3.hierarchy(treeData);
+            explorerTreeRoot = root;
+            treeLayout(root);
+
+            // Links
+            g.selectAll('.link')
+                .data(root.links())
+                .join('path')
+                .attr('class', 'link')
+                .attr('d', d3.linkVertical()
+                    .x(d => d.x)
+                    .y(d => d.y));
+
+            // Find best program
+            const currentBestId = findBestProgramId();
+
+            // Helper to check if node evaluation failed
+            function isFailed(d) {{
+                return d.data.has_error || !d.data.metrics;
+            }}
+
+            // Nodes
+            const nodes = g.selectAll('.node')
+                .data(root.descendants())
+                .join('g')
+                .attr('class', d => {{
+                    let cls = 'node';
+                    if (d.data.id === currentBestId) cls += ' best';
+                    if (d.data.id === explorerSelectedId) cls += ' selected';
+                    return cls;
+                }})
+                .attr('transform', d => `translate(${{d.x}},${{d.y}})`);
+
+            // Circles
+            nodes.append('circle')
+                .attr('r', d => {{
+                    if (d.data.id === explorerSelectedId) return 10;
+                    if (d.data.id === currentBestId) return 10;
+                    return 7;
+                }})
+                .attr('fill', d => {{
+                    if (isFailed(d)) return '#6e7681';
+                    const score = getScore(d.data);
+                    return safeColor(score);
+                }})
+                .attr('stroke', d => {{
+                    if (d.data.id === explorerSelectedId) return '#58a6ff';
+                    if (d.data.id === currentBestId) return '#ffd700';
+                    if (isFailed(d)) return '#f85149';
+                    const color = safeColor(getScore(d.data));
+                    const darkerColor = d3.color(color);
+                    return darkerColor ? darkerColor.darker() : color;
+                }})
+                .attr('stroke-dasharray', d => isFailed(d) ? '3,2' : 'none')
+                .attr('stroke-width', d => {{
+                    if (d.data.id === explorerSelectedId) return 3;
+                    if (isFailed(d)) return 2;
+                    return 1.5;
+                }})
+                .style('cursor', 'pointer')
+                .style('pointer-events', 'all')
+                .on('click', function(event, d) {{
+                    event.stopPropagation();
+                    showExplorerDetail(d.data.id);
+                    updateExplorerHighlight(d.data.id);
+                }})
+                .on('mouseover', function(event, d) {{
+                    showTooltip(event, d.data);
+                }})
+                .on('mouseout', hideTooltip);
+
+            // Labels
+            nodes.append('text')
+                .attr('dy', -12)
+                .attr('text-anchor', 'middle')
+                .style('pointer-events', 'none')
+                .text(d => d.data.iteration >= 0 ? `#${{d.data.iteration}}` : d.data.name);
+
+            // Highlight path to selected node
+            if (explorerSelectedId && explorerTreeRoot) {{
+                const selectedNode = findNodeById(explorerTreeRoot, explorerSelectedId);
+                if (selectedNode) {{
+                    const ancestors = selectedNode.ancestors();
+                    const ancestorIds = new Set(ancestors.map(n => n.data.id));
+
+                    // Highlight nodes on path
+                    g.selectAll('.node').each(function(d) {{
+                        if (d && d.data && ancestorIds.has(d.data.id)) {{
+                            d3.select(this).classed('on-path', true);
+                        }}
+                    }});
+
+                    // Highlight links on path
+                    g.selectAll('.link').each(function(d) {{
+                        if (d && d.source && d.target) {{
+                            const sourceOnPath = ancestorIds.has(d.source.data.id);
+                            const targetOnPath = ancestorIds.has(d.target.data.id);
+                            if (sourceOnPath && targetOnPath) {{
+                                d3.select(this).classed('on-path', true);
+                            }}
+                        }}
+                    }});
+                }}
+            }}
+        }}
+
+        let explorerFullPath = [];  // Store full path for explorer navigation
+
+        function showExplorerDetail(programId) {{
+            const panel = document.getElementById('explorer-detail-panel');
+            const program = programsData[programId];
+
+            if (!program) {{
+                panel.innerHTML = '<p class="explorer-empty-state">Program not found</p>';
+                return;
+            }}
+
+            const orderPart = program.order !== undefined && program.order >= 0 ? `#${{program.order}} ` : '';
+            const bestBadge = program.is_best ? ' <span style="color: #ffd700;">★ Best</span>' : '';
+
+            let html = `
+                <div class="explorer-detail-title">
+                    Program ${{orderPart}}(${{programId.substring(0, 8)}})${{bestBadge}}
+                </div>
+            `;
+
+            // Build ancestry path
+            html += `<div class="ancestry-path" id="explorer-ancestry-path"></div>`;
+
+            // Path analysis
+            html += `
+                <div class="path-analysis" id="explorer-path-analysis">
+                    <div class="path-analysis-header">
+                        <span>Path Analysis</span>
+                    </div>
+                    <div id="explorer-path-chart-container"></div>
+                </div>
+            `;
+
+            // Mutation summary
+            if (program.mutation_summary) {{
+                const deltaText = program.fitness_delta !== undefined && program.fitness_delta !== null
+                    ? ` (<span style="color: ${{program.fitness_delta >= 0 ? '#3fb950' : '#f85149'}};">${{program.fitness_delta >= 0 ? '+' : ''}}${{(program.fitness_delta * 100).toFixed(2)}}%</span>)`
+                    : '';
+                html += `
+                    <div class="explorer-mutation-summary">
+                        <strong>Mutation:</strong> ${{escapeHtml(program.mutation_summary)}}${{deltaText}}
+                    </div>
+                `;
+            }}
+
+            // Metrics
+            const metricsHtml = Object.entries(program.metrics)
+                .map(([key, value]) => `
+                    <div class="metric-item">
+                        <div class="metric-label">${{key}}</div>
+                        <div class="metric-value">${{typeof value === 'number' ? value.toFixed(4) : value}}</div>
+                    </div>
+                `).join('');
+
+            html += `
+                <div class="metrics-grid" style="padding: 15px 20px;">
+                    ${{metricsHtml}}
+                </div>
+            `;
+
+            // Tabs - same as main panel
+            html += `
+                <div class="tabs">
+                    <div class="tab active" data-explorer-tab="diff">Diff</div>
+                    <div class="tab" data-explorer-tab="analysis">Analysis</div>
+                    <div class="tab" data-explorer-tab="prompt">Prompt</div>
+                    <div class="tab" data-explorer-tab="feedback">LLM Feedback</div>
+                    <div class="tab" data-explorer-tab="code">Code Preview</div>
+                </div>
+            `;
+
+            // Tab contents - Diff tab
+            const diffContent = program.diff && program.diff.trim()
+                ? `<div class="diff-container" id="explorer-diff-view"></div>`
+                : '<p class="empty-state">No diff available (initial program or unchanged)</p>';
+            html += `<div class="tab-content active" id="explorer-tab-diff">${{diffContent}}</div>`;
+
+            // Analysis tab
+            html += `<div class="tab-content" id="explorer-tab-analysis"><div id="explorer-analysis-view"></div></div>`;
+
+            // Prompt tab with sub-tabs
+            html += `
+                <div class="tab-content" id="explorer-tab-prompt">
+                    <div class="prompt-subtabs">
+                        <button class="prompt-subtab active" data-explorer-prompt="analyzer">Analyzer Prompt</button>
+                        <button class="prompt-subtab" data-explorer-prompt="mutator">Mutator Prompt</button>
+                    </div>
+                    <div id="explorer-prompt-view"></div>
+                </div>
+            `;
+
+            // LLM Feedback tab
+            html += `<div class="tab-content" id="explorer-tab-feedback"><div id="explorer-feedback-view"></div></div>`;
+
+            // Code tab
+            html += `<div class="tab-content" id="explorer-tab-code"><div id="explorer-code-container"></div></div>`;
+
+            panel.innerHTML = html;
+
+            // Build and render ancestry path
+            if (explorerTreeRoot) {{
+                const node = findNodeById(explorerTreeRoot, programId);
+                if (node) {{
+                    const ancestors = node.ancestors().reverse();  // Root to current
+                    const newPathIds = ancestors.map(n => n.data.id);
+
+                    // Check if clicked node is in current path
+                    const indexInCurrentPath = explorerFullPath.indexOf(programId);
+                    if (indexInCurrentPath === -1) {{
+                        explorerFullPath = newPathIds;
+                    }}
+
+                    // Render path with current/future styling
+                    const pathContainer = document.getElementById('explorer-ancestry-path');
+                    const currentIndex = explorerFullPath.indexOf(programId);
+                    pathContainer.innerHTML = explorerFullPath.map((nodeId, i) => {{
+                        const nodeData = findNodeById(explorerTreeRoot, nodeId);
+                        if (!nodeData) return '';
+                        const order = nodeData.data.order !== undefined ? nodeData.data.order : nodeData.data.iteration;
+                        const label = order >= 0 ? `#${{order}}` : nodeData.data.name;
+                        const isCurrent = i === currentIndex;
+                        const isFuture = i > currentIndex;
+                        const nodeClass = isCurrent ? ' current' : (isFuture ? ' future' : '');
+                        const sepClass = isFuture ? ' future' : '';
+                        const nodeHtml = `<span class="path-node${{nodeClass}}" onclick="explorerNavigateTo('${{nodeId}}')">${{label}}</span>`;
+                        return i === explorerFullPath.length - 1 ? nodeHtml : nodeHtml + `<span class="path-separator${{sepClass}}">→</span>`;
+                    }}).join('');
+
+                    // Render path analysis chart
+                    renderExplorerPathChart(ancestors);
+                }}
+            }}
+
+            // Render diff with diff2html
+            if (program.diff && program.diff.trim()) {{
+                const diffView = document.getElementById('explorer-diff-view');
+                if (typeof Diff2HtmlUI !== 'undefined') {{
+                    try {{
+                        const diff2htmlUi = new Diff2HtmlUI(diffView, program.diff, {{
+                            drawFileList: false,
+                            matching: 'lines',
+                            outputFormat: 'side-by-side',
+                        }});
+                        diff2htmlUi.draw();
+                        if (typeof hljs !== 'undefined') {{
+                            diff2htmlUi.highlightCode();
+                        }}
+                    }} catch (e) {{
+                        diffView.innerHTML = `<pre style="padding: 15px; background: #0d1117; overflow-x: auto; white-space: pre-wrap;">${{escapeHtml(program.diff)}}</pre>`;
+                    }}
+                }} else {{
+                    diffView.innerHTML = `<pre style="padding: 15px; background: #0d1117; overflow-x: auto; white-space: pre-wrap;">${{escapeHtml(program.diff)}}</pre>`;
+                }}
+            }}
+
+            // Render analysis with markdown
+            let analysisHtml = '';
+            if (program.analysis_used && program.analysis_used.trim()) {{
+                if (typeof marked !== 'undefined') {{
+                    analysisHtml = `<div class="analysis-content markdown-body">${{marked.parse(program.analysis_used)}}</div>`;
+                }} else {{
+                    analysisHtml = `<div class="analysis-content" style="white-space: pre-wrap;">${{escapeHtml(program.analysis_used)}}</div>`;
+                }}
+            }} else {{
+                analysisHtml = '<p class="empty-state">No analysis available</p>';
+            }}
+            document.getElementById('explorer-analysis-view').innerHTML = analysisHtml;
+
+            // Apply syntax highlighting to code blocks in analysis
+            document.querySelectorAll('#explorer-analysis-view pre code').forEach(block => {{
+                if (typeof hljs !== 'undefined') {{
+                    hljs.highlightElement(block);
+                }}
+            }});
+
+            // Render LLM feedback
+            let feedbackHtml = '';
+            if (program.llm_feedback) {{
+                feedbackHtml += `<h4 style="color: #58a6ff; margin-bottom: 10px; margin-top: 0;">Summary</h4>`;
+                feedbackHtml += `<p style="margin-bottom: 20px;">${{escapeHtml(program.llm_feedback)}}</p>`;
+            }}
+            if (program.issues && program.issues.length > 0) {{
+                feedbackHtml += `<h4 style="color: #f85149; margin-bottom: 10px;">Issues Found (${{program.issues.length}})</h4>`;
+                feedbackHtml += '<ul style="margin-bottom: 20px; padding-left: 20px;">';
+                program.issues.forEach(issue => {{
+                    feedbackHtml += `<li style="margin-bottom: 8px;">${{escapeHtml(issue)}}</li>`;
+                }});
+                feedbackHtml += '</ul>';
+            }}
+            if (program.suggestions && program.suggestions.length > 0) {{
+                feedbackHtml += `<h4 style="color: #3fb950; margin-bottom: 10px;">Suggestions (${{program.suggestions.length}})</h4>`;
+                feedbackHtml += '<ul style="margin-bottom: 20px; padding-left: 20px;">';
+                program.suggestions.forEach(s => {{
+                    feedbackHtml += `<li style="margin-bottom: 8px;">${{escapeHtml(s)}}</li>`;
+                }});
+                feedbackHtml += '</ul>';
+            }}
+            if (!feedbackHtml) {{
+                feedbackHtml = '<p class="empty-state">No LLM feedback available</p>';
+            }}
+            document.getElementById('explorer-feedback-view').innerHTML = feedbackHtml;
+
+            // Render code files
+            const codeContainer = document.getElementById('explorer-code-container');
+            const files = program.code_files || {{}};
+            const sortedPaths = Object.keys(files).sort();
+
+            if (sortedPaths.length === 0) {{
+                codeContainer.innerHTML = '<p class="empty-state">No code files available</p>';
+            }} else {{
+                sortedPaths.forEach(path => {{
+                    const content = files[path];
+                    const lines = content.split('\\n');
+                    const lineNums = lines.map((_, i) => i + 1).join('<br>');
+                    const fileSection = document.createElement('div');
+                    fileSection.className = 'file-section';
+                    fileSection.innerHTML = `
+                        <div class="file-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                            <span class="collapse-icon">▼</span>
+                            <span class="file-path">${{path}}</span>
+                            <span class="file-stats">${{lines.length}} lines</span>
+                        </div>
+                        <div class="file-content">
+                            <div class="line-numbers">${{lineNums}}</div>
+                            <pre><code class="language-python">${{escapeHtml(content)}}</code></pre>
+                        </div>
+                    `;
+                    codeContainer.appendChild(fileSection);
+                }});
+            }}
+
+            // Store current program for prompt switching
+            window.explorerCurrentProgram = program;
+
+            // Render prompt function for explorer
+            function renderExplorerPrompt(promptType) {{
+                const prog = window.explorerCurrentProgram;
+                if (!prog) return;
+
+                let promptText = '';
+                let emptyMessage = '';
+
+                if (promptType === 'analyzer') {{
+                    promptText = prog.analysis_prompt_used || '';
+                    emptyMessage = 'No analyzer prompt available (initial program or analyzer disabled)';
+                }} else {{
+                    promptText = prog.mutator_prompt_used || '';
+                    emptyMessage = 'No mutator prompt available (initial program)';
+                }}
+
+                let promptHtml = '';
+                if (promptText && promptText.trim()) {{
+                    if (typeof marked !== 'undefined') {{
+                        promptHtml = `<div class="prompt-content markdown-body">${{marked.parse(promptText)}}</div>`;
+                    }} else {{
+                        promptHtml = `<pre style="white-space: pre-wrap; background: #0d1117; padding: 15px; border-radius: 6px;">${{escapeHtml(promptText)}}</pre>`;
+                    }}
+                }} else {{
+                    promptHtml = `<p class="empty-state">${{emptyMessage}}</p>`;
+                }}
+
+                document.getElementById('explorer-prompt-view').innerHTML = promptHtml;
+
+                // Apply syntax highlighting
+                document.querySelectorAll('#explorer-prompt-view pre code').forEach(block => {{
+                    if (typeof hljs !== 'undefined') {{
+                        hljs.highlightElement(block);
+                    }}
+                }});
+            }}
+
+            // Initial prompt render
+            renderExplorerPrompt('analyzer');
+
+            // Setup prompt sub-tab switching
+            panel.querySelectorAll('.prompt-subtab').forEach(btn => {{
+                btn.onclick = function() {{
+                    panel.querySelectorAll('.prompt-subtab').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    renderExplorerPrompt(this.dataset.explorerPrompt);
+                }};
+            }});
+
+            // Setup main tab switching
+            panel.querySelectorAll('.tabs .tab').forEach(tab => {{
+                tab.addEventListener('click', () => {{
+                    const tabId = tab.dataset.explorerTab;
+                    panel.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
+                    panel.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    tab.classList.add('active');
+                    document.getElementById(`explorer-tab-${{tabId}}`).classList.add('active');
+                }});
+            }});
+        }}
+
+        // Update explorer tree highlighting without re-rendering (preserves scroll position)
+        function updateExplorerHighlight(programId) {{
+            const prevSelectedId = explorerSelectedId;
+            explorerSelectedId = programId;
+
+            const container = d3.select('#explorer-tree-container');
+            const currentBestId = findBestProgramId();
+
+            // Helper to check if node evaluation failed
+            function isFailed(d) {{
+                return d.data.has_error || !d.data.metrics;
+            }}
+
+            // Clear all path highlighting
+            container.selectAll('.node').classed('on-path', false);
+            container.selectAll('.link').classed('on-path', false);
+
+            // Reset previous selected node's style
+            if (prevSelectedId) {{
+                container.selectAll('.node').each(function(d) {{
+                    if (d.data.id === prevSelectedId) {{
+                        const circle = d3.select(this).select('circle');
+                        const isBest = d.data.id === currentBestId;
+                        circle
+                            .attr('r', isBest ? 10 : 7)
+                            .attr('stroke', () => {{
+                                if (isBest) return '#ffd700';
+                                if (isFailed(d)) return '#f85149';
+                                const color = safeColor(getScore(d.data));
+                                const darkerColor = d3.color(color);
+                                return darkerColor ? darkerColor.darker() : color;
+                            }})
+                            .attr('stroke-width', isFailed(d) ? 2 : 1.5);
+                    }}
+                }});
+            }}
+
+            // Set new selected node's style
+            container.selectAll('.node').each(function(d) {{
+                if (d.data.id === programId) {{
+                    d3.select(this).select('circle')
+                        .attr('r', 10)
+                        .attr('stroke', '#58a6ff')
+                        .attr('stroke-width', 3);
+                }}
+            }});
+
+            // Highlight path to selected node
+            if (explorerTreeRoot) {{
+                const selectedNode = findNodeById(explorerTreeRoot, programId);
+                if (selectedNode) {{
+                    const ancestors = selectedNode.ancestors();
+                    const ancestorIds = new Set(ancestors.map(n => n.data.id));
+
+                    container.selectAll('.node').each(function(d) {{
+                        if (d && d.data && ancestorIds.has(d.data.id)) {{
+                            d3.select(this).classed('on-path', true);
+                        }}
+                    }});
+
+                    container.selectAll('.link').each(function(d) {{
+                        if (d && d.source && d.target) {{
+                            const sourceOnPath = ancestorIds.has(d.source.data.id);
+                            const targetOnPath = ancestorIds.has(d.target.data.id);
+                            if (sourceOnPath && targetOnPath) {{
+                                d3.select(this).classed('on-path', true);
+                            }}
+                        }}
+                    }});
+                }}
+            }}
+        }}
+
+        // Navigate to a node in the explorer (from ancestry path click)
+        function explorerNavigateTo(programId) {{
+            showExplorerDetail(programId);
+            updateExplorerHighlight(programId);
+        }}
+
+        // Setup resizable panels in explorer
+        function setupExplorerResizer() {{
+            const resizer = document.getElementById('explorer-resizer');
+            const leftPanel = document.querySelector('.explorer-left');
+            const rightPanel = document.querySelector('.explorer-right');
+            const modalBody = document.querySelector('#tree-explorer-modal .modal-body');
+
+            if (!resizer || !leftPanel || !rightPanel || !modalBody) return;
+
+            let isResizing = false;
+
+            resizer.addEventListener('mousedown', (e) => {{
+                isResizing = true;
+                resizer.classList.add('dragging');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+            }});
+
+            document.addEventListener('mousemove', (e) => {{
+                if (!isResizing) return;
+
+                const containerRect = modalBody.getBoundingClientRect();
+                const newLeftWidth = e.clientX - containerRect.left;
+                const containerWidth = containerRect.width;
+
+                // Limit min/max width (300px minimum on each side)
+                const minWidth = 300;
+                const resizerWidth = 6;
+                const maxLeftWidth = containerWidth - minWidth - resizerWidth;
+
+                if (newLeftWidth >= minWidth && newLeftWidth <= maxLeftWidth) {{
+                    leftPanel.style.width = newLeftWidth + 'px';
+                    leftPanel.style.flex = 'none';
+                    rightPanel.style.width = (containerWidth - newLeftWidth - resizerWidth) + 'px';
+                    rightPanel.style.flex = 'none';
+                }}
+            }});
+
+            document.addEventListener('mouseup', () => {{
+                if (isResizing) {{
+                    isResizing = false;
+                    resizer.classList.remove('dragging');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                }}
+            }});
+        }}
+
+        // Render path analysis chart for explorer
+        function renderExplorerPathChart(ancestors) {{
+            const container = document.getElementById('explorer-path-chart-container');
+            container.innerHTML = '';
+
+            if (!ancestors || ancestors.length < 2) {{
+                container.innerHTML = '<p class="empty-state" style="margin: 0; padding: 20px;">Path too short for analysis</p>';
+                return;
+            }}
+
+            // Extract path data from ancestors
+            const pathData = ancestors.map((n, i) => {{
+                const prog = programsData[n.data.id];
+                return {{
+                    step: i,
+                    id: n.data.id,
+                    label: n.data.order >= 0 ? `#${{n.data.order}}` : n.data.name,
+                    metrics: prog ? prog.metrics : {{}},
+                    mutation_summary: prog ? prog.mutation_summary : '',
+                    fitness_delta: prog ? prog.fitness_delta : null
+                }};
+            }});
+
+            // Get metrics to display (only *_score metrics)
+            const scoreMetrics = Object.keys(pathData[0].metrics || {{}})
+                .filter(k => k.endsWith('_score') && !k.startsWith('best_'));
+
+            if (scoreMetrics.length === 0) {{
+                container.innerHTML = '<p class="empty-state" style="margin: 0; padding: 20px;">No metrics available</p>';
+                return;
+            }}
+
+            // Track visible metrics for this chart (default to function_score only)
+            const pathVisibleMetrics = new Set(scoreMetrics.includes('fitness_score') ? ['fitness_score'] : (scoreMetrics.includes('function_score') ? ['function_score'] : scoreMetrics.slice(0, 1)));
+
+            // Chart dimensions
+            const width = container.clientWidth || 400;
+            const height = 160;
+            const margin = {{top: 15, right: 15, bottom: 35, left: 45}};
+
+            const svg = d3.select('#explorer-path-chart-container')
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            // X scale (steps along path)
+            const x = d3.scaleLinear()
+                .domain([0, pathData.length - 1])
+                .range([margin.left, width - margin.right]);
+
+            // Y scale (will be updated dynamically)
+            const y = d3.scaleLinear()
+                .range([height - margin.bottom, margin.top]);
+
+            // Compute Y domain based on visible metrics
+            function computeYDomain() {{
+                const values = pathData.flatMap(d =>
+                    Array.from(pathVisibleMetrics).map(m => d.metrics[m]).filter(v => typeof v === 'number')
+                );
+                if (values.length === 0) return [0, 1];
+                const yMin = Math.min(...values);
+                const yMax = Math.max(...values);
+                const yPadding = (yMax - yMin) * 0.1 || 0.1;
+                return [yMin - yPadding, yMax + yPadding];
+            }}
+
+            // Grid and axis groups
+            const gridGroup = svg.append('g').attr('class', 'grid');
+            const yAxisGroup = svg.append('g')
+                .attr('class', 'y-axis')
+                .attr('transform', `translate(${{margin.left}},0)`)
+                .attr('color', '#8b949e');
+            const linesGroup = svg.append('g').attr('class', 'lines');
+            const pointsGroup = svg.append('g').attr('class', 'points');
+
+            // X axis (static)
+            svg.append('g')
+                .attr('transform', `translate(0,${{height - margin.bottom}})`)
+                .call(d3.axisBottom(x)
+                    .ticks(Math.min(pathData.length, 10))
+                    .tickFormat(i => {{
+                        const d = pathData[Math.round(i)];
+                        return d ? d.label : '';
+                    }}))
+                .attr('color', '#8b949e')
+                .selectAll('text')
+                .attr('font-size', '10px');
+
+            // Hover interaction elements
+            const focus = svg.append('g').style('display', 'none');
+
+            // Vertical indicator line
+            focus.append('line')
+                .attr('class', 'hover-line')
+                .attr('y1', margin.top)
+                .attr('y2', height - margin.bottom)
+                .attr('stroke', '#58a6ff')
+                .attr('stroke-width', 1)
+                .attr('stroke-dasharray', '4,4');
+
+            // Draw function (called on initial render and when toggling metrics)
+            function drawPathLines() {{
+                // Update Y domain
+                y.domain(computeYDomain());
+
+                // Update grid
+                gridGroup.selectAll('*').remove();
+                gridGroup.attr('stroke', '#30363d').attr('stroke-opacity', 0.5)
+                    .selectAll('line')
+                    .data(y.ticks(4))
+                    .join('line')
+                    .attr('x1', margin.left)
+                    .attr('x2', width - margin.right)
+                    .attr('y1', d => y(d))
+                    .attr('y2', d => y(d));
+
+                // Update Y axis
+                yAxisGroup.call(d3.axisLeft(y).ticks(4));
+
+                // Clear and redraw lines
+                linesGroup.selectAll('*').remove();
+                pointsGroup.selectAll('*').remove();
+
+                scoreMetrics.forEach((metric, idx) => {{
+                    if (!pathVisibleMetrics.has(metric)) return;
+
+                    const color = getMetricColor(metric, idx);
+                    const validData = pathData.filter(d => typeof d.metrics[metric] === 'number');
+                    if (validData.length < 2) return;
+
+                    const line = d3.line()
+                        .x(d => x(d.step))
+                        .y(d => y(d.metrics[metric]));
+
+                    // Visible line
+                    linesGroup.append('path')
+                        .datum(validData)
+                        .attr('fill', 'none')
+                        .attr('stroke', color)
+                        .attr('stroke-width', 1.5)
+                        .attr('d', line);
+
+                    // Points (clickable)
+                    pointsGroup.selectAll(`.explorer-path-point-${{idx}}`)
+                        .data(validData)
+                        .join('circle')
+                        .attr('class', `explorer-path-point-${{idx}}`)
+                        .attr('cx', d => x(d.step))
+                        .attr('cy', d => y(d.metrics[metric]))
+                        .attr('r', 4)
+                        .attr('fill', color)
+                        .attr('stroke', '#0d1117')
+                        .attr('stroke-width', 1)
+                        .style('cursor', 'pointer')
+                        .on('click', (event, d) => explorerNavigateTo(d.id));
+                }});
+            }}
+
+            // Transparent overlay to capture mouse events
+            svg.append('rect')
+                .attr('class', 'explorer-path-chart-overlay')
+                .attr('x', margin.left)
+                .attr('y', margin.top)
+                .attr('width', width - margin.left - margin.right)
+                .attr('height', height - margin.top - margin.bottom)
+                .style('fill', 'none')
+                .style('pointer-events', 'all')
+                .style('cursor', 'pointer')
+                .on('mouseover', () => focus.style('display', null))
+                .on('mouseout', () => {{
+                    focus.style('display', 'none');
+                    hideTooltip();
+                }})
+                .on('mousemove', function(event) {{
+                    const mouseX = d3.pointer(event)[0];
+                    const targetStep = Math.round(x.invert(mouseX));
+                    const clampedStep = Math.max(0, Math.min(pathData.length - 1, targetStep));
+                    const dataPoint = pathData[clampedStep];
+
+                    if (!dataPoint) return;
+
+                    // Update vertical line position
+                    focus.select('.hover-line').attr('x1', x(clampedStep)).attr('x2', x(clampedStep));
+
+                    // Build tooltip content showing all visible metrics
+                    const tooltip = document.getElementById('tooltip');
+                    let html = `<h4>${{dataPoint.label}}</h4>`;
+                    html += `<p style="color: #8b949e; font-size: 0.85em;">ID: ${{dataPoint.id ? dataPoint.id.substring(0, 8) : '-'}}</p>`;
+                    html += '<hr style="border-color: #30363d; margin: 8px 0;">';
+
+                    // Show mutation summary if available
+                    if (dataPoint.mutation_summary) {{
+                        const deltaStr = dataPoint.fitness_delta !== null
+                            ? ` (${{dataPoint.fitness_delta >= 0 ? '+' : ''}}${{(dataPoint.fitness_delta * 100).toFixed(1)}}%)`
+                            : '';
+                        html += `<p style="color: #a5d6ff; font-style: italic; margin-bottom: 8px;">"${{dataPoint.mutation_summary}}"${{deltaStr}}</p>`;
+                    }}
+
+                    // Show values for all visible metrics
+                    scoreMetrics.forEach((metric, idx) => {{
+                        if (!pathVisibleMetrics.has(metric)) return;
+                        const color = getMetricColor(metric, idx);
+                        const value = dataPoint.metrics[metric];
+                        if (typeof value === 'number') {{
+                            html += `<p><span style="display:inline-block;width:10px;height:10px;background:${{color}};border-radius:2px;margin-right:6px;"></span><strong>${{metric.replace(/_/g, ' ')}}:</strong> ${{value.toFixed(4)}}</p>`;
+                        }}
+                    }});
+
+                    tooltip.innerHTML = html;
+                    tooltip.style.display = 'block';
+                    tooltip.style.left = (event.pageX + 15) + 'px';
+                    tooltip.style.top = (event.pageY - 10) + 'px';
+                }})
+                .on('click', function(event) {{
+                    const mouseX = d3.pointer(event)[0];
+                    const targetStep = Math.round(x.invert(mouseX));
+                    const clampedStep = Math.max(0, Math.min(pathData.length - 1, targetStep));
+                    const dataPoint = pathData[clampedStep];
+
+                    if (dataPoint && dataPoint.id) {{
+                        explorerNavigateTo(dataPoint.id);
+                    }}
+                }});
+
+            // Initial draw
+            drawPathLines();
+
+            // Interactive legend
+            const legendContainer = d3.select('#explorer-path-chart-container')
+                .append('div')
+                .style('display', 'flex')
+                .style('flex-wrap', 'wrap')
+                .style('justify-content', 'center')
+                .style('gap', '8px')
+                .style('margin-top', '8px');
+
+            scoreMetrics.forEach((metric, idx) => {{
+                const color = getMetricColor(metric, idx);
+
+                const btn = legendContainer.append('div')
+                    .style('display', 'flex')
+                    .style('align-items', 'center')
+                    .style('gap', '5px')
+                    .style('padding', '4px 10px')
+                    .style('background', pathVisibleMetrics.has(metric) ? '#21262d' : '#0d1117')
+                    .style('border', '1px solid ' + (pathVisibleMetrics.has(metric) ? color : '#30363d'))
+                    .style('border-radius', '4px')
+                    .style('cursor', 'pointer')
+                    .style('font-size', '11px')
+                    .style('color', pathVisibleMetrics.has(metric) ? '#c9d1d9' : '#8b949e')
+                    .on('click', function() {{
+                        if (pathVisibleMetrics.has(metric)) {{
+                            pathVisibleMetrics.delete(metric);
+                        }} else {{
+                            pathVisibleMetrics.add(metric);
+                        }}
+                        d3.select(this)
+                            .style('background', pathVisibleMetrics.has(metric) ? '#21262d' : '#0d1117')
+                            .style('border-color', pathVisibleMetrics.has(metric) ? color : '#30363d')
+                            .style('color', pathVisibleMetrics.has(metric) ? '#c9d1d9' : '#8b949e');
+                        drawPathLines();
+                    }});
+
+                btn.append('div')
+                    .style('width', '12px')
+                    .style('height', '3px')
+                    .style('background', color);
+
+                btn.append('span').text(metric.replace(/_/g, ' '));
+            }});
         }}
 
         // Tab switching
@@ -2952,6 +4287,27 @@ class EvolutionVisualizer:
     </div>
 
     <script>renderConfig();</script>
+
+    <!-- Tree Explorer Modal -->
+    <div id="tree-explorer-modal" class="modal">
+        <div class="modal-content tree-explorer">
+            <div class="modal-header">
+                <h2>Evolution Tree Explorer</h2>
+                <button class="modal-close-btn" onclick="closeTreeExplorer()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="explorer-left">
+                    <div id="explorer-tree-container"></div>
+                </div>
+                <div class="explorer-resizer" id="explorer-resizer"></div>
+                <div class="explorer-right">
+                    <div id="explorer-detail-panel">
+                        <p class="explorer-empty-state">Click a node to view details</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <footer>
         Generated by <a href="https://pantheonos.stanford.edu/" target="_blank">Pantheon</a>

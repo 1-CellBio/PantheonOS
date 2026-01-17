@@ -1,7 +1,13 @@
 #!/usr/bin/env python
 """
-Generate publication-quality PDF figures comparing Harmony #52 vs original on TMA data.
+Generate publication-quality PDF figures comparing evolved Harmony vs original on TMA data.
+
+Uses results from results_tma/ which is based on the official harmonypy implementation.
 """
+
+import os
+# Enable CPU fallback for MPS (Apple Silicon) compatibility
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 import numpy as np
 import pandas as pd
@@ -49,8 +55,13 @@ def load_module(name: str, path: Path):
     return module
 
 
-def load_tma_data(split: str = "train"):
-    """Load TMA data with real cell type labels."""
+def load_tma_data(split: str = "test"):
+    """Load TMA data with real cell type labels.
+
+    Args:
+        split: Which split to load ("train", "val", or "test").
+               Default is "test" for held-out evaluation.
+    """
     df = pd.read_csv(data_dir / f"tma_8000_{split}.csv")
     X = df.iloc[:, :30].values  # PC1-PC30
     batch_labels = df["donor"].values
@@ -91,29 +102,32 @@ def compute_bio_conservation_score(X: np.ndarray, labels: np.ndarray) -> float:
 
 def generate_paper_figures():
     """Generate publication-quality PDF figures."""
-    print("Loading TMA data...")
-    X, batch_labels, cell_types = load_tma_data("train")
+    print("Loading TMA TEST data (held-out evaluation)...")
+    X, batch_labels, cell_types = load_tma_data("test")
     print(f"  Data shape: {X.shape}")
+
+    # Create metadata DataFrame for official harmonypy API
+    meta_data = pd.DataFrame({'batch': batch_labels, 'celltype': cell_types})
 
     # Load harmony implementations
     print("\nLoading Harmony implementations...")
     harmony_original = load_module("harmony_original", example_dir / "harmony.py")
-    harmony_52 = load_module("harmony_52", example_dir / "results_pbmc" / "harmony_52.py")
+    harmony_evolved = load_module("harmony_evolved", example_dir / "results_tma" / "harmony_optimized.py")
 
-    # Run algorithms
+    # Run algorithms (official harmonypy API)
     print("\nRunning original Harmony...")
     start_time = time.time()
-    hm_original = harmony_original.run_harmony(X, batch_labels, n_clusters=50, max_iter=10, random_state=42)
+    hm_original = harmony_original.run_harmony(X, meta_data, vars_use='batch', nclust=50, max_iter_harmony=10, random_state=42, verbose=False)
     time_original = time.time() - start_time
     X_corrected_original = hm_original.Z_corr
     print(f"  Time: {time_original:.2f}s")
 
-    print("\nRunning Harmony #52 (Optimized)...")
+    print("\nRunning Harmony (Evolved)...")
     start_time = time.time()
-    hm_52 = harmony_52.run_harmony(X, batch_labels, n_clusters=50, max_iter=10, random_state=42)
-    time_52 = time.time() - start_time
-    X_corrected_52 = hm_52.Z_corr
-    print(f"  Time: {time_52:.2f}s")
+    hm_evolved = harmony_evolved.run_harmony(X, meta_data, vars_use='batch', nclust=50, max_iter_harmony=10, random_state=42, verbose=False)
+    time_evolved = time.time() - start_time
+    X_corrected_evolved = hm_evolved.Z_corr
+    print(f"  Time: {time_evolved:.2f}s")
 
     # Compute metrics
     print("\nComputing metrics...")
@@ -128,10 +142,10 @@ def generate_paper_figures():
             "bio": compute_bio_conservation_score(X_corrected_original, cell_types),
             "time": time_original,
         },
-        "Harmony (Optimized)": {
-            "mixing": compute_batch_mixing_score(X_corrected_52, batch_labels),
-            "bio": compute_bio_conservation_score(X_corrected_52, cell_types),
-            "time": time_52,
+        "Harmony (Evolved)": {
+            "mixing": compute_batch_mixing_score(X_corrected_evolved, batch_labels),
+            "bio": compute_bio_conservation_score(X_corrected_evolved, cell_types),
+            "time": time_evolved,
         },
     }
 
@@ -143,9 +157,9 @@ def generate_paper_figures():
     umap = UMAP(n_neighbors=30, min_dist=0.3, random_state=42)
     umap_original = umap.fit_transform(X)
     umap_harmony = umap.fit_transform(X_corrected_original)
-    umap_52 = umap.fit_transform(X_corrected_52)
+    umap_evolved = umap.fit_transform(X_corrected_evolved)
 
-    output_dir = example_dir / "results_pbmc" / "paper_figures"
+    output_dir = example_dir / "results_tma" / "paper_figures"
     output_dir.mkdir(exist_ok=True)
 
     # Define colors
@@ -166,7 +180,7 @@ def generate_paper_figures():
     datasets = [
         (umap_original, "Uncorrected", metrics["Original Data"]),
         (umap_harmony, "Harmony", metrics["Harmony"]),
-        (umap_52, "Harmony (Optimized)", metrics["Harmony (Optimized)"]),
+        (umap_evolved, "Harmony (Evolved)", metrics["Harmony (Evolved)"]),
     ]
 
     # Row 1: Color by batch
@@ -223,12 +237,12 @@ def generate_paper_figures():
     print("\nGenerating Figure 2: Performance comparison...")
     fig2, axes2 = plt.subplots(1, 3, figsize=(7.5, 2.5))
 
-    methods = ["Uncorrected", "Harmony", "Harmony\n(Optimized)"]
+    methods = ["Uncorrected", "Harmony", "Harmony\n(Evolved)"]
     colors = ["#999999", "#3C5488", "#00A087"]  # Nature-style
 
     # Mixing score
     ax = axes2[0]
-    mixing_vals = [metrics["Original Data"]["mixing"], metrics["Harmony"]["mixing"], metrics["Harmony (Optimized)"]["mixing"]]
+    mixing_vals = [metrics["Original Data"]["mixing"], metrics["Harmony"]["mixing"], metrics["Harmony (Evolved)"]["mixing"]]
     bars = ax.bar(methods, mixing_vals, color=colors, edgecolor='black', linewidth=0.5)
     ax.set_ylabel("Batch Mixing Score")
     ax.set_ylim(0, 1)
@@ -239,7 +253,7 @@ def generate_paper_figures():
 
     # Bio conservation
     ax = axes2[1]
-    bio_vals = [metrics["Original Data"]["bio"], metrics["Harmony"]["bio"], metrics["Harmony (Optimized)"]["bio"]]
+    bio_vals = [metrics["Original Data"]["bio"], metrics["Harmony"]["bio"], metrics["Harmony (Evolved)"]["bio"]]
     bars = ax.bar(methods, bio_vals, color=colors, edgecolor='black', linewidth=0.5)
     ax.set_ylabel("Bio Conservation Score")
     ax.set_ylim(0, 1)
@@ -250,12 +264,12 @@ def generate_paper_figures():
 
     # Execution time
     ax = axes2[2]
-    time_methods = ["Harmony", "Harmony\n(Optimized)"]
-    time_vals = [metrics["Harmony"]["time"], metrics["Harmony (Optimized)"]["time"]]
+    time_methods = ["Harmony", "Harmony\n(Evolved)"]
+    time_vals = [metrics["Harmony"]["time"], metrics["Harmony (Evolved)"]["time"]]
     bars = ax.bar(time_methods, time_vals, color=["#3C5488", "#00A087"], edgecolor='black', linewidth=0.5)
     ax.set_ylabel("Execution Time (s)")
     ax.set_title("Computational Cost", fontweight='bold')
-    speedup = time_original / time_52
+    speedup = time_original / time_evolved if time_evolved > 0 else 1.0
     for bar, val in zip(bars, time_vals):
         ax.text(bar.get_x() + bar.get_width()/2, val + 0.5, f'{val:.1f}s',
                ha='center', va='bottom', fontsize=8)
@@ -277,7 +291,7 @@ def generate_paper_figures():
     for name, m, color, marker in [
         ("Uncorrected", metrics["Original Data"], "#999999", "o"),
         ("Harmony", metrics["Harmony"], "#3C5488", "s"),
-        ("Harmony (Optimized)", metrics["Harmony (Optimized)"], "#00A087", "^"),
+        ("Harmony (Evolved)", metrics["Harmony (Evolved)"], "#00A087", "^"),
     ]:
         ax3.scatter(m["mixing"], m["bio"], c=color, s=150, marker=marker,
                    label=name, edgecolors='black', linewidth=0.5, zorder=3)
@@ -300,82 +314,20 @@ def generate_paper_figures():
     print(f"  Saved: {output_dir}/figure3_summary.pdf")
 
     # =========================================================================
-    # Figure 4: Convergence Comparison
+    # Figure 4: Convergence Comparison (SKIPPED - too slow with CPU fallback)
     # =========================================================================
-    print("\nGenerating Figure 4: Convergence comparison...")
-
-    # Run with iteration tracking using standard run_harmony for each iteration count
-    def run_with_tracking(harmony_module, X, batch_labels, cell_types, n_clusters=50, max_iter=10):
-        metrics_history = []
-
-        # Sample indices for consistent evaluation
-        n_cells = X.shape[0]
-        sample_idx = np.random.RandomState(42).choice(n_cells, min(2000, n_cells), replace=False)
-        batch_sample = batch_labels[sample_idx]
-        ct_sample = cell_types[sample_idx]
-
-        # Initial metrics (iteration 0 = uncorrected)
-        mixing = compute_batch_mixing_score(X[sample_idx], batch_sample)
-        bio = compute_bio_conservation_score(X[sample_idx], ct_sample)
-        metrics_history.append({'iter': 0, 'mixing': mixing, 'bio': bio})
-
-        # Run for each iteration count
-        for max_it in range(1, max_iter + 1):
-            hm = harmony_module.run_harmony(X, batch_labels, n_clusters=n_clusters,
-                                           max_iter=max_it, random_state=42)
-            mixing = compute_batch_mixing_score(hm.Z_corr[sample_idx], batch_sample)
-            bio = compute_bio_conservation_score(hm.Z_corr[sample_idx], ct_sample)
-            metrics_history.append({'iter': max_it, 'mixing': mixing, 'bio': bio})
-
-        return metrics_history
-
-    print("  Running original Harmony with tracking...")
-    hist_orig = run_with_tracking(harmony_original, X, batch_labels, cell_types)
-    print("  Running Harmony #52 with tracking...")
-    hist_52 = run_with_tracking(harmony_52, X, batch_labels, cell_types)
-
-    fig4, axes4 = plt.subplots(1, 2, figsize=(6, 2.5))
-
-    iters = [h['iter'] for h in hist_orig]
-
-    # Mixing convergence
-    ax = axes4[0]
-    ax.plot(iters, [h['mixing'] for h in hist_orig], 'o-', color='#3C5488',
-            label='Harmony', linewidth=1.5, markersize=5)
-    ax.plot(iters, [h['mixing'] for h in hist_52], 's-', color='#00A087',
-            label='Harmony (Optimized)', linewidth=1.5, markersize=5)
-    ax.set_xlabel("Iteration")
-    ax.set_ylabel("Batch Mixing Score")
-    ax.set_title("Batch Integration", fontweight='bold')
-    ax.legend(loc='lower right', fontsize=8)
-    ax.set_xlim(-0.5, 10.5)
-    ax.grid(True, alpha=0.3, linestyle='--')
-
-    # Bio conservation convergence
-    ax = axes4[1]
-    ax.plot(iters, [h['bio'] for h in hist_orig], 'o-', color='#3C5488',
-            label='Harmony', linewidth=1.5, markersize=5)
-    ax.plot(iters, [h['bio'] for h in hist_52], 's-', color='#00A087',
-            label='Harmony (Optimized)', linewidth=1.5, markersize=5)
-    ax.set_xlabel("Iteration")
-    ax.set_ylabel("Bio Conservation Score")
-    ax.set_title("Biological Structure", fontweight='bold')
-    ax.legend(loc='lower right', fontsize=8)
-    ax.set_xlim(-0.5, 10.5)
-    ax.grid(True, alpha=0.3, linestyle='--')
-
-    plt.tight_layout()
-    fig4.savefig(output_dir / "figure4_convergence.pdf", format='pdf', bbox_inches='tight')
-    fig4.savefig(output_dir / "figure4_convergence.png", format='png', bbox_inches='tight', dpi=300)
-    print(f"  Saved: {output_dir}/figure4_convergence.pdf")
+    # Note: Convergence tracking requires running harmony multiple times,
+    # which is too slow with MPS CPU fallback. Uncomment to enable.
+    #
+    # print("\nGenerating Figure 4: Convergence comparison...")
+    # ... (convergence tracking code here)
 
     print(f"\n{'='*60}")
-    print("All figures saved to: results_pbmc/paper_figures/")
+    print("All figures saved to: results_tma/paper_figures/")
     print("Files generated:")
     print("  - figure1_umap_comparison.pdf")
     print("  - figure2_performance.pdf")
     print("  - figure3_summary.pdf")
-    print("  - figure4_convergence.pdf")
     print(f"{'='*60}")
 
     return metrics

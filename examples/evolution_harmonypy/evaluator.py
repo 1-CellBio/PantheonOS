@@ -273,7 +273,7 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
         workspace_path: Path to the workspace containing harmony.py
 
     Returns:
-        Dictionary with metrics including 'combined_score'
+        Dictionary with metrics and fitness_weights
     """
     workspace = Path(workspace_path)
 
@@ -281,7 +281,7 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
     harmony_path = workspace / "harmony.py"
     if not harmony_path.exists():
         return {
-            "combined_score": 0.0,
+            "function_score": 0.0,
             "error": "harmony.py not found",
         }
 
@@ -292,21 +292,22 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
         spec.loader.exec_module(harmony_module)
     except Exception as e:
         return {
-            "combined_score": 0.0,
+            "function_score": 0.0,
             "error": f"Failed to load harmony.py: {e}",
         }
 
     # Load TMA training data with real cell type labels
-    # HARMONY_DATA_DIR must be set by the caller (run_evolution.py) since
-    # this evaluator runs in a temp workspace where __file__ is not reliable
+    # Use absolute path since evaluator may run in temp workspace via subprocess
+    # where environment variables are not inherited
     import os
-    data_dir = Path(os.environ.get("HARMONY_DATA_DIR", "data"))
+    _default_data_dir = r"C:\Users\wzxu\Desktop\Pantheon\pantheon-agents-2\examples\evolution_harmonypy\data"
+    data_dir = Path(os.environ.get("HARMONY_DATA_DIR", _default_data_dir))
 
     try:
         X_train, batch_train, celltype_train = load_tma_data(data_dir, split="train")
     except Exception as e:
         return {
-            "combined_score": 0.0,
+            "function_score": 0.0,
             "error": f"Failed to load TMA data: {e}",
         }
 
@@ -314,13 +315,18 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
 
     # Run harmony on training data and measure time
     try:
+        # Convert batch labels to DataFrame for official harmonypy API
+        meta_data = pd.DataFrame({"batch": batch_train})
+
         start_time = time.time()
         hm = harmony_module.run_harmony(
             X_train,
-            batch_train,
-            n_clusters=50,
-            max_iter=10,
+            meta_data,
+            vars_use="batch",
+            nclust=50,
+            max_iter_harmony=10,
             random_state=42,
+            verbose=False,
         )
         execution_time = time.time() - start_time
 
@@ -329,7 +335,7 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
 
     except Exception as e:
         return {
-            "combined_score": 0.0,
+            "function_score": 0.0,
             "error": f"Harmony execution failed: {e}",
         }
 
@@ -338,7 +344,7 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
     correction_magnitude = np.abs(X_train - X_corrected).mean()
     if correction_magnitude < 0.01:
         return {
-            "combined_score": 0.0,
+            "function_score": 0.0,
             "correction_magnitude": correction_magnitude,
             "error": "No meaningful correction applied (data unchanged)",
         }
@@ -357,30 +363,25 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
         # Convergence score (weight: 0.1)
         conv_score = compute_convergence_score(objectives)
 
-        # Combined score
-        combined_score = (
-            0.45 * mixing_score +
-            0.45 * bio_score +
-            0.05 * speed_score +
-            0.05 * conv_score
-        )
+        # Fitness weights for normalized scoring
+        fitness_weights = {
+            "mixing_score": 0.45,
+            "bio_conservation_score": 0.45,
+            "speed_score": 0.05,
+            "convergence_score": 0.05,
+        }
 
         return {
-            "combined_score": combined_score,
             "mixing_score": mixing_score,
             "bio_conservation_score": bio_score,
             "speed_score": speed_score,
             "convergence_score": conv_score,
-            "correction_magnitude": correction_magnitude,
-            "execution_time": execution_time,
-            "iterations": len(objectives),
-            "n_cells": n_cells,
-            "dataset": "tma_train",
+            "fitness_weights": fitness_weights,
         }
 
     except Exception as e:
         return {
-            "combined_score": 0.1,  # Partial credit for running
+            "function_score": 0.1,  # Partial credit for running
             "error": f"Metric computation failed: {e}",
         }
 
@@ -402,7 +403,7 @@ def _evaluate_on_split(workspace_path: str, split: str) -> Dict[str, Any]:
     harmony_path = workspace / "harmony.py"
     if not harmony_path.exists():
         return {
-            "combined_score": 0.0,
+            "function_score": 0.0,
             "error": "harmony.py not found",
         }
 
@@ -413,19 +414,21 @@ def _evaluate_on_split(workspace_path: str, split: str) -> Dict[str, Any]:
         spec.loader.exec_module(harmony_module)
     except Exception as e:
         return {
-            "combined_score": 0.0,
+            "function_score": 0.0,
             "error": f"Failed to load harmony.py: {e}",
         }
 
     # Load TMA data
+    # Use absolute path since evaluator may run in temp workspace via subprocess
     import os
-    data_dir = Path(os.environ.get("HARMONY_DATA_DIR", "data"))
+    _default_data_dir = r"C:\Users\wzxu\Desktop\Pantheon\pantheon-agents-2\examples\evolution_harmonypy\data"
+    data_dir = Path(os.environ.get("HARMONY_DATA_DIR", _default_data_dir))
 
     try:
         X, batch_labels, celltype_labels = load_tma_data(data_dir, split=split)
     except Exception as e:
         return {
-            "combined_score": 0.0,
+            "function_score": 0.0,
             "error": f"Failed to load TMA {split} data: {e}",
         }
 
@@ -433,13 +436,18 @@ def _evaluate_on_split(workspace_path: str, split: str) -> Dict[str, Any]:
 
     # Run harmony
     try:
+        # Convert batch labels to DataFrame for official harmonypy API
+        meta_data = pd.DataFrame({"batch": batch_labels})
+
         start_time = time.time()
         hm = harmony_module.run_harmony(
             X,
-            batch_labels,
-            n_clusters=50,
-            max_iter=10,
+            meta_data,
+            vars_use="batch",
+            nclust=50,
+            max_iter_harmony=10,
             random_state=42,
+            verbose=False,
         )
         execution_time = time.time() - start_time
 
@@ -448,7 +456,7 @@ def _evaluate_on_split(workspace_path: str, split: str) -> Dict[str, Any]:
 
     except Exception as e:
         return {
-            "combined_score": 0.0,
+            "function_score": 0.0,
             "error": f"Harmony execution failed: {e}",
         }
 
@@ -459,28 +467,25 @@ def _evaluate_on_split(workspace_path: str, split: str) -> Dict[str, Any]:
         speed_score = 1.0 / (1 + execution_time)
         conv_score = compute_convergence_score(objectives)
 
-        combined_score = (
-            0.45 * mixing_score +
-            0.45 * bio_score +
-            0.05 * speed_score +
-            0.05 * conv_score
-        )
+        # Fitness weights for normalized scoring
+        fitness_weights = {
+            "mixing_score": 0.45,
+            "bio_conservation_score": 0.45,
+            "speed_score": 0.05,
+            "convergence_score": 0.05,
+        }
 
         return {
-            "combined_score": combined_score,
             "mixing_score": mixing_score,
             "bio_conservation_score": bio_score,
             "speed_score": speed_score,
             "convergence_score": conv_score,
-            "execution_time": execution_time,
-            "iterations": len(objectives),
-            "n_cells": n_cells,
-            "dataset": f"tma_{split}",
+            "fitness_weights": fitness_weights,
         }
 
     except Exception as e:
         return {
-            "combined_score": 0.1,
+            "function_score": 0.1,
             "error": f"Metric computation failed: {e}",
         }
 
@@ -517,7 +522,8 @@ def evaluate_on_test(workspace_path: str) -> Dict[str, Any]:
     return _evaluate_on_split(workspace_path, "test")
 
 
-if __name__ == "__main__":
+# Guard against execution when code is injected into subprocess (where __file__ is not defined)
+if __name__ == "__main__" and "__file__" in dir():
     # Test the evaluator locally
     import os
 
