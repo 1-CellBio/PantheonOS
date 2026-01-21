@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -510,7 +511,11 @@ class SCFMToolSet(ToolSet):
         context_variables: Optional[dict] = None,
     ) -> dict[str, Any]:
         """
-        LLM-based router for single-cell foundation model tasks.
+        DEPRECATED: LLM-based router for single-cell foundation model tasks.
+
+        Prefer the template-based router sub-agent `fm_router` inside `single_cell_team`
+        (call via `call_agent("fm_router", ...)`) for better integration with the
+        Pantheon Team + template system.
 
         Takes a natural language query and returns:
         - Inferred scFM task (embed/integrate/annotate/spatial/perturb/drug_response)
@@ -542,6 +547,12 @@ class SCFMToolSet(ToolSet):
             - questions: Clarifying questions if parameters are ambiguous
             - warnings: Compatibility or other warnings
         """
+        warnings.warn(
+            "scfm_router is deprecated. Prefer using the template-based "
+            "`single_cell_team` router sub-agent via call_agent('fm_router', ...).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         context = context_variables or {}
 
         # Profile data if adata_path provided
@@ -571,6 +582,11 @@ class SCFMToolSet(ToolSet):
         # Include data profile error as warning if present
         if data_profile and "error" in data_profile:
             result.setdefault("warnings", []).append(f"Data profiling failed: {data_profile['error']}")
+
+        # Always include deprecation notice in-band for tool consumers
+        result.setdefault("warnings", []).append(
+            "DEPRECATED: scfm_router tool. Prefer `single_cell_team` + `fm_router` sub-agent (call_agent('fm_router', ...))."
+        )
 
         return result
 
