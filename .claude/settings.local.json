@@ -63,7 +63,13 @@
       "Bash(ls:*)",
       "Bash(timeout 300 python:*)",
       "Bash(conda install:*)",
-      "Bash(PYTORCH_ENABLE_MPS_FALLBACK=1 python:*)"
+      "Bash(PYTORCH_ENABLE_MPS_FALLBACK=1 python:*)",
+      "WebFetch(domain:www.nature.com)",
+      "WebFetch(domain:pubmed.ncbi.nlm.nih.gov)",
+      "WebFetch(domain:theislab.github.io)",
+      "WebFetch(domain:figshare.com)",
+      "Bash(curl:*)",
+      "WebFetch(domain:scib.readthedocs.io)"
     ],
     "deny": [],
     "ask": []

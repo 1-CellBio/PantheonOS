@@ -97,6 +97,15 @@ def load_pbmc_data(split: str = "val"):
     return X, batch_labels, cell_types
 
 
+def load_pancreas_data():
+    """Load pancreas dataset (scIB benchmark, 9 batches, 14 cell types)."""
+    df = pd.read_csv(data_dir / "pancreas.csv")
+    X = df.iloc[:, :50].values  # PC1-PC50
+    batch_labels = df["batch"].values
+    cell_types = df["celltype"].values
+    return X, batch_labels, cell_types
+
+
 def compute_batch_mixing_score(X: np.ndarray, batch_labels: np.ndarray, k: int = 50) -> float:
     """Compute batch mixing score using k-nearest neighbors."""
     n_cells = X.shape[0]
@@ -187,6 +196,10 @@ def generate_bbknn_figures(dataset: str = "tma"):
         print("Loading PBMC VALIDATION data...")
         X, batch_labels, cell_types = load_pbmc_data("val")
         n_pcs = 30
+    elif dataset == "pancreas":
+        print("Loading Pancreas data (scIB benchmark)...")
+        X, batch_labels, cell_types = load_pancreas_data()
+        n_pcs = 50
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
     print(f"  Data shape: {X.shape}")
@@ -279,10 +292,10 @@ def generate_bbknn_figures(dataset: str = "tma"):
     celltype_colors = {ct: mpl.colors.rgb2hex(cmap(i)) for i, ct in enumerate(unique_celltypes)}
 
     # =========================================================================
-    # Figure 1: UMAP Comparison (2x4 layout)
+    # Figure 1: UMAP Comparison (2x4 layout with external legend)
     # =========================================================================
     print("\nGenerating Figure 1: UMAP comparison...")
-    fig1, axes = plt.subplots(2, 4, figsize=(10, 5))
+    fig1, axes = plt.subplots(2, 4, figsize=(12, 5))
 
     datasets = [
         (umap_original, "Uncorrected", metrics["Original Data"]),
@@ -292,12 +305,15 @@ def generate_bbknn_figures(dataset: str = "tma"):
     ]
 
     # Row 1: Color by batch
+    batch_handles = []
     for idx, (emb, title, m) in enumerate(datasets):
         ax = axes[0, idx]
         for batch in unique_batches:
             mask = batch_labels == batch
-            ax.scatter(emb[mask, 0], emb[mask, 1], c=batch_colors[batch],
-                      label=batch if n_batches <= 10 else None, s=2, alpha=0.5, rasterized=True)
+            sc = ax.scatter(emb[mask, 0], emb[mask, 1], c=batch_colors[batch],
+                      label=batch, s=2, alpha=0.5, rasterized=True)
+            if idx == 0:
+                batch_handles.append(sc)
         ax.set_title(f"{title}", fontweight='bold')
         ax.set_xlabel("UMAP1")
         if idx == 0:
@@ -307,20 +323,16 @@ def generate_bbknn_figures(dataset: str = "tma"):
         ax.set_xticks([])
         ax.set_yticks([])
 
-    # Add legend to first row (only if few batches)
-    if n_batches <= 10:
-        axes[0, 3].legend(title="Batch", loc='upper right', markerscale=3, framealpha=0.9)
-    else:
-        axes[0, 3].text(0.98, 0.98, f"{n_batches} batches", transform=axes[0, 3].transAxes,
-                       va='top', ha='right', fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-
     # Row 2: Color by cell type
+    celltype_handles = []
     for idx, (emb, title, m) in enumerate(datasets):
         ax = axes[1, idx]
         for ct in unique_celltypes:
             mask = cell_types == ct
-            ax.scatter(emb[mask, 0], emb[mask, 1], c=celltype_colors[ct],
-                      label=ct if n_types <= 20 else None, s=2, alpha=0.5, rasterized=True)
+            sc = ax.scatter(emb[mask, 0], emb[mask, 1], c=celltype_colors[ct],
+                      label=ct, s=2, alpha=0.5, rasterized=True)
+            if idx == 0:
+                celltype_handles.append(sc)
         ax.set_xlabel("UMAP1")
         if idx == 0:
             ax.set_ylabel("UMAP2")
@@ -329,20 +341,24 @@ def generate_bbknn_figures(dataset: str = "tma"):
         ax.set_xticks([])
         ax.set_yticks([])
 
-    # Add cell type legend (only if few cell types)
-    if n_types <= 20:
-        handles, labels = axes[1, 3].get_legend_handles_labels()
-        axes[1, 3].legend(handles, labels, title="Cell Type", loc='upper right',
-                          markerscale=3, framealpha=0.9, fontsize=6, ncol=2)
-    else:
-        axes[1, 3].text(0.98, 0.98, f"{n_types} cell types", transform=axes[1, 3].transAxes,
-                       va='top', ha='right', fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-
     # Add row labels
     fig1.text(0.01, 0.75, 'Batch', va='center', ha='left', rotation=90, fontsize=10, fontweight='bold')
     fig1.text(0.01, 0.28, 'Cell Type', va='center', ha='left', rotation=90, fontsize=10, fontweight='bold')
 
-    plt.tight_layout(rect=[0.02, 0, 1, 1])
+    # Add legends outside the plot area on the right
+    plt.tight_layout(rect=[0.02, 0, 0.85, 1])
+
+    # Batch legend (top right, outside plots)
+    batch_legend = fig1.legend(batch_handles, list(unique_batches), title="Batch",
+                               loc='upper right', bbox_to_anchor=(0.99, 0.95),
+                               markerscale=3, framealpha=0.9, fontsize=7)
+
+    # Cell type legend (bottom right, outside plots)
+    n_cols = 1 if n_types <= 10 else 2
+    celltype_legend = fig1.legend(celltype_handles, list(unique_celltypes), title="Cell Type",
+                                  loc='lower right', bbox_to_anchor=(0.99, 0.05),
+                                  markerscale=3, framealpha=0.9, fontsize=6, ncol=n_cols)
+
     fig1.savefig(output_dir / "figure1_umap_comparison.pdf", format='pdf', bbox_inches='tight')
     fig1.savefig(output_dir / "figure1_umap_comparison.png", format='png', bbox_inches='tight', dpi=300)
     print(f"  Saved: {output_dir}/figure1_umap_comparison.pdf")
@@ -537,6 +553,9 @@ def generate_scanorama_figures(dataset: str = "tma"):
     elif dataset == "pbmc":
         print("Loading PBMC VALIDATION data...")
         X, batch_labels, cell_types = load_pbmc_data("val")
+    elif dataset == "pancreas":
+        print("Loading Pancreas data (scIB benchmark)...")
+        X, batch_labels, cell_types = load_pancreas_data()
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
     print(f"  Data shape: {X.shape}")
@@ -616,10 +635,10 @@ def generate_scanorama_figures(dataset: str = "tma"):
     celltype_colors = {ct: mpl.colors.rgb2hex(cmap(i)) for i, ct in enumerate(unique_celltypes)}
 
     # =========================================================================
-    # Figure 1: UMAP Comparison (2x3 layout)
+    # Figure 1: UMAP Comparison (2x3 layout with external legend)
     # =========================================================================
     print("\nGenerating Figure 1: UMAP comparison...")
-    fig1, axes = plt.subplots(2, 3, figsize=(8, 5))
+    fig1, axes = plt.subplots(2, 3, figsize=(10, 5))
 
     datasets_plot = [
         (umap_original, "Uncorrected", metrics["Original Data"]),
@@ -628,12 +647,15 @@ def generate_scanorama_figures(dataset: str = "tma"):
     ]
 
     # Row 1: Color by batch
+    batch_handles = []
     for idx, (emb, title, m) in enumerate(datasets_plot):
         ax = axes[0, idx]
         for batch in unique_batches:
             mask = batch_labels == batch
-            ax.scatter(emb[mask, 0], emb[mask, 1], c=batch_colors[batch],
-                      label=batch if n_batches <= 10 else None, s=2, alpha=0.5, rasterized=True)
+            sc = ax.scatter(emb[mask, 0], emb[mask, 1], c=batch_colors[batch],
+                      label=batch, s=2, alpha=0.5, rasterized=True)
+            if idx == 0:
+                batch_handles.append(sc)
         ax.set_title(f"{title}", fontweight='bold')
         ax.set_xlabel("UMAP1")
         if idx == 0:
@@ -643,16 +665,16 @@ def generate_scanorama_figures(dataset: str = "tma"):
         ax.set_xticks([])
         ax.set_yticks([])
 
-    if n_batches <= 10:
-        axes[0, 2].legend(title="Batch", loc='upper right', markerscale=3, framealpha=0.9)
-
     # Row 2: Color by cell type
+    celltype_handles = []
     for idx, (emb, title, m) in enumerate(datasets_plot):
         ax = axes[1, idx]
         for ct in unique_celltypes:
             mask = cell_types == ct
-            ax.scatter(emb[mask, 0], emb[mask, 1], c=celltype_colors[ct],
-                      label=ct if n_types <= 20 else None, s=2, alpha=0.5, rasterized=True)
+            sc = ax.scatter(emb[mask, 0], emb[mask, 1], c=celltype_colors[ct],
+                      label=ct, s=2, alpha=0.5, rasterized=True)
+            if idx == 0:
+                celltype_handles.append(sc)
         ax.set_xlabel("UMAP1")
         if idx == 0:
             ax.set_ylabel("UMAP2")
@@ -661,15 +683,24 @@ def generate_scanorama_figures(dataset: str = "tma"):
         ax.set_xticks([])
         ax.set_yticks([])
 
-    if n_types <= 20:
-        handles, labels = axes[1, 2].get_legend_handles_labels()
-        axes[1, 2].legend(handles, labels, title="Cell Type", loc='upper right',
-                          markerscale=3, framealpha=0.9, fontsize=6, ncol=2)
-
+    # Add row labels
     fig1.text(0.01, 0.75, 'Batch', va='center', ha='left', rotation=90, fontsize=10, fontweight='bold')
     fig1.text(0.01, 0.28, 'Cell Type', va='center', ha='left', rotation=90, fontsize=10, fontweight='bold')
 
-    plt.tight_layout(rect=[0.02, 0, 1, 1])
+    # Add legends outside the plot area on the right
+    plt.tight_layout(rect=[0.02, 0, 0.82, 1])
+
+    # Batch legend (top right, outside plots)
+    batch_legend = fig1.legend(batch_handles, list(unique_batches), title="Batch",
+                               loc='upper right', bbox_to_anchor=(0.99, 0.95),
+                               markerscale=3, framealpha=0.9, fontsize=7)
+
+    # Cell type legend (bottom right, outside plots)
+    n_cols = 1 if n_types <= 10 else 2
+    celltype_legend = fig1.legend(celltype_handles, list(unique_celltypes), title="Cell Type",
+                                  loc='lower right', bbox_to_anchor=(0.99, 0.05),
+                                  markerscale=3, framealpha=0.9, fontsize=6, ncol=n_cols)
+
     fig1.savefig(output_dir / "figure1_umap_comparison.pdf", format='pdf', bbox_inches='tight')
     fig1.savefig(output_dir / "figure1_umap_comparison.png", format='png', bbox_inches='tight', dpi=300)
     print(f"  Saved: {output_dir}/figure1_umap_comparison.pdf")
@@ -909,7 +940,7 @@ def main():
         "--dataset", "-d",
         type=str,
         default="tma",
-        choices=["tma", "ffdaa1f0", "pbmc"],
+        choices=["tma", "ffdaa1f0", "pbmc", "pancreas"],
         help="Dataset to use (default: tma)",
     )
     parser.add_argument(
