@@ -146,6 +146,7 @@ async def _start_endpoint_embedded(
     endpoint_id_hash: str,
     workspace_path: str,
     log_level: str = "INFO",
+    enable_notebook_streaming: bool = False,
 ) -> "Endpoint":
     """
     Start Endpoint in embedded mode (same event loop).
@@ -153,6 +154,8 @@ async def _start_endpoint_embedded(
     Args:
         endpoint_id_hash: Hash to generate stable service_id
         workspace_path: Endpoint workspace directory
+        log_level: Log level for endpoint
+        enable_notebook_streaming: Enable NATS streaming for notebook (default: False)
 
     Returns:
         Endpoint instance (not service_id)
@@ -162,8 +165,11 @@ async def _start_endpoint_embedded(
     """
     logger.info(f"Starting Endpoint in embedded mode with id_hash={endpoint_id_hash}")
 
+    # Only set config if streaming is explicitly enabled
+    config = {"enable_notebook_streaming": True} if enable_notebook_streaming else None
+    
     endpoint = Endpoint(
-        config={"enable_notebook_streaming": True},  # Enable streaming for chatroom
+        config=config,
         workspace_path=workspace_path,
         id_hash=endpoint_id_hash
     )
@@ -270,6 +276,7 @@ async def start_services(
                 endpoint_id_hash=endpoint_id_hash,
                 workspace_path=workspace_path,
                 log_level=log_level,
+                enable_notebook_streaming=True,  # Enable streaming for chatroom
             )
         elif endpoint_mode == "process":
             # Process mode: return service_id

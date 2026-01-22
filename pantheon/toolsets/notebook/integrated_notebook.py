@@ -150,9 +150,7 @@ class IntegratedNotebookToolSet(ToolSet):
             await self.kernel_toolset.subscribe("file_log", log_handler)
             logger.info(f"Registered FileLogHandler: {log_dir}")
 
-        # Start unified IOPub listener
-        await self.kernel_toolset.unified_listener.start_listening()
-        logger.info("Started unified IOPub listener")
+        # Unified listener removed - handlers are called directly in execute_request's output_hook
 
         # Load persisted contexts
         await self._load_contexts()

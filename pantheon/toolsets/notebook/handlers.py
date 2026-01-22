@@ -101,7 +101,7 @@ class RemoteIOPubEventBus(IOPubEventBus):
             logger.error(
                 f"Failed to publish IOPub message for session {session_id}: {e}"
             )
-            raise
+            # Don't raise - avoid blocking other handlers and causing error loops
 
     async def cleanup(self):
         """Clean up all stream channels"""

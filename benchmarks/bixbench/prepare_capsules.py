@@ -272,6 +272,16 @@ def generate_test_prompt(info: dict) -> str:
 4. **LOOP TERMINATION**: After submitting your answer via `submit_answer`, you MUST end the session. You can do this by calling `notify_user(message="Task completed", blocked_on_user=True)`. Alternatively, simply STOP generating any further output (no text, no tool calls).
 
 
+
+## Resource Restrictions
+
+**FORBIDDEN - Do NOT use these resources:**
+- Do NOT use web search tools or search the internet
+- Do NOT browse websites or access online resources
+- Do NOT look up external documentation or references online
+- Use ONLY the provided data files and pre-installed packages
+- All necessary information is contained in the local data and environment
+
 ## Environment (PRE-INSTALLED - DO NOT REINSTALL)
 
 The following R packages are ALREADY INSTALLED. Use `library()` directly, do NOT run install.packages() or BiocManager::install() for these:
