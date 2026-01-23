@@ -75,7 +75,7 @@ class PantheonBixBenchAdapter:
         # Generate unique id_hash for this benchmark run
         endpoint_id_hash = str(uuid.uuid4())
         
-        # Start endpoint in embedded mode
+        # Start endpoint in embedded mode (streaming disabled by default)
         self._endpoint = await _start_endpoint_embedded(
             endpoint_id_hash=endpoint_id_hash,
             workspace_path=self.workspace_path,

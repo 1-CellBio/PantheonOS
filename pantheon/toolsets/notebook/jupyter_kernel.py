@@ -7,7 +7,6 @@ import re
 import time
 import urllib.parse
 import uuid
-from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -16,15 +15,12 @@ import textwrap
 
 import nbformat.v4
 
-import zmq.asyncio
 from jupyter_client import AsyncKernelManager
 from jupyter_client.asynchronous import AsyncKernelClient
-from jupyter_client.session import Session
 
 from pantheon.remote.backend.base import RemoteBackend, StreamMessage, StreamType
 from pantheon.toolset import ToolSet, tool
 from pantheon.utils.log import logger
-from pantheon.utils.misc import run_func
 from pantheon.internal.package_runtime.context import build_context_env
 
 # Terminal control character processing (nbclient-style)
@@ -79,263 +75,7 @@ class SessionInfo:
 
 
 
-class KernelListener:
-    """Unified Kernel IOPub message listener - uses single ZMQ poller to monitor all kernels"""
-
-    def __init__(self):
-        """Initialize unified listener"""
-        self.context = zmq.asyncio.Context()
-        self.poller = zmq.asyncio.Poller()
-        self.socket_to_session: Dict[zmq.Socket, str] = {}
-        self.session_handlers: Dict[str, Callable] = {}
-        self.session_sockets: Dict[str, zmq.Socket] = {}
-        self.session_objects: Dict[zmq.Socket, Session] = {}
-        self.is_running = False
-        self.listener_task: Optional[asyncio.Task] = None
-        # Fallback Jupyter session for message parsing
-        self.jupyter_session = Session(key=b"", auth=None)
-
-    async def add_kernel(
-        self, 
-        session_id: str, 
-        connection_info: dict, 
-        message_handler: Callable,
-        session_obj: Optional[Session] = None
-    ) -> bool:
-        """Add kernel to unified listener"""
-        try:
-            # Create SUB socket connected to kernel's IOPub port
-            socket = self.context.socket(zmq.SUB)
-            socket.connect(
-                f"tcp://{connection_info['ip']}:{connection_info['iopub_port']}"
-            )
-            socket.subscribe(b"")  # Subscribe to all messages
-
-            # Register to poller
-            self.poller.register(socket, zmq.POLLIN)
-
-            # Store mapping relationships
-            self.socket_to_session[socket] = session_id
-            self.session_handlers[session_id] = message_handler
-            self.session_sockets[session_id] = socket
-            
-            if session_obj:
-                # Clone the session to avoid "Duplicate Signature" errors if the same 
-                # session is used elsewhere (e.g. by AsyncKernelClient)
-                self.session_objects[socket] = session_obj.clone()
-
-            logger.info(f"Added kernel {session_id} to unified listener")
-
-            # If this is the first kernel, start unified listening
-            if not self.is_running:
-                await self.start_listening()
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to add kernel {session_id} to unified listener: {e}")
-            return False
-
-    async def remove_kernel(self, session_id: str) -> bool:
-        """Remove kernel from unified listener"""
-        try:
-            if session_id not in self.session_sockets:
-                return True
-
-            socket = self.session_sockets[session_id]
-
-            # Remove from poller
-            self.poller.unregister(socket)
-
-            # Clean up mapping relationships
-            del self.socket_to_session[socket]
-            del self.session_handlers[session_id]
-            del self.session_sockets[session_id]
-            self.session_objects.pop(socket, None)
-
-            # Close socket
-            socket.close()
-
-            logger.info(f"Removed kernel {session_id} from unified listener")
-
-            # Listener loop continues running in background (idling)
-            # ready for next add_kernel call without restart overhead
-
-            return True
-
-        except Exception as e:
-            logger.error(
-                f"Failed to remove kernel {session_id} from unified listener: {e}"
-            )
-            return False
-
-    async def start_listening(self):
-        """Start unified listening task"""
-        if self.is_running:
-            return
-
-        self.is_running = True
-        self.listener_task = asyncio.create_task(self._listen_loop())
-        logger.info("Started unified kernel listener")
-
-    async def stop_listening(self):
-        """Stop unified listening task"""
-        if not self.is_running:
-            return
-
-        self.is_running = False
-
-        if self.listener_task:
-            self.listener_task.cancel()
-            try:
-                await self.listener_task
-            except asyncio.CancelledError:
-                pass
-            self.listener_task = None
-
-        logger.info("Stopped unified kernel listener")
-
-    async def _listen_loop(self):
-        """Unified listening loop"""
-        logger.info("Starting unified IOPub listening loop")
-
-        try:
-            while self.is_running:
-                # Poll sockets
-                try:
-                    # Poll for events
-                    # timeout is in milliseconds
-                    # Using a short timeout allows checking is_running flag
-                    # and responding to cancellation promptly
-                    # Check for empty sockets - basic sleep loop if no kernels attached
-                    # distinct from polling to avoid high CPU usage
-                    if not self.session_sockets:
-                        await asyncio.sleep(0.5)  # Wait 500ms before checking again
-                        continue
-
-                    events = {} 
-                    # ZMQ polling is not interruptible by asyncio cancellation natively in older pyzmq?
-                    # But we are using async poller which should be invalid.
-                    # Actually we use self.poller.poll() which IS awaitable.
-                    events = await self.poller.poll(timeout=100)
-
-                    # Process all sockets with messages
-                    for socket, event in events:
-                        if event & zmq.POLLIN:
-                            await self._handle_socket_message(socket)
-
-                except asyncio.CancelledError:
-                    if self.is_running:
-                        logger.warning("Unified listener loop received cancellation but is_running is True. Ignoring cancellation and continuing.")
-                        continue
-                    else:
-                        logger.info("Unified listener loop cancelled")
-                        break
-                except Exception as e:
-                    logger.error(f"Error in unified listener loop: {e}")
-                    await asyncio.sleep(0.01)  # Brief pause before retry
-
-        finally:
-            self.is_running = False
-            logger.info("Unified IOPub listening loop ended")
-
-    async def _handle_socket_message(self, socket: zmq.Socket):
-        """Handle individual socket message"""
-        session_id = "unknown"
-        try:
-            # Receive ZMQ multipart message
-            multipart_msg = await socket.recv_multipart(flags=zmq.NOBLOCK)
-
-            # Skip empty or malformed messages
-            if not multipart_msg or len(multipart_msg) < 2:
-                logger.info(
-                    f"Skipping malformed multipart message with {len(multipart_msg) if multipart_msg else 0} parts"
-                )
-                return
-
-            # Get session object for this socket
-            session_obj = self.session_objects.get(socket)
-
-            # Parse to Jupyter message
-            jupyter_msg = self._parse_zmq_message(multipart_msg, session_obj=session_obj)
-            
-            # Get corresponding session_id and handler
-            session_id = self.socket_to_session.get(socket)
-            
-            # Log successful parsing at INFO level for debugging
-            if session_id:
-                logger.debug(f"Parsed {jupyter_msg.msg_type} message for session {session_id[:8]}")
-
-            if session_id and session_id in self.session_handlers:
-                handler = self.session_handlers[session_id]
-                # Handle both sync and async handlers
-                if asyncio.iscoroutinefunction(handler):
-                    await handler(session_id, jupyter_msg)
-                else:
-                    await run_func(handler, session_id, jupyter_msg)
-
-        except zmq.Again:
-            # No message to read, normal case
-            logger.info("No message to read, normal case")
-        except Exception as e:
-            session_id = self.socket_to_session.get(socket, "unknown")
-            logger.error(f"Error handling message for session {session_id}: {e}")
-
-    def _parse_zmq_message(
-        self, multipart_msg: List[bytes], session_obj: Optional[Session] = None
-    ) -> JupyterMessage:
-        """
-        Parse ZMQ multipart message using official Jupyter Session API.
-        Simplified from 175+ lines to ~20 lines using jupyter_client.session.Session.
-        """
-        # Use provided session_obj or fallback to default
-        session = session_obj or self.jupyter_session
-        
-        try:
-            # Use the same approach as jupyter_client:
-            # 1. feed_identities() removes topic prefixes and returns standard format
-            # 2. deserialize() processes the standard format
-            _, processed_msg = session.feed_identities(multipart_msg, copy=True)
-            msg_dict = session.deserialize(processed_msg, content=True, copy=True)
-
-            return JupyterMessage(
-                msg_type=msg_dict.get("msg_type", "unknown"),
-                content=msg_dict.get("content", {}),
-                header=msg_dict.get("header", {}),
-                parent_header=msg_dict.get("parent_header", {}),
-                metadata=msg_dict.get("metadata", {}),
-                buffers=msg_dict.get("buffers", []),
-            )
-        except Exception as e:
-            logger.error(f"Failed to parse ZMQ message: {e}")
-            return self._create_error_message(f"Parse failed: {e}")
-
-    def _create_error_message(self, error_msg: str) -> JupyterMessage:
-        """Create a JupyterMessage for parsing errors"""
-        return JupyterMessage(
-            msg_type="parse_error",
-            content={"error": error_msg},
-            header={"msg_type": "parse_error"},
-            parent_header={},
-            metadata={},
-        )
-
-    async def cleanup(self):
-        """Clean up resources"""
-        logger.info("Cleaning up unified kernel listener")
-        await self.stop_listening()
-
-        # Close all sockets
-        for socket in list(self.session_sockets.values()):
-            socket.close()
-
-        # Clear all mappings
-        self.socket_to_session.clear()
-        self.session_handlers.clear()
-        self.session_sockets.clear()
-
-        # Close context
-        self.context.term()
+# KernelListener class removed - handlers are now called directly in execute_interactive's output_hook
 
 
 def make_json_serializable(obj):
@@ -396,18 +136,11 @@ class JupyterKernelToolSet(ToolSet):
         self.clients: Dict[str, AsyncKernelClient] = {}
         self.sessions: Dict[str, SessionInfo] = {}
 
-        # Track execution metadata for IOPub message injection
-        self.msg_metadata_mapping: Dict[str, dict] = {}  # msg_id -> execution_metadata
-
         # Execution locks per session to prevent concurrent execution
         self._execution_locks: Dict[str, asyncio.Lock] = {}
 
         # IOPub message handlers registry: handler_id -> async callable
         self._iopub_handlers: Dict[str, Callable] = {}
-
-        # Unified listener (mandatory for correct message routing)
-        self.unified_listener = KernelListener()
-        logger.debug(f"Initialized unified kernel listener (execution_timeout={self.execution_timeout}s)")
 
     def _current_context_dict(self) -> dict:
         ctx = self.get_context()
@@ -539,70 +272,9 @@ class JupyterKernelToolSet(ToolSet):
         except Exception as e:
             logger.warning(f"IOPub handler '{handler_id}' failed: {e}")
 
-    async def _handle_iopub_message(self, session_id: str, jupyter_msg: JupyterMessage):
-        """Dispatch IOPub message to execution buffer and registered handlers"""
-        try:
-            parent_msg_id = (
-                jupyter_msg.parent_header.get("msg_id")
-                if jupyter_msg.parent_header
-                else None
-            )
-
-            if parent_msg_id:
-                logger.debug(f"IOPub received {jupyter_msg.msg_type} for parent {parent_msg_id[:8]}")
-
-
-            # Prepare stream metadata (separate from JupyterMessage.metadata)
-            stream_metadata = {}
-            if parent_msg_id and parent_msg_id in self.msg_metadata_mapping:
-                execution_metadata = self.msg_metadata_mapping[parent_msg_id]
-                stream_metadata.update(execution_metadata)
-
-            # Dispatch to all registered handlers (Fire-and-Forget)
-            for handler_id, handler in self._iopub_handlers.items():
-                asyncio.create_task(
-                    self._safe_exec_handler(handler_id, handler, session_id, jupyter_msg, stream_metadata)
-                )
-
-        except Exception as e:
-            logger.error(f"Error handling IOPub message for session {session_id}: {e}")
-    
-    async def _cleanup_metadata_delayed(self, msg_id: str, delay: float = 0.5):
-        """Cleanup execution metadata after a delay to ensure all handlers have completed
-        
-        Args:
-            msg_id: Message ID to cleanup
-            delay: Delay in seconds before cleanup (default: 0.5s)
-        """
-        if not msg_id:  # Guard against None
-            return
-        await asyncio.sleep(delay)
-        self.msg_metadata_mapping.pop(msg_id, None)
-        logger.debug(f"Cleaned up metadata for {msg_id[:8]}")
-
-    async def _notify_kernel_death(self, session_id: str, msg_id: str, error_msg: str):
-        """
-        Notify IOPub handlers about kernel death for logging purposes.
-        
-        Args:
-            session_id: Kernel session ID
-            msg_id: Message ID of the execution that was running when kernel died
-            error_msg: Error message describing the kernel death
-        """
-        if not self._iopub_handlers:
-            return
-        
-        kernel_died_msg = JupyterMessage(
-            msg_type="kernel_died",
-            content={
-                "reason": "process_terminated",
-                "error": error_msg,
-            },
-            header={"msg_type": "kernel_died", "msg_id": msg_id},
-            parent_header={"msg_id": msg_id},
-        )
-        
-        await self._handle_iopub_message(session_id, kernel_died_msg)
+    # _handle_iopub_message, _cleanup_metadata_delayed, and _notify_kernel_death removed
+    # These were part of the old unified_listener architecture
+    # Now handlers are called directly in execute_request's output_hook
 
 
 
@@ -690,10 +362,7 @@ class JupyterKernelToolSet(ToolSet):
             )
             self.sessions[kernel_session_id] = session_info
 
-            # Start IOPub monitoring if any handlers are registered
-            # (e.g., NATS streaming, file logging, or custom handlers)
-            if self._iopub_handlers:
-                await self._setup_iopub_monitoring(kernel_session_id, km, kc)
+            # IOPub monitoring removed - handlers are called directly in execute_request's output_hook
 
             # Execute context prefix code once during kernel initialization
             # This sets up PANTHEON_CONTEXT environment variable in the kernel
@@ -741,7 +410,7 @@ class JupyterKernelToolSet(ToolSet):
         - Automatic idle detection and completion
         - Real-time output streaming via output_hook
         
-        The Unified Listener continues to handle streaming to frontends and file logging.
+        Handlers (NATS, File Log, etc.) are called directly in output_hook for real-time streaming.
         """
         if session_id not in self.sessions:
             return {"success": False, "error": f"Session not found: {session_id}"}
@@ -760,28 +429,35 @@ class JupyterKernelToolSet(ToolSet):
 
             # Collect IOPub messages via output_hook
             iopub_messages = []
-            msg_id_extracted = [None]  # Use list to allow mutation in nested function
             
             def output_hook(msg: dict):
-                """Collect IOPub messages in real-time
+                """Collect IOPub messages and call handlers in real-time
                 
                 This hook is called for every IOPub message during execution.
-                The Unified Listener handles streaming independently.
+                Handlers are invoked directly for real-time streaming.
                 """
+                # 1. Collect message for generating outputs
                 iopub_messages.append(msg)
                 
-                # Extract msg_id from first message and inject metadata
-                if msg_id_extracted[0] is None and execution_metadata:
-                    parent_header = msg.get("parent_header", {})
-                    if parent_header:
-                        msg_id = parent_header.get("msg_id")
-                        if msg_id:
-                            msg_id_extracted[0] = msg_id
-                            # Inject metadata for Unified Listener
-                            self.msg_metadata_mapping[msg_id] = execution_metadata.copy()
-                            logger.debug(
-                                f"Injected execution metadata for {msg_id[:8]}: {list(execution_metadata.keys())}"
+                # 2. Call all registered handlers directly (NATS, File Log, etc.)
+                if self._iopub_handlers:
+                    # Convert to JupyterMessage format
+                    jupyter_msg = JupyterMessage(
+                        msg_type=msg.get("header", {}).get("msg_type", "unknown"),
+                        content=msg.get("content", {}),
+                        header=msg.get("header", {}),
+                        parent_header=msg.get("parent_header", {}),
+                        metadata=msg.get("metadata", {}),
+                        buffers=msg.get("buffers", []),
+                    )
+                    
+                    # Dispatch to all handlers (Fire-and-Forget)
+                    for handler_id, handler in self._iopub_handlers.items():
+                        asyncio.create_task(
+                            self._safe_exec_handler(
+                                handler_id, handler, session_id, jupyter_msg, execution_metadata or {}
                             )
+                        )
 
             try:
                 # Update kernel status
@@ -807,11 +483,6 @@ class JupyterKernelToolSet(ToolSet):
 
                 # Update kernel status
                 session_info.status = KernelStatus.IDLE
-                
-                # Cleanup metadata after execution completes
-                # Delay to ensure Unified Listener has processed all IOPub messages
-                if msg_id_extracted[0]:
-                    asyncio.create_task(self._cleanup_metadata_delayed(msg_id_extracted[0]))
 
                 # Clean the reply to make it JSON serializable
                 clean_reply = make_json_serializable(reply)
@@ -846,9 +517,6 @@ class JupyterKernelToolSet(ToolSet):
 
             except TimeoutError as e:
                 session_info.status = KernelStatus.IDLE
-                # Cleanup metadata to prevent memory leak
-                if msg_id_extracted[0]:
-                    asyncio.create_task(self._cleanup_metadata_delayed(msg_id_extracted[0]))
                 error_msg = f"""Kernel execution timeout after {self.execution_timeout}s.
 
 ## Immediate Actions:
@@ -872,9 +540,6 @@ class JupyterKernelToolSet(ToolSet):
                 }
             except Exception as e:
                 session_info.status = KernelStatus.IDLE
-                # Cleanup metadata to prevent memory leak
-                if msg_id_extracted[0]:
-                    asyncio.create_task(self._cleanup_metadata_delayed(msg_id_extracted[0]))
                 error_msg = str(e) or f"Execution failed: {type(e).__name__}"
                 logger.warning(f"Execute request failed for session {session_id}: {error_msg}")
                 return {
@@ -912,8 +577,7 @@ class JupyterKernelToolSet(ToolSet):
             return {"success": False, "error": f"Session not found: {session_id}"}
 
         try:
-            # Stop IOPub monitoring - remove from unified listener
-            await self.unified_listener.remove_kernel(session_id)
+            # IOPub monitoring cleanup removed - no longer needed
 
             # Shutdown kernel
             km = self.kernel_managers[session_id]
@@ -945,11 +609,7 @@ class JupyterKernelToolSet(ToolSet):
                 session_info = self.sessions[session_id]
                 session_info.status = KernelStatus.STARTING
 
-                # Step 1: Clean up old IOPub listener BEFORE restart
-                await self.unified_listener.remove_kernel(session_id)
-                logger.debug(
-                    f"Removed kernel {session_id} from unified listener before restart"
-                )
+                # IOPub listener cleanup removed - no longer needed
 
                 # Step 2: Restart kernel
                 km = self.kernel_managers[session_id]
@@ -972,11 +632,7 @@ class JupyterKernelToolSet(ToolSet):
                         "error": f"Kernel failed to be ready after restart: {e}",
                     }
 
-                # Step 4: Re-setup IOPub monitoring after restart
-                # This establishes the new IOPub connection with the restarted kernel
-                if self._iopub_handlers:
-                    await self._setup_iopub_monitoring(session_id, km, kc)
-                    logger.debug(f"IOPub monitoring re-established for {session_id}")
+                # IOPub monitoring re-setup removed - no longer needed
 
                 # Step 5: Reset execution state
                 session_info.execution_count = 0
@@ -1197,36 +853,7 @@ class JupyterKernelToolSet(ToolSet):
             logger.error(f"Failed to get variable names for session {session_id}: {e}")
             return {"success": False, "error": str(e)}
 
-    async def _setup_iopub_monitoring(
-        self, session_id: str, km: AsyncKernelManager, kc: AsyncKernelClient = None
-    ):
-        """Setup unified IOPub monitoring for a session."""
-        
-        try:
-            connection_info = km.get_connection_info()
-            if not connection_info or "iopub_port" not in connection_info:
-                logger.warning(f"No valid connection info for session {session_id}")
-                return False
-
-            formatted_connection_info = {
-                "ip": connection_info.get("ip", "127.0.0.1"),
-                "iopub_port": connection_info.get("iopub_port"),
-            }
-
-            success = await self.unified_listener.add_kernel(
-                session_id,
-                formatted_connection_info,
-                self._handle_iopub_message,
-                session_obj=kc.session if kc else None,
-            )
-
-            if success:
-                logger.info(f"Added session {session_id} to unified listener")
-            return success
-
-        except Exception as e:
-            logger.warning(f"Failed to setup IOPub monitoring for {session_id}: {e}")
-            return False
+    # _setup_iopub_monitoring removed - no longer needed
 
 
     def _generate_outputs_from_iopub(
@@ -1315,12 +942,7 @@ class JupyterKernelToolSet(ToolSet):
     async def cleanup(self):
         """Cleanup all resources"""
         logger.info("JupyterKernelToolSet cleaning up")
-        # Cleanup unified listener
-        await self.unified_listener.cleanup()
-
-        # Clear message metadata mappings
-        self.msg_metadata_mapping.clear()
-
+        
         # Shutdown all sessions
         for session_id in list(self.sessions.keys()):
             # Clear Jedi contexts if completion service exists
