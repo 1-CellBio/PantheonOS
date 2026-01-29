@@ -1,0 +1,147 @@
+{
+  "config": {
+    "max_iterations": 30,
+    "checkpoint_interval": 10,
+    "early_stop_generations": 50,
+    "num_workers": 4,
+    "num_islands": 2,
+    "migration_interval": 20,
+    "migration_rate": 0.1,
+    "feature_dimensions": [
+      "fidelity"
+    ],
+    "feature_bins": 10,
+    "feature_range_padding": 0.1,
+    "feature_range_adaptive": true,
+    "archive_ratio": 0.25,
+    "population_size": 500,
+    "num_inspirations": 2,
+    "num_top_programs": 3,
+    "exploration_ratio": 0.2,
+    "exploitation_ratio": 0.7,
+    "evaluation_timeout": 120,
+    "max_parallel_evaluations": 2,
+    "function_weight": 1.0,
+    "llm_weight": 0.0,
+    "cascade_evaluation": false,
+    "cascade_thresholds": [
+      0.3,
+      0.6,
+      0.8
+    ],
+    "feedback_max_lines_per_file": null,
+    "diff_based_evolution": true,
+    "max_code_length": 50000,
+    "max_diff_size": 5000,
+    "temperature": 0.7,
+    "max_retries": 3,
+    "mutation_timeout": 120,
+    "use_analyzer": true,
+    "analyzer_model": "normal",
+    "analyzer_timeout": 120,
+    "top_programs_probability": 0.5,
+    "inspirations_probability": 0.2,
+    "analyzer_exploration_initial": 0.9,
+    "analyzer_exploration_final": 0.1,
+    "analyzer_exploration_decay_generations": 10,
+    "summarizer_timeout": 30,
+    "evolution_history_max_siblings": 5,
+    "evolution_history_max_ancestors": 10,
+    "evolution_history_max_chars": 2000,
+    "mutator_model": "normal",
+    "feedback_model": "normal",
+    "db_path": "/Users/wzxu/Projects/Pantheon/pantheon-agents/examples/code_distillation/results",
+    "workspace_path": null,
+    "save_prompts": true,
+    "save_all_programs": false,
+    "log_level": "INFO",
+    "log_iterations": true,
+    "log_improvements": true
+  },
+  "best_program_id": "9bd8b717",
+  "archive": [
+    "8661fb44",
+    "9e08f7f6",
+    "d9572c64",
+    "e68abe08",
+    "9bd8b717",
+    "79255e42",
+    "16cb320f"
+  ],
+  "islands": [
+    [
+      "5fa7aabb",
+      "e2219ec0",
+      "8661fb44",
+      "d9572c64",
+      "f882b6ff",
+      "a9068086",
+      "302a958e",
+      "72ff648f",
+      "4b614561",
+      "575d01f4",
+      "13e57457",
+      "e71f92a2",
+      "60c9b28d"
+    ],
+    [
+      "121d5893",
+      "ed364084",
+      "50073add",
+      "9e08f7f6",
+      "acc39b93",
+      "a4d23287",
+      "85f5d5e8",
+      "111bb6e3",
+      "d326916a",
+      "9ea81506",
+      "e68abe08",
+      "c95a0289",
+      "9bd8b717",
+      "90c55f5e",
+      "8d9bbe91",
+      "d5b65faa",
+      "79255e42",
+      "16cb320f"
+    ]
+  ],
+  "total_added": 31,
+  "total_improved": 0,
+  "feature_ranges": {
+    "fidelity": [
+      0.0,
+      0.8425
+    ]
+  },
+  "metric_ranges": {
+    "llm_score": [
+      0.5,
+      0.5
+    ],
+    "fidelity": [
+      0.0,
+      0.8425
+    ],
+    "coverage": [
+      0.0,
+      1.0
+    ],
+    "complexity": [
+      56.0,
+      290.0
+    ],
+    "fitness_score": [
+      0.0,
+      0.8425
+    ],
+    "n_correct": [
+      0.0,
+      1685.0
+    ],
+    "n_samples": [
+      2000.0,
+      2000.0
+    ]
+  },
+  "next_order": 31
+}

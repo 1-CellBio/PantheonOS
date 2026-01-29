@@ -219,5 +219,6 @@ evolution_results/
 
 # Evolution example results (only programs/ with individual JSON files)
 examples/evolution_*/*/*/programs/
+examples/code_distillation/*/programs/
 
 .DS_Store
