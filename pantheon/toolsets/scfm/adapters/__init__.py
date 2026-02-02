@@ -36,6 +36,7 @@ from .langcell import LangCellAdapter
 from .cell2sentence import Cell2SentenceAdapter
 from .genept import GenePTAdapter
 from .chatcell import CHATCELLAdapter
+from .tabula import TabulaAdapter
 
 __all__ = [
     "BaseAdapter",
@@ -63,4 +64,5 @@ __all__ = [
     "Cell2SentenceAdapter",
     "GenePTAdapter",
     "CHATCELLAdapter",
+    "TabulaAdapter",
 ]

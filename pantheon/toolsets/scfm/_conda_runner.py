@@ -72,6 +72,7 @@ def _load_adapter(model_name: str, checkpoint_dir: str | None):
         "cell2sentence": ("pantheon.toolsets.scfm.adapters.cell2sentence", "Cell2SentenceAdapter"),
         "genept": ("pantheon.toolsets.scfm.adapters.genept", "GenePTAdapter"),
         "chatcell": ("pantheon.toolsets.scfm.adapters.chatcell", "CHATCELLAdapter"),
+        "tabula": ("pantheon.toolsets.scfm.adapters.tabula", "TabulaAdapter"),
     }
 
     if model_name not in mapping:

@@ -88,6 +88,10 @@ class ModelSpec:
     # Hardware
     hardware: HardwareRequirements = field(default_factory=HardwareRequirements)
 
+    # Routing hints
+    differentiator: str = ""  # Unique feature that distinguishes this model
+    prefer_when: str = ""  # When to specifically choose this model
+
     # Resources
     checkpoint_url: str = ""
     documentation_url: str = ""
@@ -130,6 +134,8 @@ class ModelSpec:
                 "min_vram_gb": self.hardware.min_vram_gb,
                 "cpu_fallback": self.hardware.cpu_fallback,
             },
+            "differentiator": self.differentiator,
+            "prefer_when": self.prefer_when,
             "documentation_url": self.documentation_url,
         }
 
@@ -163,6 +169,8 @@ SCGPT_SPEC = ModelSpec(
         cpu_fallback=True,
         default_batch_size=64,
     ),
+    differentiator="Multi-modal transformer (RNA+ATAC+Spatial), attention-based gene interaction modeling",
+    prefer_when="User needs multi-modal analysis (RNA+ATAC or spatial), or explicit attention-based gene interaction maps",
     checkpoint_url="https://github.com/bowang-lab/scGPT#pretrained-scgpt-model-zoo",
     documentation_url="https://scgpt.readthedocs.io/",
     paper_url="https://www.nature.com/articles/s41592-024-02201-0",
@@ -193,6 +201,8 @@ GENEFORMER_SPEC = ModelSpec(
         cpu_fallback=True,
         default_batch_size=32,
     ),
+    differentiator="Rank-value encoded transformer, Ensembl gene IDs, CPU-capable, network biology pretraining",
+    prefer_when="User has Ensembl gene IDs, needs CPU-only inference, or wants gene-network-aware embeddings",
     checkpoint_url="https://huggingface.co/ctheodoris/Geneformer",
     documentation_url="https://geneformer.readthedocs.io/",
     paper_url="https://www.nature.com/articles/s41586-023-06139-9",
@@ -223,6 +233,8 @@ UCE_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=100,
     ),
+    differentiator="Broadest species support (7 species), 1280-dim embeddings, universal cell embedding via protein structure",
+    prefer_when="User has non-human/non-mouse species (zebrafish, frog, pig, macaque, lemur), or needs cross-species comparison",
     checkpoint_url="https://github.com/snap-stanford/UCE",
     documentation_url="https://github.com/snap-stanford/UCE",
     paper_url="https://www.nature.com/articles/s41592-024-02201-0",
@@ -257,6 +269,8 @@ SCFOUNDATION_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=64,
     ),
+    differentiator="Large-scale asymmetric transformer (xTrimoGene), custom 19264 gene vocabulary, pre-trained for perturbation/drug response",
+    prefer_when="User needs perturbation prediction, drug response modeling, or works with the xTrimoGene gene vocabulary",
     checkpoint_url="https://github.com/biomap-research/scFoundation",
     documentation_url="https://github.com/biomap-research/scFoundation",
     paper_url="https://www.nature.com/articles/s41592-024-02305-7",
@@ -287,6 +301,8 @@ SCBERT_SPEC = ModelSpec(
         cpu_fallback=True,
         default_batch_size=64,
     ),
+    differentiator="Compact 200-dim embeddings, BERT-style masked gene pretraining, lightweight model",
+    prefer_when="User needs compact 200-dim embeddings, BERT-style pretraining, or a lightweight model for constrained hardware",
     checkpoint_url="https://github.com/TencentAILabHealthcare/scBERT",
     documentation_url="https://github.com/TencentAILabHealthcare/scBERT",
     paper_url="https://www.nature.com/articles/s42256-022-00534-z",
@@ -317,6 +333,8 @@ GENECOMPASS_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="Prior-knowledge-enhanced pretraining (gene regulatory networks + pathway info), 120M cell training corpus",
+    prefer_when="User mentions prior knowledge, gene regulatory networks, pathway-informed embeddings, or mouse+human cross-species",
     checkpoint_url="https://github.com/xCompass-AI/GeneCompass",
     documentation_url="https://github.com/xCompass-AI/GeneCompass",
     paper_url="https://www.biorxiv.org/content/10.1101/2023.09.26.559542v1",
@@ -347,6 +365,8 @@ CELLPLM_SPEC = ModelSpec(
         cpu_fallback=True,
         default_batch_size=128,  # Fast inference
     ),
+    differentiator="Cell-centric (not gene-centric) architecture, highest batch throughput (batch_size=128), fast inference",
+    prefer_when="User needs fast inference, high throughput, million-cell scale processing, or cell-level (not gene-level) modeling",
     checkpoint_url="https://github.com/OmicsML/CellPLM",
     documentation_url="https://github.com/OmicsML/CellPLM",
     paper_url="https://www.biorxiv.org/content/10.1101/2023.10.03.560734v1",
@@ -377,6 +397,8 @@ NICHEFORMER_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="Niche-aware spatial transformer, jointly models spatial coordinates and gene expression",
+    prefer_when="User has spatial transcriptomics data (Visium, MERFISH, Slide-seq) and wants niche-aware or spatial-context embeddings",
     checkpoint_url="https://github.com/theislab/nicheformer",
     documentation_url="https://github.com/theislab/nicheformer",
     paper_url="https://www.biorxiv.org/content/10.1101/2024.04.15.589472v1",
@@ -407,6 +429,8 @@ SCMULAN_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="Native multi-omics joint modeling (RNA+ATAC+Protein simultaneously), designed for CITE-seq/10x Multiome",
+    prefer_when="User has multi-omics data (CITE-seq, 10x Multiome, RNA+ATAC+Protein), or wants joint multi-modal embedding",
     checkpoint_url="https://github.com/SuperBianC/scMulan",
     documentation_url="https://github.com/SuperBianC/scMulan",
     paper_url="https://www.biorxiv.org/content/10.1101/2024.01.25.577152v1",
@@ -441,6 +465,8 @@ TGPT_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="Autoregressive next-token prediction of gene expression values (GPT-style, not masked)",
+    prefer_when="User wants autoregressive/generative modeling, next-token prediction of gene expression, or GPT-style generation",
     checkpoint_url="https://github.com/deeplearningplus/tGPT",
     documentation_url="https://github.com/deeplearningplus/tGPT",
     paper_url="",
@@ -471,6 +497,8 @@ CELLFM_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="MLP architecture (not transformer), trained on ~126M cells (largest training corpus)",
+    prefer_when="User explicitly wants MLP-based (not transformer) model, or wants the largest pretraining scale (~126M cells)",
     checkpoint_url="https://github.com/cellverse/CellFM",
     documentation_url="https://github.com/cellverse/CellFM",
     paper_url="",
@@ -501,6 +529,8 @@ SCCELLO_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="Cell ontology-aligned embeddings, zero-shot cell type annotation with hierarchical coherence",
+    prefer_when="User wants zero-shot cell type annotation, ontology-consistent predictions, or hierarchical cell-type labeling",
     checkpoint_url="https://github.com/cellarium-ai/scCello",
     documentation_url="https://github.com/cellarium-ai/scCello",
     paper_url="",
@@ -531,6 +561,8 @@ SCPRINT_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="Protein-coding gene focus with built-in denoising, robust batch integration",
+    prefer_when="User mentions denoising, protein-coding genes, ambient RNA removal, or wants built-in noise reduction",
     checkpoint_url="https://github.com/scprint/scPRINT",
     documentation_url="https://github.com/scprint/scPRINT",
     paper_url="",
@@ -561,6 +593,8 @@ AIDOCELL_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="Dense transformer optimized for unsupervised cell clustering without predefined labels",
+    prefer_when="User wants unsupervised clustering, label-free cell grouping, or dense transformer embeddings for discovery",
     checkpoint_url="https://github.com/genbio-ai/AIDO",
     documentation_url="https://github.com/genbio-ai/AIDO",
     paper_url="",
@@ -591,6 +625,8 @@ PULSAR_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="Multi-scale multicellular biology modeling, captures cell-cell communication and tissue-level organization",
+    prefer_when="User wants cell-cell communication analysis, tissue-level modeling, multicellular programs, or intercellular signaling",
     checkpoint_url="https://github.com/pulsar-ai/PULSAR",
     documentation_url="https://github.com/pulsar-ai/PULSAR",
     paper_url="",
@@ -621,6 +657,8 @@ ATACFORMER_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="ATAC-seq-native transformer, peak-based (not gene-based) input, chromatin accessibility specialist",
+    prefer_when="User has ATAC-seq data, chromatin accessibility profiles, or peak-based (not gene expression) inputs",
     checkpoint_url="https://github.com/Atacformer/Atacformer",
     documentation_url="https://github.com/Atacformer/Atacformer",
     paper_url="",
@@ -651,6 +689,8 @@ SCPLANTLLM_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="Plant-specific single-cell model, handles polyploidy and plant gene nomenclature",
+    prefer_when="User has plant single-cell data (Arabidopsis, rice, maize, etc.) or mentions polyploidy",
     checkpoint_url="https://github.com/scPlantLLM/scPlantLLM",
     documentation_url="https://github.com/scPlantLLM/scPlantLLM",
     paper_url="",
@@ -681,6 +721,8 @@ LANGCELL_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=32,
     ),
+    differentiator="Two-tower (text + cell) architecture, aligns natural language descriptions with cell embeddings",
+    prefer_when="User wants text-guided cell retrieval, natural language cell queries, or text-cell alignment",
     checkpoint_url="https://github.com/langcell/LangCell",
     documentation_url="https://github.com/langcell/LangCell",
     paper_url="",
@@ -711,6 +753,8 @@ CELL2SENTENCE_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=16,
     ),
+    differentiator="Converts cells to text sentences for LLM fine-tuning, 768-dim LLM embeddings",
+    prefer_when="User wants to leverage general-purpose LLMs, convert cells to text, or use LLM fine-tuning workflows",
     checkpoint_url="https://github.com/vandijklab/cell2sentence",
     documentation_url="https://github.com/vandijklab/cell2sentence",
     paper_url="",
@@ -741,6 +785,8 @@ GENEPT_SPEC = ModelSpec(
         cpu_fallback=True,
         default_batch_size=32,
     ),
+    differentiator="API-based GPT-3.5 gene embeddings (1536-dim), no local GPU required, gene-level (not cell-level)",
+    prefer_when="User wants gene-level embeddings (not cell-level), has no local GPU, or wants API-based OpenAI embeddings",
     checkpoint_url="https://github.com/yiqunchen/GenePT",
     documentation_url="https://github.com/yiqunchen/GenePT",
     paper_url="",
@@ -771,10 +817,45 @@ CHATCELL_SPEC = ModelSpec(
         cpu_fallback=False,
         default_batch_size=16,
     ),
+    differentiator="Conversational chat interface for single-cell analysis, zero-shot annotation via dialogue",
+    prefer_when="User wants interactive chat-based cell analysis, conversational annotation, or dialogue-driven exploration",
     checkpoint_url="https://github.com/chatcell/CHATCELL",
     documentation_url="https://github.com/chatcell/CHATCELL",
     paper_url="",
     license_notes="Check upstream LICENSE; chat interface for single-cell data",
+)
+
+TABULA_SPEC = ModelSpec(
+    name="tabula",
+    version="federated-v1",
+    skill_ready=SkillReadyStatus.PARTIAL,
+    tasks=[TaskType.EMBED, TaskType.ANNOTATE, TaskType.INTEGRATE, TaskType.PERTURB],
+    modalities=[Modality.RNA],
+    species=["human"],
+    gene_id_scheme=GeneIDScheme.CUSTOM,  # 60,697 gene vocabulary via vocab.json
+    requires_finetuning=True,  # Annotation/perturbation require fine-tuning
+    zero_shot_embedding=True,  # Embedding via forward pass without fine-tuning
+    zero_shot_annotation=False,
+    output_keys=OutputKeys(
+        embedding_key="X_tabula",
+        annotation_key="tabula_pred",
+        confidence_key="tabula_pred_score",
+        integration_key="X_tabula_integrated",
+    ),
+    embedding_dim=192,
+    hardware=HardwareRequirements(
+        gpu_required=True,
+        min_vram_gb=8,
+        recommended_vram_gb=16,
+        cpu_fallback=False,
+        default_batch_size=64,
+    ),
+    differentiator="Privacy-preserving federated learning + tabular transformer, 60697 gene vocabulary, quantile-binned expression, FlashAttention",
+    prefer_when="User needs privacy-preserving analysis, federated-trained embeddings, or perturbation prediction with tabular modeling approach",
+    checkpoint_url="https://github.com/aristoteleo/tabula",
+    documentation_url="https://github.com/aristoteleo/tabula",
+    paper_url="",  # Preprint: Ding et al., 2025
+    license_notes="Check upstream LICENSE from aristoteleo/tabula",
 )
 
 
@@ -819,6 +900,7 @@ class ModelRegistry:
         self.register(CELL2SENTENCE_SPEC)
         self.register(GENEPT_SPEC)
         self.register(CHATCELL_SPEC)
+        self.register(TABULA_SPEC)
 
     def register(self, spec: ModelSpec):
         """Register a model specification"""

@@ -18,6 +18,11 @@ Before executing specific task, you should firstly check the capabilities of all
 You can call `call_agent(agent_name, instruction)` function to delegate the task to the sub-agent.
 When passing the instruction, you should provide all related information for the sub-agent to execute the task.
 
+## scFM routing (IMPORTANT)
+When the user request involves selecting or using single-cell foundation models (scFM) (e.g., scGPT/Geneformer/UCE, embeddings, integration, annotation),
+you should first call `fm_router` to get a single-task routing decision (task + model + required params + execution plan).
+Then delegate execution to the appropriate agent (usually `analysis_expert`) using the router output.
+
 ### Analysis tasks:
 
 When delegating the analysis task to the `analysis_expert`, you only need to pass the
