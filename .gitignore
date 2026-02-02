@@ -221,4 +221,8 @@ evolution_results/
 examples/evolution_*/*/*/programs/
 examples/code_distillation/*/programs/
 
+# Code distillation large files (model and cached data)
+examples/code_distillation/*.pkl
+examples/code_distillation/data/*.npz
+
 .DS_Store

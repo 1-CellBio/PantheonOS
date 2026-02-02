@@ -102,25 +102,44 @@ def evaluate(workspace_path: str) -> dict:
     }
 
 
-# Global cache for test data
+# Global cache for test data (in-memory)
 _cached_data = None
+
+# Disk cache path for pre-computed test data (avoids loading model in each subprocess)
+_CACHE_FILE = "/Users/wzxu/Projects/Pantheon/pantheon-agents/examples/code_distillation/data/test_data_cache.npz"
 
 
 def _get_test_data():
-    """Load and cache test data."""
+    """Load test data from disk cache or compute it once."""
     global _cached_data
 
     if _cached_data is not None:
         return _cached_data
 
-    import scanpy as sc
-    import celltypist
-    from celltypist import models
     from pathlib import Path
     import os
 
-    # Data directory - hardcoded absolute path for subprocess execution
-    data_dir = Path("/Users/wzxu/Projects/Pantheon/pantheon-agents/examples/code_distillation/data")
+    cache_path = Path(_CACHE_FILE)
+
+    # Try to load from disk cache first (fast, no model loading needed)
+    if cache_path.exists():
+        try:
+            cached = np.load(cache_path, allow_pickle=True)
+            X_test = cached['X_test']
+            features = cached['features'].tolist()
+            labels = cached['labels']
+            _cached_data = (X_test, features, labels)
+            return _cached_data
+        except Exception as e:
+            print(f"Warning: Failed to load cache, regenerating: {e}")
+
+    # Cache miss - compute and save (this loads the model, but only once)
+    import scanpy as sc
+    import celltypist
+    from celltypist import models
+
+    # Data directory
+    data_dir = cache_path.parent
     data_dir.mkdir(exist_ok=True)
 
     # Download demo data
@@ -159,12 +178,24 @@ def _get_test_data():
     predictions = celltypist.annotate(adata, model=model_name)
     original_labels = predictions.predicted_labels.predicted_labels.values
 
+    # Save to disk cache for future runs (silent in subprocess mode)
+    try:
+        np.savez(cache_path, X_test=X_test, features=np.array(model_features), labels=original_labels)
+        # Only print if running as main script, not in subprocess
+        if __name__ == "__main__":
+            print(f"Test data cached to {cache_path}")
+    except Exception:
+        pass  # Silently ignore cache save failures
+
     _cached_data = (X_test, model_features, original_labels)
     return _cached_data
 
 
-if __name__ == "__main__":
-    # Test evaluator
+# Only run test code when executed directly as a script (not when inlined in subprocess)
+# The subprocess execution sets __name__ = "__main__" but also defines evaluate() after this code
+# So we need to check if we're being run as a standalone file
+if __name__ == "__main__" and len(__import__('sys').argv) > 0 and __import__('sys').argv[0].endswith('evaluator.py'):
+    # Test evaluator (only when running: python evaluator.py [workspace])
     import sys
     workspace = sys.argv[1] if len(sys.argv) > 1 else "."
     result = evaluate(workspace)

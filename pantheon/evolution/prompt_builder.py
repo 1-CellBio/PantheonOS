@@ -209,17 +209,61 @@ Think like a performance engineer. The algorithm is sound; your job is to make t
 
 # Python analysis capability section (optional, added when analyzer_use_python=True)
 ANALYZER_PYTHON_SECTION = """
-## Python Analysis Capability
+## Python Analysis Capability (IMPORTANT - USE THIS!)
 
 You have access to a Python interpreter via the `run_python_code` tool.
 
-Use it when you need to:
-- Load and inspect data or models
-- Run experiments to validate hypotheses
-- Gather quantitative metrics to inform your recommendations
-- Compare outputs or analyze patterns
+**CRITICAL: You MUST use Python to gather data before making recommendations.**
+Do NOT just theorize - actually run experiments to get concrete numbers!
 
-Provide concrete, data-driven recommendations based on your analysis.
+### When to Use Python
+- ALWAYS use Python when you need to understand the model/data
+- ALWAYS use Python before suggesting specific weights or thresholds
+- NEVER guess values - measure them with Python
+
+### Example Analysis Approaches
+
+1. **Perturbation Analysis** - Find important features:
+```python
+# Perturb each gene and measure prediction changes
+for gene in top_genes:
+    perturbed = baseline.copy()
+    perturbed[gene] = 0  # or high value
+    new_pred = model.predict(perturbed)
+    if new_pred != original_pred:
+        print(f"{gene} is important for {original_pred}")
+```
+
+2. **Decision Boundary Probing** - Find thresholds:
+```python
+# Sweep a gene's value to find decision boundary
+for threshold in np.linspace(0, 10, 100):
+    sample[gene] = threshold
+    pred = model.predict(sample)
+    if pred changed: print(f"Threshold for {gene}: {threshold}")
+```
+
+3. **Error Analysis** - Understand failures:
+```python
+# Check which cell types are most confused
+for true_label, pred_label in zip(true, predicted):
+    if true_label != pred_label:
+        confusion_matrix[true_label][pred_label] += 1
+```
+
+4. **Weight Extraction** (if model accessible):
+```python
+# Get actual model weights
+weights = model.classifier.coef_
+features = model.features
+# Find top features for each class
+```
+
+### Output Format
+After running Python experiments, report:
+- CONCRETE NUMBERS (e.g., "gene X has weight 2.3 for class Y")
+- SPECIFIC THRESHOLDS (e.g., "if CD3D > 1.5, predict T cell")
+- MEASURED CONFUSION (e.g., "DC1 and DC2 are confused 30% of the time")
 """
 
 

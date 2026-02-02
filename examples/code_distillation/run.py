@@ -48,13 +48,13 @@ async def run_evolution(
 
     config = EvolutionConfig(
         max_iterations=iterations,
-        num_workers=8,
+        num_workers=4,  # Reduced to avoid Python process contention
         num_islands=2,
         num_inspirations=2,
         num_top_programs=3,
         max_parallel_evaluations=2,
         evaluation_timeout=120,
-        analyzer_timeout=180,  # Longer timeout for Python analysis
+        analyzer_timeout=600,  # 10 minutes for Python analysis (model loading is slow)
         feature_dimensions=["fidelity"],
         early_stop_generations=50,
         function_weight=1.0,
@@ -67,16 +67,33 @@ async def run_evolution(
         analyzer_python_workdir=str(example_dir),
     )
 
-    # Optimization objective
+    # Optimization objective - HARD MODE with 26 cell types
     objective = """Distill the CellTypist classifier into interpretable Python code.
 
 ## Goal
-Maximize fidelity (agreement rate with CellTypist model). Target: >= 95%
+Maximize fidelity (agreement rate with CellTypist model). Target: >= 90%
 
-## Cell Types (EXACT NAMES required):
-- Plasma cells, Mast cells, DC1, Kupffer cells, pDC
-- gamma-delta T cells, Endothelial cells, Follicular B cells
+## HARD MODE: 26 Cell Types (EXACT NAMES required)
+Must distinguish between similar subtypes - this is the real challenge!
+
+Major types (~1955 cells):
+- Plasma cells, DC1, Mast cells, Kupffer cells, pDC
+- Endothelial cells, gamma-delta T cells, Follicular B cells
 - Alveolar macrophages, Neutrophil-myeloid progenitor
+
+Minor/rare types (~45 cells) - CRITICAL for true fidelity:
+- Intermediate macrophages, HSC/MPP, Double-negative thymocytes
+- Late erythroid, Macrophages, CD16- NK cells, Classical monocytes
+- DC2, Monocyte precursor, CD16+ NK cells, Double-positive thymocytes
+- ETP, Early erythroid, Mono-mac, Naive B cells, Plasmablasts
+
+## Key Challenges
+1. Distinguish Alveolar macrophages vs Kupffer cells vs Intermediate macrophages vs generic Macrophages
+2. Distinguish DC1 vs DC2 vs pDC
+3. Distinguish Follicular B cells vs Naive B cells vs Plasma cells vs Plasmablasts
+4. Distinguish Classical monocytes vs Mono-mac vs Monocyte precursor
+5. Identify rare progenitor types (HSC/MPP, ETP)
+6. Identify erythroid stages (Early erythroid, Late erythroid)
 
 ## STRICT CONSTRAINTS (IMPORTANT!)
 The distilled code must be SELF-CONTAINED and INDEPENDENT:
@@ -85,15 +102,34 @@ The distilled code must be SELF-CONTAINED and INDEPENDENT:
 - All decision logic must be hardcoded in the Python code itself
 - The code should work without any external model files
 
-## Hints
-- The analyzer has Python capability to run experiments and inspect the model
-- Use the analyzer to extract knowledge (weights, thresholds, feature importance)
-- Then hardcode that knowledge into simple, interpretable rules
-- Consider: marker genes, decision trees, threshold-based rules
+## CRITICAL: Use Python Analysis to Discover Model Logic
+The analyzer MUST use Python (`run_python_code` tool) to experimentally discover the model's decision logic.
+
+**MODEL FILE**: `./Immune_All_Low.pkl` (CellTypist model, can be loaded with `celltypist.models.Model.load()`)
+
+### Experimental Approaches (choose what works best)
+
+1. **Perturbation Analysis**: Create synthetic samples, perturb gene values, observe how predictions change
+   - Which genes cause prediction flips between similar cell types?
+   - What are the threshold values where decisions change?
+
+2. **Feature Importance**: Analyze which genes most strongly influence each cell type prediction
+   - Don't just copy weights - understand the decision logic
+   - Find sparse, interpretable rules
+
+3. **Confusion Analysis**: For cell types that are often confused (e.g., DC1 vs DC2):
+   - What distinguishes them in the model's view?
+   - What gene combinations define the boundary?
+
+4. **Decision Boundary Probing**: For ambiguous samples, what tips the balance?
+
+### Goal
+Discover **interpretable rules** that capture the model's behavior, not just copy raw weights.
+The distilled code should embody the model's logic in human-readable form.
 
 ## Requirements
 1. Function signature: def predict_cell_type(expression: dict) -> str
-2. Return one of the exact cell type names listed above
+2. Return one of the exact 26 cell type names
 3. Maximize fidelity with the original model
 4. Code must be self-contained (no external model dependencies)
 """

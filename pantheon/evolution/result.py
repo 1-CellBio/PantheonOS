@@ -112,8 +112,36 @@ class EvolutionResult:
         total = sum(r.total_time for r in self.iteration_results)
         return total / len(self.iteration_results)
 
+    def _format_metrics(self, metrics: Dict[str, Any], max_metrics: int = 3) -> str:
+        """Format raw metrics for display."""
+        if not metrics:
+            return "no_metrics"
+        fitness_weights = metrics.get("fitness_weights", {})
+        priority_metrics = []
+        other_metrics = []
+        for key, value in metrics.items():
+            if key in ("fitness_weights", "error", "llm_feedback"):
+                continue
+            if not isinstance(value, (int, float)):
+                continue
+            if key in fitness_weights:
+                priority_metrics.append((key, value))
+            else:
+                other_metrics.append((key, value))
+        all_metrics = priority_metrics + other_metrics
+        selected = all_metrics[:max_metrics]
+        if not selected:
+            return "no_metrics"
+        return " ".join(f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
+                        for k, v in selected)
+
     def get_summary(self) -> str:
         """Get a human-readable summary."""
+        # Get raw metrics from best program if available
+        best_metrics_str = ""
+        if self.best_program and self.best_program.metrics:
+            best_metrics_str = self._format_metrics(self.best_program.metrics)
+
         lines = [
             "=" * 50,
             "Evolution Results Summary",
@@ -122,9 +150,8 @@ class EvolutionResult:
             f"Successful: {self.successful_iterations} ({self.get_success_rate()*100:.1f}%)",
             f"Improvements: {self.improvements} ({self.get_improvement_rate()*100:.1f}%)",
             f"",
-            f"Best score: {self.best_score:.4f}",
-            f"Initial score: {self.score_history[0]:.4f}" if self.score_history else "",
-            f"Total improvement: {(self.best_score - self.score_history[0]):.4f}" if self.score_history else "",
+            f"Best metrics: {best_metrics_str}" if best_metrics_str else f"Best score: {self.best_score:.4f}",
+            f"Best fitness_score (normalized): {self.best_score:.4f}",
             f"",
             f"Duration: {self.total_duration:.1f}s",
             f"Avg time/iteration: {self.get_avg_iteration_time():.2f}s",

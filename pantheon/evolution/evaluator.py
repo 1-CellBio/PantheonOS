@@ -81,13 +81,15 @@ class HybridEvaluator:
 
     async def _get_python_interpreter(self):
         """Lazy-load Python interpreter toolset."""
-        if self._python_interpreter is None:
-            try:
-                from pantheon.toolsets.python import PythonInterpreterToolSet
-                self._python_interpreter = PythonInterpreterToolSet("evolution_evaluator")
-            except ImportError:
-                logger.warning("PythonInterpreterToolSet not available, using subprocess")
-        return self._python_interpreter
+        # DISABLED: Using subprocess mode instead to avoid process accumulation
+        # and memory issues. Each subprocess terminates after evaluation.
+        # if self._python_interpreter is None:
+        #     try:
+        #         from pantheon.toolsets.python import PythonInterpreterToolSet
+        #         self._python_interpreter = PythonInterpreterToolSet("evolution_evaluator")
+        #     except ImportError:
+        #         logger.warning("PythonInterpreterToolSet not available, using subprocess")
+        return None  # Force subprocess mode
 
     async def _get_feedback_agent(self):
         """Lazy-create feedback agent if needed."""
