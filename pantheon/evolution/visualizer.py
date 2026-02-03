@@ -1762,6 +1762,8 @@ class EvolutionVisualizer:
             'convergence_score': '#ffa657',
             'execution_time': '#8b949e',
             'iterations': '#6e7681',
+            'fidelity': '#3fb950',
+            'coverage': '#f0883e',
         }};
 
         // Default color for unknown metrics
@@ -1985,9 +1987,20 @@ class EvolutionVisualizer:
                 return;
             }}
 
-            // Build list of all metrics (only *_score metrics, exclude best_* variants for legend)
-            const allMetrics = metricKeys.filter(k => !k.startsWith('best_') && k.endsWith('_score'));
-            const bestMetrics = metricKeys.filter(k => k.startsWith('best_') && k.endsWith('_score'));
+            // Build list of all metrics for charting
+            // Include *_score metrics plus important metrics like fidelity, coverage
+            // Exclude: best_* variants, fitness_weights, complexity, n_correct, n_samples (non-normalized)
+            const excludeMetrics = ['fitness_weights', 'complexity', 'n_correct', 'n_samples'];
+            const allMetrics = metricKeys.filter(k =>
+                !k.startsWith('best_') &&
+                !excludeMetrics.includes(k) &&
+                (k.endsWith('_score') || ['fidelity', 'coverage'].includes(k))
+            );
+            const bestMetrics = metricKeys.filter(k =>
+                k.startsWith('best_') &&
+                !excludeMetrics.some(e => k.includes(e)) &&
+                (k.endsWith('_score') || k.includes('fidelity') || k.includes('coverage'))
+            );
 
             // Function to compute y-domain based on visible metrics only (excluding hidden points)
             function computeYDomain() {{

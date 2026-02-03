@@ -80,3 +80,11 @@ def test_template_file_crud_roundtrip(tmp_path):
     list_after_delete = manager.list_template_files("teams")
     remaining_paths = {entry["path"] for entry in list_after_delete["files"]}
     assert "teams/room1.md" not in remaining_paths
+
+
+def test_single_cell_team_includes_fm_router(tmp_path):
+    manager = _make_manager(tmp_path)
+    team = manager.get_template("single_cell_team")
+    assert team is not None
+    agent_ids = [a.id for a in team.agents]
+    assert "fm_router" in agent_ids

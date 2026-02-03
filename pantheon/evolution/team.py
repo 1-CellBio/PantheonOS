@@ -46,6 +46,72 @@ def think(thought: str) -> str:
     return "Thought recorded. Continue your analysis."
 
 
+def format_metrics_for_log(metrics: Dict[str, Any], max_metrics: int = 3) -> str:
+    """
+    Format raw metrics for logging display.
+
+    Args:
+        metrics: Dict of metric name -> value
+        max_metrics: Maximum number of metrics to show
+
+    Returns:
+        Formatted string like "fidelity=0.644 coverage=0.95"
+    """
+    if not metrics:
+        return "no_metrics"
+
+    # Get fitness_weights to know which metrics matter
+    fitness_weights = metrics.get("fitness_weights", {})
+
+    # Prioritize metrics that have fitness weights
+    priority_metrics = []
+    other_metrics = []
+
+    for key, value in metrics.items():
+        if key in ("fitness_weights", "error", "llm_feedback"):
+            continue
+        if not isinstance(value, (int, float)):
+            continue
+        if key in fitness_weights:
+            priority_metrics.append((key, value))
+        else:
+            other_metrics.append((key, value))
+
+    # Combine and limit
+    all_metrics = priority_metrics + other_metrics
+    selected = all_metrics[:max_metrics]
+
+    if not selected:
+        return "no_metrics"
+
+    return " ".join(f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
+                    for k, v in selected)
+
+
+def get_primary_metric(metrics: Dict[str, Any]) -> Tuple[str, float]:
+    """
+    Get the primary metric (first in fitness_weights) and its value.
+
+    Returns:
+        Tuple of (metric_name, value)
+    """
+    if not metrics:
+        return ("score", 0.0)
+
+    fitness_weights = metrics.get("fitness_weights", {})
+    if fitness_weights:
+        # Return first weighted metric
+        for key in fitness_weights:
+            if key in metrics and isinstance(metrics[key], (int, float)):
+                return (key, float(metrics[key]))
+
+    # Fallback to fitness_score if present
+    if "fitness_score" in metrics:
+        return ("fitness_score", float(metrics["fitness_score"]))
+
+    return ("score", 0.0)
+
+
 def compute_deltas(
     parent: Program,
     child: Program,
@@ -163,6 +229,8 @@ class EvolutionTeam:
         self._evaluator = evaluator
         self._analyzer = analyzer
         self._critic = critic
+        self._python_toolset = None  # Python interpreter for analyzer (lazy-initialized)
+        self._summarizer = None
 
         # State
         self.objective: str = ""
@@ -190,7 +258,7 @@ class EvolutionTeam:
                 raise RuntimeError("Pantheon Agent not available for mutation")
         return self._mutator
 
-    def _create_analyzer(self, generation: int):
+    async def _create_analyzer(self, generation: int):
         """
         Create analyzer agent with generation-appropriate system prompt.
 
@@ -201,6 +269,8 @@ class EvolutionTeam:
 
         If user provided a custom analyzer at init time, returns that instead
         (with direction="custom" and probability=0.0).
+
+        Optionally includes Python interpreter capability when config.analyzer_use_python=True.
 
         Args:
             generation: Current program generation for adaptive prompt selection
@@ -214,23 +284,65 @@ class EvolutionTeam:
 
         from pantheon.agent import Agent
 
-        # Get adaptive system prompt based on generation
+        # Get adaptive system prompt based on generation (with Python section if enabled)
         system_prompt, direction, exploration_prob = self.prompt_builder.get_analyzer_system_prompt(
             generation=generation,
             initial_prob=self.config.analyzer_exploration_initial,
             final_prob=self.config.analyzer_exploration_final,
             decay_generations=self.config.analyzer_exploration_decay_generations,
+            use_python=self.config.analyzer_use_python,
         )
 
         analyzer = Agent(
             name="code-analyzer",
             instructions=system_prompt,
             model=self.config.analyzer_model,
-            tools=[think],  # Add thinking tool for deeper reasoning
+            tools=[think],
             use_memory=False,  # Prevent context accumulation across iterations
         )
 
+        # Add Python interpreter toolset if enabled
+        if self.config.analyzer_use_python:
+            if self._python_toolset is None:
+                from pantheon.toolsets.python import PythonInterpreterToolSet
+
+                workdir = self.config.analyzer_python_workdir or self.config.workspace_path
+                self._python_toolset = PythonInterpreterToolSet(
+                    name="analyzer-python",
+                    workdir=workdir,
+                )
+            await analyzer.toolset(self._python_toolset)
+
         return analyzer, direction, exploration_prob
+
+    async def _cleanup_python_interpreters(self):
+        """
+        Clean up Python interpreters to prevent process accumulation.
+
+        Each analyzer run creates a new interpreter (due to unique client_id).
+        This method cleans up all interpreters to prevent LokyProcess accumulation.
+        """
+        if self._python_toolset is None:
+            return
+
+        try:
+            # Get list of all interpreters
+            result = await self._python_toolset.list_interpreters()
+            interpreters = result.get("interpreters", [])
+
+            # Delete each interpreter
+            for interp in interpreters:
+                try:
+                    await self._python_toolset.delete_interpreter(interp["id"])
+                except Exception as e:
+                    logger.debug(f"Failed to delete interpreter {interp['id']}: {e}")
+
+            # Clear the client_id mapping
+            self._python_toolset.clientid_to_interpreterid.clear()
+
+            logger.debug(f"Cleaned up {len(interpreters)} Python interpreters")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup Python interpreters: {e}")
 
     def _create_summarizer(self):
         """
@@ -450,7 +562,7 @@ class EvolutionTeam:
                 if not evaluator_code:
                     self.evaluator_code = state.get("evaluator_code", "")
 
-                logger.info(f"Resumed from iteration {start_iteration}, best_score={best_score:.4f}")
+                logger.info(f"Resumed from iteration {start_iteration}, best_fitness_score={best_score:.4f} (normalized)")
                 logger.info(f"Database has {len(self.database.programs)} programs")
 
                 # Find initial_program (order=0) and best_program from database
@@ -529,7 +641,9 @@ class EvolutionTeam:
             best_score = initial_score
             best_program = initial_program  # Track best program for consistent fitness comparison
 
-            logger.info(f"Initial program score: {initial_score:.4f}")
+            # Log raw metrics for initial program
+            initial_metrics_str = format_metrics_for_log(initial_program.metrics)
+            logger.info(f"Initial program: {initial_metrics_str}")
 
         # Evolution loop - use workers if num_workers > 1
         if self.config.num_workers > 1:
@@ -592,26 +706,24 @@ class EvolutionTeam:
                     # Log every iteration with clear progress
                     progress_pct = completed_iterations / target_iterations * 100
                     status = "★ NEW BEST" if is_new_best else ("✓ accepted" if iter_result.accepted else "✗ rejected")
-                    # Compute initial_program's score with current metric_ranges for consistent comparison
-                    current_initial_score = initial_program.fitness_score(
-                        self.config.feature_dimensions,
-                        self.database.metric_ranges,
-                        self.config.function_weight,
-                        self.config.llm_weight,
-                    )
+                    # Get raw metrics for logging
+                    child_program = self.database.programs.get(iter_result.child_id)
+                    child_metrics_str = format_metrics_for_log(child_program.metrics) if child_program else "?"
+                    best_metrics_str = format_metrics_for_log(best_program.metrics)
                     logger.info(
                         f"[{completed_iterations}/{target_iterations}] ({progress_pct:.0f}%) "
-                        f"iter={iter_result.iteration} initial={current_initial_score:.4f} "
-                        f"score={iter_result.child_score:.4f} best={best_score:.4f} {status}"
+                        f"iter={iter_result.iteration} child=[{child_metrics_str}] "
+                        f"best=[{best_metrics_str}] {status}"
                     )
 
                     # Periodic summary (every 10 iterations)
                     if completed_iterations % 10 == 0:
                         stats = self.database.get_statistics()
+                        initial_metrics_str = format_metrics_for_log(initial_program.metrics)
                         logger.info(
                             f"=== Summary: {completed_iterations}/{target_iterations} complete, "
-                            f"initial={current_initial_score:.4f}, best={best_score:.4f}, "
-                            f"avg={stats['avg_fitness']:.4f}, programs={stats['total_programs']} ==="
+                            f"initial=[{initial_metrics_str}], best=[{best_metrics_str}], "
+                            f"programs={stats['total_programs']} ==="
                         )
 
                     # Trigger progress callback on every iteration (independent of checkpoint)
@@ -673,9 +785,9 @@ class EvolutionTeam:
                         best_score = iter_result.child_score
                         best_program = self.database.programs[iter_result.child_id]
                         generations_without_improvement = 0
+                        best_metrics_str = format_metrics_for_log(best_program.metrics)
                         logger.info(
-                            f"  ★ New best score: {best_score:.4f} "
-                            f"(+{iter_result.improvement:.4f})"
+                            f"  ★ New best: [{best_metrics_str}]"
                         )
                     else:
                         generations_without_improvement += 1
@@ -685,17 +797,11 @@ class EvolutionTeam:
                     # Periodic logging
                     if self.config.log_iterations and iteration % 10 == 0 and iteration > 0:
                         stats = self.database.get_statistics()
-                        # Compute initial_program's score with current metric_ranges for consistent comparison
-                        current_initial_score = initial_program.fitness_score(
-                            self.config.feature_dimensions,
-                            self.database.metric_ranges,
-                            self.config.function_weight,
-                            self.config.llm_weight,
-                        )
+                        initial_metrics_str = format_metrics_for_log(initial_program.metrics)
+                        best_metrics_str = format_metrics_for_log(best_program.metrics)
                         logger.info(
-                            f"--- Progress: {iteration}/{max_iterations}, initial={current_initial_score:.4f}, "
-                            f"best={best_score:.4f}, avg={stats['avg_fitness']:.4f}, "
-                            f"programs={stats['total_programs']} ---"
+                            f"--- Progress: {iteration}/{max_iterations}, initial=[{initial_metrics_str}], "
+                            f"best=[{best_metrics_str}], programs={stats['total_programs']} ---"
                         )
 
                     # Trigger progress callback on every iteration (independent of checkpoint)
@@ -861,7 +967,7 @@ class EvolutionTeam:
             analysis_start = time.time()
             try:
                 # Create analyzer with generation-adaptive prompt
-                analyzer, analyzer_direction, exploration_prob = self._create_analyzer(
+                analyzer, analyzer_direction, exploration_prob = await self._create_analyzer(
                     generation=parent.generation
                 )
 
@@ -902,10 +1008,13 @@ class EvolutionTeam:
                     f"{log_prefix} Analysis ({analyzer_direction}, p={exploration_prob:.2f}): "
                     f"{analysis_time:.1f}s (${iteration_cost:.4f})"
                 )
+                # Cleanup Python interpreters to prevent process accumulation
+                await self._cleanup_python_interpreters()
                 # Note: Direction extraction moved to after mutation to include diff
             except asyncio.TimeoutError:
                 analysis_time = time.time() - analysis_start
                 logger.warning(f"{log_prefix} Analyzer timeout after {analysis_time:.1f}s, skipping iteration")
+                await self._cleanup_python_interpreters()
                 return IterationResult(
                     iteration=iteration,
                     parent_id=parent.id,
@@ -921,6 +1030,7 @@ class EvolutionTeam:
                 )
             except Exception as e:
                 logger.warning(f"{log_prefix} Analyzer failed: {e}, skipping iteration")
+                await self._cleanup_python_interpreters()
                 return IterationResult(
                     iteration=iteration,
                     parent_id=parent.id,

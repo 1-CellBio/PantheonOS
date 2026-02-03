@@ -219,5 +219,10 @@ evolution_results/
 
 # Evolution example results (only programs/ with individual JSON files)
 examples/evolution_*/*/*/programs/
+examples/code_distillation/*/programs/
+
+# Code distillation large files (model and cached data)
+examples/code_distillation/*.pkl
+examples/code_distillation/data/*.npz
 
 .DS_Store

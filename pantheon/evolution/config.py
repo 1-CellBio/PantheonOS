@@ -72,6 +72,8 @@ class EvolutionConfig:
     analyzer_timeout: int = 60  # Timeout for analyzer (seconds)
     top_programs_probability: float = 0.5  # Probability of including top programs in prompt
     inspirations_probability: float = 0.2  # Probability of including inspirations in prompt
+    analyzer_use_python: bool = False  # Enable Python interpreter for analyzer
+    analyzer_python_workdir: Optional[str] = None  # Working directory for Python interpreter
 
     # === Analyzer Strategy Parameters ===
     # Controls exploration vs exploitation balance based on generation
@@ -183,6 +185,8 @@ class EvolutionConfig:
             "analyzer_timeout": self.analyzer_timeout,
             "top_programs_probability": self.top_programs_probability,
             "inspirations_probability": self.inspirations_probability,
+            "analyzer_use_python": self.analyzer_use_python,
+            "analyzer_python_workdir": self.analyzer_python_workdir,
             "analyzer_exploration_initial": self.analyzer_exploration_initial,
             "analyzer_exploration_final": self.analyzer_exploration_final,
             "analyzer_exploration_decay_generations": self.analyzer_exploration_decay_generations,
@@ -240,6 +244,8 @@ class EvolutionConfig:
             "analyzer_timeout",
             "top_programs_probability",
             "inspirations_probability",
+            "analyzer_use_python",
+            "analyzer_python_workdir",
             "analyzer_exploration_initial",
             "analyzer_exploration_final",
             "analyzer_exploration_decay_generations",

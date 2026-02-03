@@ -1,8 +1,8 @@
 max_iterations: 300
 checkpoint_interval: 10
 early_stop_generations: 100
-num_workers: 2
-num_islands: 2
+num_workers: 8
+num_islands: 8
 migration_interval: 20
 migration_rate: 0.1
 feature_dimensions:

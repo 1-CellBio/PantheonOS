@@ -1,491 +1,1523 @@
 [
   {
-    "45c48ba8": {
-      "mixing_score": 0.669617875,
-      "speed_score": 0.7138965013607134,
-      "bio_conservation_score": 0.6289400386969561
+    "85259485": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8426375012807403,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "a5d5b891": {
-      "mixing_score": 0.65917025,
-      "speed_score": 0.8924311198007261,
-      "bio_conservation_score": 0.6141439178760775
+    "f1ebd4ea": {
+      "mixing_score": 0.5334223125,
+      "speed_score": 0.8257277650425512,
+      "bio_conservation_score": 0.614765064540503
     },
-    "277d8ec3": {
-      "mixing_score": 0.6396316875,
-      "speed_score": 0.4734384070685981,
-      "bio_conservation_score": 0.5946605336747841
+    "90f3f082": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8410387539572477,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "a9503900": {
-      "mixing_score": 0.6420390625,
-      "speed_score": 0.7025052361655105,
-      "bio_conservation_score": 0.6234535475635167
+    "bd72c1a3": {
+      "mixing_score": 0.6416000625,
+      "speed_score": 0.8453871890998509,
+      "bio_conservation_score": 0.6076589529344791
     },
-    "c20bc770": {
-      "mixing_score": 0.5355625625,
-      "speed_score": 0.7098013174203147,
-      "bio_conservation_score": 0.62809997830566
+    "4bd6fafd": {
+      "mixing_score": 0.5538288125000002,
+      "speed_score": 0.7088639428028484,
+      "bio_conservation_score": 0.5778324550348032
     },
-    "95df29cb": {
-      "mixing_score": 0.668324625,
-      "speed_score": 0.31609956881988927,
-      "bio_conservation_score": 0.6334960324659986
+    "8b4d60c5": {
+      "mixing_score": 0.64487825,
+      "speed_score": 0.8673244813645247,
+      "bio_conservation_score": 0.6246877611115227
     },
-    "1f76411d": {
-      "mixing_score": 0.5336832500000002,
-      "speed_score": 0.643290957018426,
-      "bio_conservation_score": 0.6274045415996902
+    "3f3ffaff": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8314631064492993,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "4c1b7194": {
-      "mixing_score": 0.6469643125,
-      "speed_score": 0.45161817578647095,
-      "bio_conservation_score": 0.6273692729768465
+    "00684bfc": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8862749125252588,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "1aadb2db": {
+    "fb72ea9b": {
+      "mixing_score": 0.6801880000000001,
+      "speed_score": 0.44981017434618437,
+      "bio_conservation_score": 0.6015790733430175
+    },
+    "83b6d7c5": {
+      "mixing_score": 0.6428654375,
+      "speed_score": 0.6736520747670697,
+      "bio_conservation_score": 0.6105396372846846
+    },
+    "1e20919c": {
+      "mixing_score": 0.60886725,
+      "speed_score": 0.716557724415883,
+      "bio_conservation_score": 0.5984983824114636
+    },
+    "0346443d": {
+      "mixing_score": 0.6451815625000001,
+      "speed_score": 0.7535937744801406,
+      "bio_conservation_score": 0.6025913195204288
+    },
+    "2d0a46b4": {
+      "mixing_score": 0.6685373125000001,
+      "speed_score": 0.6269042293089517,
+      "bio_conservation_score": 0.5976852897579045
+    },
+    "86c2ae91": {
+      "mixing_score": 0.676014625,
+      "speed_score": 0.5612235231150063,
+      "bio_conservation_score": 0.5981431160361024
+    },
+    "b0a9ad0a": {
+      "mixing_score": 0.6429781250000001,
+      "speed_score": 0.8596271570845544,
+      "bio_conservation_score": 0.6036321090454313
+    },
+    "8d4a6def": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.9092025263333137,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "7f975c07": {
+      "mixing_score": 0.6670475625000001,
+      "speed_score": 0.8401765164247211,
+      "bio_conservation_score": 0.6224885282809526
+    },
+    "27cd78b5": {
+      "mixing_score": 0.5718649375000001,
+      "speed_score": 0.8312343907120947,
+      "bio_conservation_score": 0.5642596184720425
+    },
+    "5bcc1e5e": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "cc4830a5": {
-      "mixing_score": 0.5355625625,
-      "speed_score": 0.7057083189476185,
-      "bio_conservation_score": 0.62809997830566
+    "9ae525ad": {
+      "mixing_score": 0.6276796875,
+      "speed_score": 0.4259272385403514,
+      "bio_conservation_score": 0.6245204315404942
     },
-    "c2102374": {
-      "mixing_score": 0.6641690625000001,
-      "speed_score": 0.505132370255183,
-      "bio_conservation_score": 0.6341769540707841
+    "173d8eb8": {
+      "mixing_score": 0.6374610625,
+      "speed_score": 0.8994672640377706,
+      "bio_conservation_score": 0.623793925346817
     },
-    "0e0c6f69": {
-      "mixing_score": 0.533775875,
-      "speed_score": 0.6522710887254545,
-      "bio_conservation_score": 0.6220325637292836
+    "b206b4e5": {
+      "mixing_score": 0.5465010000000001,
+      "speed_score": 0.535997947151417,
+      "bio_conservation_score": 0.6004477844995784
     },
-    "34fc9877": {
-      "mixing_score": 0.6793371875,
-      "speed_score": 0.8567570846877924,
-      "bio_conservation_score": 0.5923468484115706
+    "89b7b492": {
+      "mixing_score": 0.6450568125,
+      "speed_score": 0.8885484280993137,
+      "bio_conservation_score": 0.6083223982288217
     },
-    "025c71e4": {
-      "mixing_score": 0.6787394375000001,
-      "speed_score": 0.8804299478140618,
-      "bio_conservation_score": 0.5921640308955733
-    },
-    "06b4a1fc": {
+    "bccc9cac": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "7a4824bd": {
-      "mixing_score": 0.6386390000000002,
-      "speed_score": 0.8122281634129546,
-      "bio_conservation_score": 0.6393014509665873
-    },
-    "6fcbfb00": {
-      "mixing_score": 0.610420375,
-      "speed_score": 0.8405324509384263,
-      "bio_conservation_score": 0.6497416851491623
-    },
-    "47070b30": {
-      "mixing_score": 0.749830375,
-      "speed_score": 0.8301980157844951,
-      "bio_conservation_score": 0.5978865883783597
-    },
-    "5ee48480": {
-      "mixing_score": 0.6834626875000002,
-      "speed_score": 0.8392691883870691,
-      "bio_conservation_score": 0.6164037965896124
-    },
-    "814ef494": {
-      "mixing_score": 0.6173843750000001,
-      "speed_score": 0.26601392063985857,
-      "bio_conservation_score": 0.6202009000348279
-    },
-    "6a92fb5c": {
+    "701c3b32": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "4c8b24d9": {
-      "mixing_score": 0.8281493750000001,
-      "speed_score": 0.08213366945775577,
-      "bio_conservation_score": 0.5880025504942323
+    "0c1e4f46": {
+      "mixing_score": 0.6374610625,
+      "speed_score": 0.9077925768553912,
+      "bio_conservation_score": 0.623793925346817
     },
-    "d74c571c": {
-      "mixing_score": 0.7827554999999999,
-      "speed_score": 0.46469679346998755,
-      "bio_conservation_score": 0.614092498242457
+    "bc4c482e": {
+      "mixing_score": 0.6715118125000001,
+      "speed_score": 0.7598459403544241,
+      "bio_conservation_score": 0.62727703361805
     },
-    "037f1861": {
-      "mixing_score": 0.6598523124999999,
-      "speed_score": 0.7585906790178608,
-      "bio_conservation_score": 0.6339091591911225
-    },
-    "248d8682": {
-      "mixing_score": 0.7896861875,
-      "speed_score": 0.8180614246655924,
-      "bio_conservation_score": 0.6068636727086618
-    },
-    "f2578336": {
-      "mixing_score": 0.74670125,
-      "speed_score": 0.8169458994684003,
-      "bio_conservation_score": 0.6082405547329996
-    },
-    "f4a4170b": {
-      "mixing_score": 0.5333832500000001,
-      "speed_score": 0.9620887878903959,
-      "bio_conservation_score": 0.5963308867948315
-    },
-    "b0017f96": {
-      "mixing_score": 0.7263260625,
-      "speed_score": 0.7534022339253956,
-      "bio_conservation_score": 0.5924572435204237
-    },
-    "fcd1fa98": {
-      "mixing_score": 0.6565047500000001,
-      "speed_score": 0.743529203210381,
-      "bio_conservation_score": 0.6193496277673098
-    },
-    "67233fbd": {
-      "mixing_score": 0.7931608124999999,
-      "speed_score": 0.7924149807342249,
-      "bio_conservation_score": 0.6071647556907628
-    },
-    "11d45d0f": {
+    "20918c8d": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "7c529384": {
-      "mixing_score": 0.631953125,
-      "speed_score": 0.8030568323523054,
-      "bio_conservation_score": 0.572581708784504
+    "59c3a5c3": {
+      "mixing_score": 0.6571865625000001,
+      "speed_score": 0.8926960873203776,
+      "bio_conservation_score": 0.6137811236697923
     },
-    "e97060c5": {
-      "mixing_score": 0.5576360625000001,
-      "speed_score": 0.7202830503785506,
-      "bio_conservation_score": 0.6368879713142014
-    },
-    "28229f74": {
-      "mixing_score": 0.6411048125000001,
-      "speed_score": 0.8025462253403304,
-      "bio_conservation_score": 0.6347528069002946
-    },
-    "157ea1e7": {
-      "mixing_score": 0.7101032500000001,
-      "speed_score": 0.8176028001548538,
-      "bio_conservation_score": 0.6686270762733443
-    },
-    "88464fdb": {
+    "47b64d3c": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "0a0155ea": {
-      "mixing_score": 0.5,
-      "speed_score": 0.5,
-      "bio_conservation_score": 0.5
+    "3db8309f": {
+      "mixing_score": 0.5442791875,
+      "speed_score": 0.6494893268640998,
+      "bio_conservation_score": 0.6304018991478474
     },
-    "f9396d8b": {
-      "mixing_score": 0.5,
-      "speed_score": 0.5,
-      "bio_conservation_score": 0.5
+    "dec08364": {
+      "mixing_score": 0.6801880000000001,
+      "speed_score": 0.45984513091205986,
+      "bio_conservation_score": 0.6015790733430175
     },
-    "c1de69c5": {
-      "mixing_score": 0.7408969999999999,
-      "speed_score": 0.8340136792986521,
-      "bio_conservation_score": 0.6032158016428376
+    "dbfe291d": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8961111934848849,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "0bded4dd": {
-      "mixing_score": 0.628661125,
-      "speed_score": 0.2660355007967801,
-      "bio_conservation_score": 0.6162178167743435
+    "367d801e": {
+      "mixing_score": 0.6449263125000001,
+      "speed_score": 0.8917823766467756,
+      "bio_conservation_score": 0.6499041609990557
     },
-    "6ca91f2f": {
-      "mixing_score": 0.6227489375,
-      "speed_score": 0.8444782694483706,
-      "bio_conservation_score": 0.6405770158723876
+    "d43addef": {
+      "mixing_score": 0.6443758125000002,
+      "speed_score": 0.9008100474491033,
+      "bio_conservation_score": 0.6176785313079838
     },
-    "0bc24a25": {
-      "mixing_score": 0.5,
-      "speed_score": 0.5,
-      "bio_conservation_score": 0.5
+    "61cc8486": {
+      "mixing_score": 0.652307875,
+      "speed_score": 0.8867474688619652,
+      "bio_conservation_score": 0.6186112122098317
     },
-    "74e616ff": {
-      "mixing_score": 0.6222343124999999,
-      "speed_score": 0.6788405647919628,
-      "bio_conservation_score": 0.6136267239430403
-    },
-    "711390fe": {
-      "mixing_score": 0.5,
-      "speed_score": 0.5,
-      "bio_conservation_score": 0.5
-    },
-    "6ee467a5": {
-      "mixing_score": 0.6340469375,
-      "speed_score": 0.4856214821334582,
-      "bio_conservation_score": 0.6498813010806794
+    "c8aa5c0f": {
+      "mixing_score": 0.6343808750000001,
+      "speed_score": 0.8962366132489384,
+      "bio_conservation_score": 0.5996435720084827
     }
   },
   {
-    "ef1975c9": {
+    "a6ae04b4": {
+      "mixing_score": 0.640145125,
+      "speed_score": 0.8048128696253517,
+      "bio_conservation_score": 0.60592021918721
+    },
+    "1fd8ed3c": {
+      "mixing_score": 0.5830630000000001,
+      "speed_score": 0.6689733996282474,
+      "bio_conservation_score": 0.5947023584677231
+    },
+    "f1fd3a88": {
+      "mixing_score": 0.5334198125000001,
+      "speed_score": 0.8260980803179361,
+      "bio_conservation_score": 0.6147928689668126
+    },
+    "aa9ab0cf": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "de10fb5b": {
+      "mixing_score": 0.6801880000000001,
+      "speed_score": 0.4626982375938788,
+      "bio_conservation_score": 0.6015790733430175
+    },
+    "9bda41f9": {
+      "mixing_score": 0.676014625,
+      "speed_score": 0.5608635228047241,
+      "bio_conservation_score": 0.5981431160361024
+    },
+    "711ee123": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "1deadfe2": {
+      "mixing_score": 0.6552126875000001,
+      "speed_score": 0.6951985713826355,
+      "bio_conservation_score": 0.6242043466746123
+    },
+    "e78785f5": {
+      "mixing_score": 0.6412178125,
+      "speed_score": 0.8875464505053082,
+      "bio_conservation_score": 0.6253792567878442
+    },
+    "718fe881": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8356643837322243,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "71f19dca": {
+      "mixing_score": 0.6445945,
+      "speed_score": 0.7533897837762785,
+      "bio_conservation_score": 0.6049238539813129
+    },
+    "af1471ef": {
+      "mixing_score": 0.5819389375,
+      "speed_score": 0.6644903044361732,
+      "bio_conservation_score": 0.6002512093078197
+    },
+    "64647071": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8504759197309495,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "c656c68d": {
+      "mixing_score": 0.642439875,
+      "speed_score": 0.8454335385017279,
+      "bio_conservation_score": 0.6069092651884692
+    },
+    "5bf92c0a": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "5d32b80d": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8493060757026365,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "39e75ffa": {
+      "mixing_score": 0.6356677500000001,
+      "speed_score": 0.7482436992599454,
+      "bio_conservation_score": 0.5809011585102942
+    },
+    "561dd84e": {
+      "mixing_score": 0.641801125,
+      "speed_score": 0.8687515884014949,
+      "bio_conservation_score": 0.6270943505656527
+    },
+    "000c6fd4": {
+      "mixing_score": 0.6460763125000001,
+      "speed_score": 0.8932637799484696,
+      "bio_conservation_score": 0.6319104972067027
+    },
+    "2329e247": {
+      "mixing_score": 0.6500625625,
+      "speed_score": 0.871530287118702,
+      "bio_conservation_score": 0.6048663451348769
+    },
+    "ed2f149e": {
+      "mixing_score": 0.6429187500000001,
+      "speed_score": 0.8834047159945955,
+      "bio_conservation_score": 0.6247237488257793
+    },
+    "6a0c7033": {
+      "mixing_score": 0.6552126875000001,
+      "speed_score": 0.728394146247262,
+      "bio_conservation_score": 0.6242043466746123
+    },
+    "813392dc": {
+      "mixing_score": 0.5538288125000002,
+      "speed_score": 0.7145614130731069,
+      "bio_conservation_score": 0.5778324550348032
+    },
+    "61a0df36": {
+      "mixing_score": 0.6172184375,
+      "speed_score": 0.5783258253403347,
+      "bio_conservation_score": 0.6304765922593177
+    },
+    "2b50d1e3": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.9154205314772494,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "b2543a62": {
+      "mixing_score": 0.6439420625,
+      "speed_score": 0.9085234726041759,
+      "bio_conservation_score": 0.6136438607602425
+    },
+    "9f887d1e": {
+      "mixing_score": 0.6470296874999999,
+      "speed_score": 0.7485970622996792,
+      "bio_conservation_score": 0.6595342062060663
+    },
+    "7b3c8251": {
+      "mixing_score": 0.684427375,
+      "speed_score": 0.8977007769664194,
+      "bio_conservation_score": 0.5866451474047183
+    },
+    "733c5689": {
+      "mixing_score": 0.64437725,
+      "speed_score": 0.8723104151805119,
+      "bio_conservation_score": 0.6573384153716408
+    },
+    "c0f88792": {
+      "mixing_score": 0.5979564375000002,
+      "speed_score": 0.7940231090547853,
+      "bio_conservation_score": 0.6260840618909495
+    },
+    "32bb57ad": {
+      "mixing_score": 0.6555196875,
+      "speed_score": 0.9160981329027941,
+      "bio_conservation_score": 0.6138042219942145
+    },
+    "242af68b": {
+      "mixing_score": 0.6437644375,
+      "speed_score": 0.8544093411909937,
+      "bio_conservation_score": 0.6038477007846815
+    },
+    "1a116ab7": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "76b71d53": {
+      "mixing_score": 0.64970725,
+      "speed_score": 0.885100765238024,
+      "bio_conservation_score": 0.6043892070509518
+    }
+  },
+  {
+    "4d9562eb": {
+      "mixing_score": 0.5822318750000001,
+      "speed_score": 0.8051816614642724,
+      "bio_conservation_score": 0.5993774465530192
+    },
+    "9f0140b4": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "b54a0426": {
+      "mixing_score": 0.628421875,
+      "speed_score": 0.883340528997121,
+      "bio_conservation_score": 0.571669273614872
+    },
+    "9011e046": {
+      "mixing_score": 0.5568255000000002,
+      "speed_score": 0.7697672604676814,
+      "bio_conservation_score": 0.5922595800082131
+    },
+    "c556c34a": {
+      "mixing_score": 0.5335448125000002,
+      "speed_score": 0.7942779771429653,
+      "bio_conservation_score": 0.6172563749283811
+    },
+    "1aa0c0ef": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8458563705268048,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "eca00a8e": {
+      "mixing_score": 0.6377631250000001,
+      "speed_score": 0.8755096332477509,
+      "bio_conservation_score": 0.623027521214883
+    },
+    "dd2dd4db": {
+      "mixing_score": 0.6403398124999999,
+      "speed_score": 0.8649636737463163,
+      "bio_conservation_score": 0.621010292888157
+    },
+    "b52722dd": {
+      "mixing_score": 0.6900193750000001,
+      "speed_score": 0.5194308668925461,
+      "bio_conservation_score": 0.6017655528567386
+    },
+    "dba6d1a9": {
+      "mixing_score": 0.537606,
+      "speed_score": 0.45531782224047895,
+      "bio_conservation_score": 0.6201876361413764
+    },
+    "c51477fc": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8553858277287257,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "a6b8734c": {
+      "mixing_score": 0.6585113125000001,
+      "speed_score": 0.7853404749074381,
+      "bio_conservation_score": 0.6255900100445352
+    },
+    "4dedfafc": {
+      "mixing_score": 0.6200110625,
+      "speed_score": 0.13269612593993396,
+      "bio_conservation_score": 0.6100568330391409
+    },
+    "e375dae0": {
+      "mixing_score": 0.6740751875000001,
+      "speed_score": 0.7060995406982,
+      "bio_conservation_score": 0.6273656026110941
+    },
+    "67fc2e99": {
+      "mixing_score": 0.6817871875000001,
+      "speed_score": 0.5341098801128655,
+      "bio_conservation_score": 0.599107597029423
+    },
+    "06d8bd2a": {
+      "mixing_score": 0.6533081875000001,
+      "speed_score": 0.8853961596772444,
+      "bio_conservation_score": 0.6271653016477745
+    },
+    "8ce01e9d": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "922cad2c": {
+      "mixing_score": 0.6566203749999999,
+      "speed_score": 0.8854956030328454,
+      "bio_conservation_score": 0.6203531099292703
+    },
+    "e8eeb489": {
+      "mixing_score": 0.7124042500000001,
+      "speed_score": 0.759913672526673,
+      "bio_conservation_score": 0.6461091416717711
+    },
+    "e99b3933": {
+      "mixing_score": 0.6434184374999999,
+      "speed_score": 0.8962549983321976,
+      "bio_conservation_score": 0.6447159462926046
+    },
+    "f05a1c96": {
+      "mixing_score": 0.6446455000000001,
+      "speed_score": 0.8978062707030059,
+      "bio_conservation_score": 0.6568494711631756
+    },
+    "d364b2ea": {
+      "mixing_score": 0.6517419375000001,
+      "speed_score": 0.8116824256592264,
+      "bio_conservation_score": 0.6333099064470668
+    },
+    "a76c8e13": {
+      "mixing_score": 0.674147875,
+      "speed_score": 0.7516598399729322,
+      "bio_conservation_score": 0.627459772060455
+    },
+    "7817c020": {
+      "mixing_score": 0.5865351250000002,
+      "speed_score": 0.7422384281400171,
+      "bio_conservation_score": 0.610299255930004
+    },
+    "6c7d471f": {
+      "mixing_score": 0.64437725,
+      "speed_score": 0.8789670099013884,
+      "bio_conservation_score": 0.6573384153716408
+    },
+    "8349b95b": {
+      "mixing_score": 0.644121625,
+      "speed_score": 0.8979400470431675,
+      "bio_conservation_score": 0.6242562768736164
+    },
+    "ce3db7bf": {
+      "mixing_score": 0.6623404375,
+      "speed_score": 0.893392400026753,
+      "bio_conservation_score": 0.6207477023385842
+    },
+    "90099ec2": {
+      "mixing_score": 0.5385536250000001,
+      "speed_score": 0.7816935204465879,
+      "bio_conservation_score": 0.6608689974343913
+    },
+    "0318f440": {
+      "mixing_score": 0.6444549375,
+      "speed_score": 0.8892469552813709,
+      "bio_conservation_score": 0.6234180950402012
+    },
+    "f98ddaeb": {
+      "mixing_score": 0.6429408125,
+      "speed_score": 0.9090553250330793,
+      "bio_conservation_score": 0.6137922708705769
+    },
+    "117b6839": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "cc3737ee": {
+      "mixing_score": 0.6445507500000001,
+      "speed_score": 0.8713023488766644,
+      "bio_conservation_score": 0.6451454843907674
+    },
+    "91890c7b": {
+      "mixing_score": 0.6577851875,
+      "speed_score": 0.8184003014242138,
+      "bio_conservation_score": 0.6160804843013822
+    },
+    "503729e9": {
+      "mixing_score": 0.6487684375000001,
+      "speed_score": 0.6916847999511865,
+      "bio_conservation_score": 0.6254756821941505
+    },
+    "7f33aec2": {
+      "mixing_score": 0.6428654375,
+      "speed_score": 0.6957964267786231,
+      "bio_conservation_score": 0.6105396372846846
+    },
+    "de7e94a0": {
+      "mixing_score": 0.6599759375,
+      "speed_score": 0.8730079834685835,
+      "bio_conservation_score": 0.5999989250023267
+    },
+    "070ca70e": {
+      "mixing_score": 0.6715118125000001,
+      "speed_score": 0.7483695949872506,
+      "bio_conservation_score": 0.62727703361805
+    },
+    "3da4637b": {
+      "mixing_score": 0.6458693125,
+      "speed_score": 0.8641526468370988,
+      "bio_conservation_score": 0.6152354427277462
+    },
+    "306dd51c": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "c14685ea": {
+      "mixing_score": 0.658771625,
+      "speed_score": 0.8702166192688179,
+      "bio_conservation_score": 0.620934859658754
+    }
+  },
+  {
+    "ab1872d6": {
       "mixing_score": 0.6429781250000001,
-      "speed_score": 0.4815327659067366,
+      "speed_score": 0.48366559197057996,
       "bio_conservation_score": 0.6036321090454313
     },
-    "4867bf1b": {
-      "mixing_score": 0.5453276250000001,
-      "speed_score": 0.7504972533862974,
-      "bio_conservation_score": 0.6119043937560701
+    "e8cfdfb6": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8603497558519132,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "31b01524": {
-      "mixing_score": 0.6481578750000001,
-      "speed_score": 0.8008616753980484,
-      "bio_conservation_score": 0.6071234415385365
+    "f6bfb9ed": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8384248190940711,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "e3f90622": {
+    "8acb08c8": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "e7bc0706": {
-      "mixing_score": 0.5355625625,
-      "speed_score": 0.704728428707285,
-      "bio_conservation_score": 0.62809997830566
+    "4a2c4d3c": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8059016778986436,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "a6a6c97b": {
-      "mixing_score": 0.7057128125000001,
-      "speed_score": 0.8045163201013993,
-      "bio_conservation_score": 0.6129138691127887
+    "3a2372bb": {
+      "mixing_score": 0.6356677500000001,
+      "speed_score": 0.7378941527622228,
+      "bio_conservation_score": 0.5809011585102942
     },
-    "83144049": {
-      "mixing_score": 0.6787683125000001,
-      "speed_score": 0.7668733271571045,
-      "bio_conservation_score": 0.5907331494247335
+    "89bc8207": {
+      "mixing_score": 0.6552126875000001,
+      "speed_score": 0.683665682046454,
+      "bio_conservation_score": 0.6242043466746123
     },
-    "c7c83a4c": {
-      "mixing_score": 0.6795938125000001,
-      "speed_score": 0.8579647580823156,
-      "bio_conservation_score": 0.5919859901638284
+    "cc2ec15e": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8023274609285856,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "e7fee475": {
+    "48dc19e4": {
+      "mixing_score": 0.6518233124999999,
+      "speed_score": 0.49779161038630887,
+      "bio_conservation_score": 0.6280853919560312
+    },
+    "b0cd6b3a": {
+      "mixing_score": 0.641801125,
+      "speed_score": 0.8513718800517363,
+      "bio_conservation_score": 0.6270943505656527
+    },
+    "bd54b13c": {
+      "mixing_score": 0.655599125,
+      "speed_score": 0.5309388721493377,
+      "bio_conservation_score": 0.6025032917874255
+    },
+    "9def9d87": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8449658472394747,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "08f07bf3": {
+      "mixing_score": 0.6424138125,
+      "speed_score": 0.797848969424664,
+      "bio_conservation_score": 0.6091014844970535
+    },
+    "7d9aed59": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8475158008615584,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "c3ecdd64": {
+      "mixing_score": 0.6413319375,
+      "speed_score": 0.9050714855388949,
+      "bio_conservation_score": 0.6255125809374091
+    },
+    "cd6eddd1": {
+      "mixing_score": 0.5334223125,
+      "speed_score": 0.8287236861265627,
+      "bio_conservation_score": 0.614765064540503
+    },
+    "1f334852": {
+      "mixing_score": 0.5411764375000001,
+      "speed_score": 0.8971972852444204,
+      "bio_conservation_score": 0.5619905281963968
+    },
+    "b69637d2": {
+      "mixing_score": 0.6484725000000001,
+      "speed_score": 0.8935798787384521,
+      "bio_conservation_score": 0.6056322999919359
+    },
+    "3610d259": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "f0733de1": {
-      "mixing_score": 0.6386390000000002,
-      "speed_score": 0.802738375826197,
-      "bio_conservation_score": 0.6393014509665873
+    "ae168dce": {
+      "mixing_score": 0.5468990000000001,
+      "speed_score": 0.6890753817486789,
+      "bio_conservation_score": 0.5782779017859186
     },
-    "e879aab3": {
-      "mixing_score": 0.596662625,
-      "speed_score": 0.3032467024492084,
-      "bio_conservation_score": 0.5967565319624175
+    "3c9711fb": {
+      "mixing_score": 0.6740751875000001,
+      "speed_score": 0.7523270853815003,
+      "bio_conservation_score": 0.6273656026110941
     },
-    "ebe7b8e6": {
-      "mixing_score": 0.7020551250000001,
-      "speed_score": 0.7569324045551973,
-      "bio_conservation_score": 0.6575337316312562
+    "b64ea3a3": {
+      "mixing_score": 0.6801880000000001,
+      "speed_score": 0.4566653888075876,
+      "bio_conservation_score": 0.6015790733430175
     },
-    "0775e1a6": {
-      "mixing_score": 0.5353577500000001,
-      "speed_score": 0.4679855896771245,
-      "bio_conservation_score": 0.5954240707993912
+    "8c6f1ffa": {
+      "mixing_score": 0.6495309375,
+      "speed_score": 0.7123602875525845,
+      "bio_conservation_score": 0.6057762566778403
     },
-    "faf4d705": {
-      "mixing_score": 0.5335916875000001,
-      "speed_score": 0.819476893559738,
-      "bio_conservation_score": 0.681660348653681
+    "83aae695": {
+      "mixing_score": 0.6468100625000001,
+      "speed_score": 0.894522460078377,
+      "bio_conservation_score": 0.6344826744320968
     },
-    "5c0f55a0": {
-      "mixing_score": 0.7561687500000001,
-      "speed_score": 0.28173332293534636,
-      "bio_conservation_score": 0.6841233257804837
+    "f090eb1d": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8932512243512365,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "d23c3d1e": {
-      "mixing_score": 0.7100595000000001,
-      "speed_score": 0.8202342641424422,
-      "bio_conservation_score": 0.7081972420510182
+    "271b904c": {
+      "mixing_score": 0.6740751875000001,
+      "speed_score": 0.7079069363944291,
+      "bio_conservation_score": 0.6273656026110941
     },
-    "090b6697": {
-      "mixing_score": 0.6693424375000001,
-      "speed_score": 0.8318090555506636,
-      "bio_conservation_score": 0.6370957702288005
+    "fe03cf65": {
+      "mixing_score": 0.6544615625,
+      "speed_score": 0.8507814390551777,
+      "bio_conservation_score": 0.5946634257335748
     },
-    "0e6c76e9": {
-      "mixing_score": 0.5986894375,
-      "speed_score": 0.5129015220967617,
-      "bio_conservation_score": 0.28251649030760984
+    "71ce64f6": {
+      "mixing_score": 0.6449263125000001,
+      "speed_score": 0.8992289145674388,
+      "bio_conservation_score": 0.6499041609990557
     },
-    "8e9f0299": {
-      "mixing_score": 0.5358600625000002,
-      "speed_score": 0.8137158413016027,
-      "bio_conservation_score": 0.6197432377166844
-    },
-    "b0199e28": {
-      "mixing_score": 0.7561687500000001,
-      "speed_score": 0.27701967978476194,
-      "bio_conservation_score": 0.6841233257804837
-    },
-    "398553dc": {
-      "mixing_score": 0.6247700625,
-      "speed_score": 0.3429284754066809,
-      "bio_conservation_score": 0.6224873592540396
-    },
-    "fcad4302": {
+    "c847082e": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "463b5034": {
-      "mixing_score": 0.5663618125000001,
-      "speed_score": 0.8269314863775179,
-      "bio_conservation_score": 0.6001920960457386
+    "914ab0d9": {
+      "mixing_score": 0.6765484375,
+      "speed_score": 0.7299334197216708,
+      "bio_conservation_score": 0.6259301143236501
     },
-    "25b77e65": {
+    "3b5ff6dc": {
+      "mixing_score": 0.536323875,
+      "speed_score": 0.12466078540648404,
+      "bio_conservation_score": 0.6245051616114489
+    }
+  },
+  {
+    "c92929ab": {
+      "mixing_score": 0.655599125,
+      "speed_score": 0.7281062312279731,
+      "bio_conservation_score": 0.6025032917874255
+    },
+    "fea20cc7": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8600729512102896,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "1eebabcf": {
+      "mixing_score": 0.5568255000000002,
+      "speed_score": 0.7781230079899315,
+      "bio_conservation_score": 0.5922595800082131
+    },
+    "8877f47d": {
+      "mixing_score": 0.6518233124999999,
+      "speed_score": 0.4950205883661598,
+      "bio_conservation_score": 0.6280853919560312
+    },
+    "59aa6418": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.816833257543816,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "61158f57": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "e02b8cff": {
-      "mixing_score": 0.5889485625000002,
-      "speed_score": 0.2740409213928711,
-      "bio_conservation_score": 0.5678721793537803
-    },
-    "1f3ee7d5": {
-      "mixing_score": 0.6535601249999999,
-      "speed_score": 0.8016809231544947,
-      "bio_conservation_score": 0.6616705799892147
-    },
-    "34e69370": {
-      "mixing_score": 0.5398894375000002,
-      "speed_score": 0.8164971075243301,
-      "bio_conservation_score": 0.5289130363370299
-    },
-    "5726252e": {
+    "f398744e": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "7395dbe0": {
-      "mixing_score": 0.7127198125,
-      "speed_score": 0.12577758892181873,
-      "bio_conservation_score": 0.4382640961638718
+    "8e7a251b": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8282574481487991,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "f83c79a4": {
-      "mixing_score": 0.7827554999999999,
-      "speed_score": 0.46516644909086735,
-      "bio_conservation_score": 0.614092498242457
+    "090a9f21": {
+      "mixing_score": 0.8839277499999998,
+      "speed_score": 0.764570957122782,
+      "bio_conservation_score": 0.3848902216707363
     },
-    "ea398d4b": {
-      "mixing_score": 0.782914625,
-      "speed_score": 0.7648961109657253,
-      "bio_conservation_score": 0.6141294075361329
+    "0cb648ee": {
+      "mixing_score": 0.6552126875000001,
+      "speed_score": 0.6958825453983166,
+      "bio_conservation_score": 0.6242043466746123
     },
-    "af33dc91": {
-      "mixing_score": 0.6718839375,
-      "speed_score": 0.7871301352343194,
-      "bio_conservation_score": 0.6303036272468003
+    "e2455513": {
+      "mixing_score": 0.6419319375,
+      "speed_score": 0.9199681346486565,
+      "bio_conservation_score": 0.6207431358406709
     },
-    "dcc30c79": {
-      "mixing_score": 0.8018508750000001,
-      "speed_score": 0.6791083115440207,
-      "bio_conservation_score": 0.6010014184219816
+    "9c0c612e": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8500438063070138,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "39bd9cdb": {
-      "mixing_score": 0.6729701875,
-      "speed_score": 0.8473190779638665,
-      "bio_conservation_score": 0.6804439595432963
+    "48977961": {
+      "mixing_score": 0.6219033125000001,
+      "speed_score": 0.6434857770647546,
+      "bio_conservation_score": 0.2893703446526822
     },
-    "98929903": {
-      "mixing_score": 0.698759375,
-      "speed_score": 0.8064274182368976,
-      "bio_conservation_score": 0.6291088924445795
+    "2e7fa1ef": {
+      "mixing_score": 0.6429883125,
+      "speed_score": 0.8626007811380116,
+      "bio_conservation_score": 0.6240901356341989
     },
-    "ddda0360": {
-      "mixing_score": 0.54149775,
-      "speed_score": 0.8979398548071839,
-      "bio_conservation_score": 0.6076535045924931
+    "6b818035": {
+      "mixing_score": 0.6449263125000001,
+      "speed_score": 0.8879758074828451,
+      "bio_conservation_score": 0.6499041609990557
     },
-    "6cbc98b2": {
-      "mixing_score": 0.7351316875,
-      "speed_score": 0.7460076188999089,
-      "bio_conservation_score": 0.6163312791890658
+    "a35e2452": {
+      "mixing_score": 0.64437725,
+      "speed_score": 0.8756845617812897,
+      "bio_conservation_score": 0.6573384153716408
     },
-    "1323b233": {
+    "c8e7c703": {
+      "mixing_score": 0.6420863125,
+      "speed_score": 0.9169709533226966,
+      "bio_conservation_score": 0.5981731152094536
+    },
+    "d6f7926a": {
+      "mixing_score": 0.6411945625000001,
+      "speed_score": 0.89028546927634,
+      "bio_conservation_score": 0.624504691989709
+    },
+    "1997564c": {
+      "mixing_score": 0.6623404375,
+      "speed_score": 0.881569306628946,
+      "bio_conservation_score": 0.6207477023385842
+    },
+    "e43094ff": {
+      "mixing_score": 0.6362885000000001,
+      "speed_score": 0.7259717563106415,
+      "bio_conservation_score": 0.6331145435321732
+    },
+    "f2c6309c": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "1e4f8623": {
-      "mixing_score": 0.65580575,
-      "speed_score": 0.8150290252889413,
-      "bio_conservation_score": 0.6084836030410272
+    "17a65673": {
+      "mixing_score": 0.6450568125,
+      "speed_score": 0.8800261345041547,
+      "bio_conservation_score": 0.6083223982288217
     },
-    "67038a88": {
-      "mixing_score": 0.756784375,
-      "speed_score": 0.7205477277592108,
-      "bio_conservation_score": 0.6559219274396588
+    "b9515880": {
+      "mixing_score": 0.641642375,
+      "speed_score": 0.8953617050344969,
+      "bio_conservation_score": 0.608850007482238
     },
-    "cbff0988": {
-      "mixing_score": 0.9425748124999999,
-      "speed_score": 0.8999524523106975,
-      "bio_conservation_score": 0.3844135519762765
+    "cb9b99ea": {
+      "mixing_score": 0.6420139375,
+      "speed_score": 0.6291262229123343,
+      "bio_conservation_score": 0.605107876401872
     },
-    "3d6b6077": {
-      "mixing_score": 0.5986490000000001,
-      "speed_score": 0.8942440145533315,
-      "bio_conservation_score": 0.6293483439788148
+    "87dcdb88": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.851276151909915,
+      "bio_conservation_score": 0.6227466433683982
     },
-    "a3410632": {
-      "mixing_score": 0.7547143125,
-      "speed_score": 0.7720646963202206,
-      "bio_conservation_score": 0.5944132659656389
+    "4e2abcbd": {
+      "mixing_score": 0.6420721249999999,
+      "speed_score": 0.8836006835716959,
+      "bio_conservation_score": 0.598657011329095
     },
-    "42fee826": {
-      "mixing_score": 0.5335248125000001,
-      "speed_score": 0.7233095029840821,
-      "bio_conservation_score": 0.5946759233829384
+    "fb795803": {
+      "mixing_score": 0.6419273125,
+      "speed_score": 0.8828898084347966,
+      "bio_conservation_score": 0.5920512542132416
     },
-    "c42e5aff": {
+    "5b965959": {
+      "mixing_score": 0.6339921250000001,
+      "speed_score": 0.886870843622848,
+      "bio_conservation_score": 0.6176196754428526
+    },
+    "6752025a": {
+      "mixing_score": 0.65869175,
+      "speed_score": 0.8547542718822326,
+      "bio_conservation_score": 0.6307456845853835
+    },
+    "d61aae90": {
+      "mixing_score": 0.6444298125,
+      "speed_score": 0.7560023388591645,
+      "bio_conservation_score": 0.610078644850901
+    },
+    "599b269c": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "e0839b3f": {
+    "81fff84e": {
+      "mixing_score": 0.6449263125000001,
+      "speed_score": 0.8817601971097853,
+      "bio_conservation_score": 0.6499041609990557
+    },
+    "608dd8e6": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "ff158a0a": {
+    "93b612f7": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "ea086154": {
+    "3e83d0c2": {
+      "mixing_score": 0.6504544375000001,
+      "speed_score": 0.8864084588600185,
+      "bio_conservation_score": 0.6337884879565328
+    }
+  },
+  {
+    "c40d3031": {
+      "mixing_score": 0.6356891875,
+      "speed_score": 0.6869292279976252,
+      "bio_conservation_score": 0.5800462671287953
+    },
+    "cc52e179": {
+      "mixing_score": 0.6429781250000001,
+      "speed_score": 0.9011404164625605,
+      "bio_conservation_score": 0.6036321090454313
+    },
+    "a33f7a2e": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8365435742991912,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "6d718d1b": {
+      "mixing_score": 0.6356677500000001,
+      "speed_score": 0.8367611987999711,
+      "bio_conservation_score": 0.5809011585102942
+    },
+    "6dd5c1c8": {
+      "mixing_score": 0.6932977499999999,
+      "speed_score": 0.72935145114595,
+      "bio_conservation_score": 0.5911904094794056
+    },
+    "589c60ad": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8941216296733069,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "43036833": {
       "mixing_score": 0.5,
       "speed_score": 0.5,
       "bio_conservation_score": 0.5
     },
-    "3f6925d3": {
-      "mixing_score": 0.74885725,
-      "speed_score": 0.841250962233899,
-      "bio_conservation_score": 0.5991096732222436
+    "5c44c8c7": {
+      "mixing_score": 0.6461023125,
+      "speed_score": 0.6526524102897495,
+      "bio_conservation_score": 0.6036595467490259
     },
-    "c6573b84": {
-      "mixing_score": 0.7896861875,
-      "speed_score": 0.6574910930052031,
-      "bio_conservation_score": 0.6068636727086618
+    "287a5080": {
+      "mixing_score": 0.5430411875000001,
+      "speed_score": 0.38494336263579537,
+      "bio_conservation_score": 0.6553334616681994
     },
-    "0a8a0cad": {
-      "mixing_score": 0.5337823125000001,
-      "speed_score": 0.4607666517885931,
-      "bio_conservation_score": 0.5704781605294521
+    "b93a1908": {
+      "mixing_score": 0.6439420625,
+      "speed_score": 0.851558041331071,
+      "bio_conservation_score": 0.6136438607602425
     },
-    "23126327": {
-      "mixing_score": 0.7561687500000001,
-      "speed_score": 0.2814989720394599,
-      "bio_conservation_score": 0.6841233257804837
+    "8e7f9111": {
+      "mixing_score": 0.6371558749999999,
+      "speed_score": 0.8325737029396217,
+      "bio_conservation_score": 0.6247418057490433
+    },
+    "85dcffca": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8295891457888348,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "c8f7eb1c": {
+      "mixing_score": 0.64487825,
+      "speed_score": 0.8310728166353105,
+      "bio_conservation_score": 0.6246877611115227
+    },
+    "04b12f8a": {
+      "mixing_score": 0.6441006875,
+      "speed_score": 0.881259054364532,
+      "bio_conservation_score": 0.6145341322959106
+    },
+    "ae5988c8": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.831235873333908,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "0d92f53b": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "9e121ebb": {
+      "mixing_score": 0.5430411875000001,
+      "speed_score": 0.3952008344408488,
+      "bio_conservation_score": 0.6553334616681994
+    },
+    "6da50394": {
+      "mixing_score": 0.6465743125,
+      "speed_score": 0.8636848293656268,
+      "bio_conservation_score": 0.620658453571539
+    },
+    "08f359b1": {
+      "mixing_score": 0.633178875,
+      "speed_score": 0.7921683384916236,
+      "bio_conservation_score": 0.6139783093804256
+    },
+    "84bb942c": {
+      "mixing_score": 0.587504875,
+      "speed_score": 0.8895958761714603,
+      "bio_conservation_score": 0.5988434466023659
+    },
+    "99aec2da": {
+      "mixing_score": 0.618470375,
+      "speed_score": 0.818176001598,
+      "bio_conservation_score": 0.6351852167669003
+    },
+    "dd626173": {
+      "mixing_score": 0.6374610625,
+      "speed_score": 0.46541823630369744,
+      "bio_conservation_score": 0.6235059895228289
+    },
+    "55e62e67": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8451676097373823,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "7032cee7": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.9009040821485929,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "108459b2": {
+      "mixing_score": 0.6740751875000001,
+      "speed_score": 0.7058728097272119,
+      "bio_conservation_score": 0.6273656026110941
+    },
+    "8f674c2d": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.830062798387333,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "46eeac45": {
+      "mixing_score": 0.6425675625,
+      "speed_score": 0.8365904608074607,
+      "bio_conservation_score": 0.60395323352037
+    },
+    "0d93c121": {
+      "mixing_score": 0.641801125,
+      "speed_score": 0.8643237785150535,
+      "bio_conservation_score": 0.6270943505656527
+    },
+    "eedda191": {
+      "mixing_score": 0.6580417500000001,
+      "speed_score": 0.8919841657702812,
+      "bio_conservation_score": 0.6018062415527172
+    },
+    "1766f3ef": {
+      "mixing_score": 0.6438685000000001,
+      "speed_score": 0.8542984862251808,
+      "bio_conservation_score": 0.6046060621238598
+    },
+    "08a207ee": {
+      "mixing_score": 0.5538288125000002,
+      "speed_score": 0.7315712012770347,
+      "bio_conservation_score": 0.5778324550348032
+    },
+    "1d5f9dd1": {
+      "mixing_score": 0.5615191875000001,
+      "speed_score": 0.7973820995180123,
+      "bio_conservation_score": 0.6097527013475119
+    },
+    "f0c4decb": {
+      "mixing_score": 0.6468100625000001,
+      "speed_score": 0.8793892105464545,
+      "bio_conservation_score": 0.6344826744320968
+    },
+    "bb12f72d": {
+      "mixing_score": 0.6577851875,
+      "speed_score": 0.8080051828793144,
+      "bio_conservation_score": 0.6160804843013822
+    },
+    "6782e314": {
+      "mixing_score": 0.6481513125,
+      "speed_score": 0.6406437132036509,
+      "bio_conservation_score": 0.6152398822574481
+    },
+    "e4e18fdc": {
+      "mixing_score": 0.648258125,
+      "speed_score": 0.7771256291685952,
+      "bio_conservation_score": 0.5942156704572801
+    },
+    "e2809423": {
+      "mixing_score": 0.64487825,
+      "speed_score": 0.9049109760722979,
+      "bio_conservation_score": 0.6246877611115227
+    },
+    "ed0cded7": {
+      "mixing_score": 0.67594075,
+      "speed_score": 0.8019960874452731,
+      "bio_conservation_score": 0.7183895715731935
+    },
+    "a48255a1": {
+      "mixing_score": 0.6535560625000001,
+      "speed_score": 0.7337591883819036,
+      "bio_conservation_score": 0.5995941998936087
+    },
+    "0e21b5eb": {
+      "mixing_score": 0.658771625,
+      "speed_score": 0.8724328900416944,
+      "bio_conservation_score": 0.620934859658754
+    },
+    "d977ff4b": {
+      "mixing_score": 0.5340362500000001,
+      "speed_score": 0.6463969986174518,
+      "bio_conservation_score": 0.6141489089919101
+    },
+    "66576390": {
+      "mixing_score": 0.6413319375,
+      "speed_score": 0.903972881917025,
+      "bio_conservation_score": 0.6255125809374091
+    }
+  },
+  {
+    "49cb4f2f": {
+      "mixing_score": 0.5335315,
+      "speed_score": 0.8241563669324644,
+      "bio_conservation_score": 0.6199851892300893
+    },
+    "e3089506": {
+      "mixing_score": 0.5896782500000001,
+      "speed_score": 0.6535067976764017,
+      "bio_conservation_score": 0.5867333538555817
+    },
+    "19249de4": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "2214f1d9": {
+      "mixing_score": 0.63920275,
+      "speed_score": 0.8505166199666713,
+      "bio_conservation_score": 0.6065379237636614
+    },
+    "c949bf0d": {
+      "mixing_score": 0.655599125,
+      "speed_score": 0.7035604894037447,
+      "bio_conservation_score": 0.6025032917874255
+    },
+    "4fd3ca77": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8102999940497303,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "40512279": {
+      "mixing_score": 0.5448474375000001,
+      "speed_score": 0.59460561395172,
+      "bio_conservation_score": 0.5415230923052964
+    },
+    "e087de82": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.7990240192757717,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "e1c0c050": {
+      "mixing_score": 0.6402604375000001,
+      "speed_score": 0.8088834187253546,
+      "bio_conservation_score": 0.6072920404693997
+    },
+    "6fa0137e": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "c84d3a1a": {
+      "mixing_score": 0.6801880000000001,
+      "speed_score": 0.46001796945193174,
+      "bio_conservation_score": 0.6015790733430175
+    },
+    "a134fed7": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "a20d6539": {
+      "mixing_score": 0.6465743125,
+      "speed_score": 0.8962324001069247,
+      "bio_conservation_score": 0.620658453571539
+    },
+    "5a2eca95": {
+      "mixing_score": 0.6580417500000001,
+      "speed_score": 0.880210446127743,
+      "bio_conservation_score": 0.6018062415527172
+    },
+    "40b2abc1": {
+      "mixing_score": 0.6552126875000001,
+      "speed_score": 0.7007732841947648,
+      "bio_conservation_score": 0.6242043466746123
+    },
+    "09d247d6": {
+      "mixing_score": 0.6704585625,
+      "speed_score": 0.8225341550495897,
+      "bio_conservation_score": 0.5911114157892269
+    },
+    "17f5adff": {
+      "mixing_score": 0.5434716875000002,
+      "speed_score": 0.8263383040724257,
+      "bio_conservation_score": 0.5897337118877198
+    },
+    "88a93d67": {
+      "mixing_score": 0.6552126875000001,
+      "speed_score": 0.6993176894710964,
+      "bio_conservation_score": 0.6242043466746123
+    },
+    "2b7b0a0b": {
+      "mixing_score": 0.7274435000000001,
+      "speed_score": 0.35298404752298734,
+      "bio_conservation_score": 0.3727577323762258
+    },
+    "c1e4aad5": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "9e223590": {
+      "mixing_score": 0.6760376874999999,
+      "speed_score": 0.8189699846019809,
+      "bio_conservation_score": 0.6373950533293252
+    },
+    "b1f16040": {
+      "mixing_score": 0.6410414375,
+      "speed_score": 0.437165732901508,
+      "bio_conservation_score": 0.6114994803288764
+    },
+    "4fcaa79d": {
+      "mixing_score": 0.6391565625000001,
+      "speed_score": 0.864610455668632,
+      "bio_conservation_score": 0.6069400236097408
+    },
+    "fe831341": {
+      "mixing_score": 0.642427125,
+      "speed_score": 0.9048904771387167,
+      "bio_conservation_score": 0.6582311167585055
+    },
+    "2e4056dd": {
+      "mixing_score": 0.5339548125000001,
+      "speed_score": 0.8597453911435015,
+      "bio_conservation_score": 0.6247073938386114
+    },
+    "9d391987": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "430451f9": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "3fd26cdb": {
+      "mixing_score": 0.6441749375000001,
+      "speed_score": 0.893786862839445,
+      "bio_conservation_score": 0.6039209049887327
+    },
+    "f7c72594": {
+      "mixing_score": 0.6482590625,
+      "speed_score": 0.9005893558654736,
+      "bio_conservation_score": 0.6199303830776648
+    },
+    "4611b0a1": {
+      "mixing_score": 0.6434184374999999,
+      "speed_score": 0.8950691750403488,
+      "bio_conservation_score": 0.6447159462926046
+    },
+    "e47e2691": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "25e3647e": {
+      "mixing_score": 0.6746428125000001,
+      "speed_score": 0.8762068383467505,
+      "bio_conservation_score": 0.594402147437288
+    }
+  },
+  {
+    "bea2999e": {
+      "mixing_score": 0.6452463749999999,
+      "speed_score": 0.9114598533642578,
+      "bio_conservation_score": 0.6023926777569866
+    },
+    "b579b67b": {
+      "mixing_score": 0.640690375,
+      "speed_score": 0.7335674609282087,
+      "bio_conservation_score": 0.6064957996724286
+    },
+    "623c14b7": {
+      "mixing_score": 0.6707086875,
+      "speed_score": 0.1393343344480601,
+      "bio_conservation_score": 0.6270234736852356
+    },
+    "a1596b56": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8374353176023772,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "55cf8bd2": {
+      "mixing_score": 0.638136875,
+      "speed_score": 0.8698452082240662,
+      "bio_conservation_score": 0.6111774237668987
+    },
+    "ab0111d6": {
+      "mixing_score": 0.642175375,
+      "speed_score": 0.8709799267590952,
+      "bio_conservation_score": 0.608052851174526
+    },
+    "d145504c": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8574660994253308,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "b8797e0e": {
+      "mixing_score": 0.63920275,
+      "speed_score": 0.8124762827003329,
+      "bio_conservation_score": 0.6065379237636614
+    },
+    "3824a229": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.8104232115899509,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "ac1b4ba6": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "e33f7e71": {
+      "mixing_score": 0.6387665625,
+      "speed_score": 0.894301596598574,
+      "bio_conservation_score": 0.6179508938624018
+    },
+    "5cb3d4c2": {
+      "mixing_score": 0.6426476875000001,
+      "speed_score": 0.9036353714212956,
+      "bio_conservation_score": 0.6240795935268721
+    },
+    "fc53b71b": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "e356db0f": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.902181102418096,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "19e7f261": {
+      "mixing_score": 0.6482590625,
+      "speed_score": 0.9060431767191863,
+      "bio_conservation_score": 0.6199303830776648
+    },
+    "d9e5dd3b": {
+      "mixing_score": 0.658771625,
+      "speed_score": 0.8883536467196943,
+      "bio_conservation_score": 0.620934859658754
+    },
+    "43efee4c": {
+      "mixing_score": 0.6552126875000001,
+      "speed_score": 0.7152395171033705,
+      "bio_conservation_score": 0.6242043466746123
+    },
+    "787399a3": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.835664050740298,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "68978560": {
+      "mixing_score": 0.6591110000000001,
+      "speed_score": 0.6251730317457266,
+      "bio_conservation_score": 0.6160203514991611
+    },
+    "a320542e": {
+      "mixing_score": 0.658771625,
+      "speed_score": 0.8845760437725847,
+      "bio_conservation_score": 0.620934859658754
+    },
+    "967b4b3c": {
+      "mixing_score": 0.6552126875000001,
+      "speed_score": 0.701293637483886,
+      "bio_conservation_score": 0.6242043466746123
+    },
+    "eea3aa4d": {
+      "mixing_score": 0.6411945625000001,
+      "speed_score": 0.8514660740535028,
+      "bio_conservation_score": 0.624504691989709
+    },
+    "bdbce5c7": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "cb0e7225": {
+      "mixing_score": 0.6374610625,
+      "speed_score": 0.8870981830610368,
+      "bio_conservation_score": 0.623793925346817
+    },
+    "0a734cb9": {
+      "mixing_score": 0.6472925625,
+      "speed_score": 0.867459194731922,
+      "bio_conservation_score": 0.6226369334838885
+    },
+    "8ba70a0c": {
+      "mixing_score": 0.64585725,
+      "speed_score": 0.3204889050030163,
+      "bio_conservation_score": 0.6054758451481543
+    },
+    "fc0fe884": {
+      "mixing_score": 0.5576095,
+      "speed_score": 0.8358533994687116,
+      "bio_conservation_score": 0.5730078854925641
+    },
+    "74e1a09a": {
+      "mixing_score": 0.674147875,
+      "speed_score": 0.7432779335464831,
+      "bio_conservation_score": 0.627459772060455
+    },
+    "4ae683df": {
+      "mixing_score": 0.6445945,
+      "speed_score": 0.41962733110648825,
+      "bio_conservation_score": 0.6049238539813129
+    },
+    "8d54efb1": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "43f190b0": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "c9c1b4a1": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.9002203598602935,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "b763b470": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "a2ea0bf1": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "483fc9fb": {
+      "mixing_score": 0.6377731249999999,
+      "speed_score": 0.913860409987243,
+      "bio_conservation_score": 0.6227466433683982
+    },
+    "249bafed": {
+      "mixing_score": 0.641225625,
+      "speed_score": 0.8964170494970576,
+      "bio_conservation_score": 0.6086171885821757
+    },
+    "2be0b19b": {
+      "mixing_score": 0.5,
+      "speed_score": 0.5,
+      "bio_conservation_score": 0.5
+    },
+    "3e253716": {
+      "mixing_score": 0.662567375,
+      "speed_score": 0.7883481787920765,
+      "bio_conservation_score": 0.5615197178518997
+    },
+    "0f48fdec": {
+      "mixing_score": 0.67594075,
+      "speed_score": 0.7865270222958811,
+      "bio_conservation_score": 0.7183895715731935
+    },
+    "d7b768ef": {
+      "mixing_score": 0.644074,
+      "speed_score": 0.8819127835914714,
+      "bio_conservation_score": 0.6162118338086909
+    },
+    "71583aa2": {
+      "mixing_score": 0.645322,
+      "speed_score": 0.8898064927829916,
+      "bio_conservation_score": 0.6094303777202732
+    },
+    "b24515e7": {
+      "mixing_score": 0.6431255625,
+      "speed_score": 0.8706872034864821,
+      "bio_conservation_score": 0.618882616557357
+    },
+    "152ec231": {
+      "mixing_score": 0.5495550625000001,
+      "speed_score": 0.7252809352091283,
+      "bio_conservation_score": 0.5906793671446953
+    },
+    "6d95b319": {
+      "mixing_score": 0.5464683125000002,
+      "speed_score": 0.7375908974444872,
+      "bio_conservation_score": 0.6355912272023556
+    },
+    "441128de": {
+      "mixing_score": 0.6757475625000001,
+      "speed_score": 0.8475998939465464,
+      "bio_conservation_score": 0.6149801810316582
+    },
+    "fb8c8f21": {
+      "mixing_score": 0.7080922500000001,
+      "speed_score": 0.29459367772214257,
+      "bio_conservation_score": 0.6023418574215134
+    },
+    "a0f4a6d3": {
+      "mixing_score": 0.6464334375,
+      "speed_score": 0.8835960299625626,
+      "bio_conservation_score": 0.6213145846189991
+    },
+    "6a3e4aae": {
+      "mixing_score": 0.6482590625,
+      "speed_score": 0.8930325092224367,
+      "bio_conservation_score": 0.6199303830776648
+    },
+    "f65f6c7c": {
+      "mixing_score": 0.6623404375,
+      "speed_score": 0.8732311792138574,
+      "bio_conservation_score": 0.6207477023385842
+    },
+    "678df377": {
+      "mixing_score": 0.6667224375,
+      "speed_score": 0.8453585640668434,
+      "bio_conservation_score": 0.5998228586719104
     }
   }
 ]

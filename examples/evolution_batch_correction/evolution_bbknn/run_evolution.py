@@ -78,8 +78,8 @@ async def run_evolution(
         # Create configuration optimized for multi-file evolution
         config = EvolutionConfig(
             max_iterations=iterations,
-            num_workers=2,
-            num_islands=2,
+            num_workers=8,
+            num_islands=8,
             num_inspirations=1,
             num_top_programs=2,
             max_parallel_evaluations=2,

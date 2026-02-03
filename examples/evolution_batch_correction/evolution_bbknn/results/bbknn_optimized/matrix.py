@@ -31,119 +31,161 @@ except ImportError:
 def get_sparse_matrix_from_indices_distances_umap(knn_indices, knn_dists, n_obs, n_neighbors):
 	'''
 	Copied out of scanpy.neighbors
-
-	Vectorized version (Change 6).
 	'''
 	rows = np.repeat(np.arange(n_obs, dtype=np.int64), n_neighbors)
 	cols = knn_indices.reshape(-1).astype(np.int64, copy=False)
 	vals = knn_dists.reshape(-1).astype(np.float64, copy=False)
 
-	# mask out missing neighbors (-1)
-	mask = cols != -1
+	# mask invalid neighbors (-1)
+	mask = cols >= 0
 	rows = rows[mask]
-	vals = vals[mask]
 	cols = cols[mask]
+	vals = vals[mask]
 
-	# self-distance should be 0
-	vals = vals.copy()
-	vals[rows == cols] = 0.0
+	# diagonal rule: distance to self is zero
+	diag_mask = cols == rows
+	if np.any(diag_mask):
+		vals = vals.copy()
+		vals[diag_mask] = 0.0
 
 	result = coo_matrix((vals, (rows, cols)), shape=(n_obs, n_obs))
 	result.eliminate_zeros()
 	return result.tocsr()
 
-def compute_connectivities_umap(
-		knn_indices, knn_dists,
+def compute_connectivities_umap(knn_indices, knn_dists,
 		n_obs, n_neighbors, set_op_mix_ratio=1.0,
-		local_connectivity=1.0,
-		knn_intra_indices=None, knn_intra_dists=None,
-		knn_cross_indices=None, knn_cross_dists=None,
-		edge_type_mix_lambda=0.5,
-		adaptive_lambda=True,
-		lam_min=0.03,
-	):
+		local_connectivity=1.0):
 	'''
-	Copied out of scanpy.neighbors, extended with an edge-type-aware two-channel union.
+	Copied out of scanpy.neighbors
 
-	If knn_intra_* and knn_cross_* are provided, compute two fuzzy simplicial sets
-	(intra-manifold vs cross-batch alignment) and combine them via a controlled union:
-		cnts = (1-lambda_i)*cnts_intra + lambda_i*cnts_cross
-	where lambda_i can be adaptive per cell based on intra-neighborhood dispersion.
-
-	Falls back to the original single-channel behavior if split inputs are not provided.
+	This is from umap.fuzzy_simplicial_set [McInnes18]_.
+	Given a set of data X, a neighborhood size, and a measure of distance
+	compute the fuzzy simplicial set (here represented as a fuzzy graph in
+	the form of a sparse matrix) associated to the data. This is done by
+	locally approximating geodesic distance at each point, creating a fuzzy
+	simplicial set for each such point, and then combining all the local
+	fuzzy simplicial sets into a global one via a fuzzy union.
 	'''
-	# original behavior
-	if knn_intra_indices is None or knn_cross_indices is None:
-		X = coo_matrix(([], ([], [])), shape=(n_obs, 1))
-		connectivities = fuzzy_simplicial_set(
-			X, n_neighbors, None, None,
-			knn_indices=knn_indices, knn_dists=knn_dists,
-			set_op_mix_ratio=set_op_mix_ratio,
-			local_connectivity=local_connectivity
-		)
-		if isinstance(connectivities, tuple):
-			# In umap-learn 0.4, this returns (result, sigmas, rhos)
-			connectivities = connectivities[0]
-		distances = get_sparse_matrix_from_indices_distances_umap(
-			knn_indices, knn_dists, n_obs, n_neighbors
-		)
-		return distances, connectivities.tocsr()
-
-	# two-channel fuzzy union
-	k_intra = knn_intra_indices.shape[1]
-	k_cross = knn_cross_indices.shape[1]
-
 	X = coo_matrix(([], ([], [])), shape=(n_obs, 1))
-
-	cnts_intra = fuzzy_simplicial_set(
-		X, k_intra, None, None,
-		knn_indices=knn_intra_indices, knn_dists=knn_intra_dists,
-		set_op_mix_ratio=set_op_mix_ratio,
-		local_connectivity=local_connectivity
-	)
-	if isinstance(cnts_intra, tuple):
-		cnts_intra = cnts_intra[0]
-	cnts_intra = cnts_intra.tocsr()
-
-	cnts_cross = fuzzy_simplicial_set(
-		X, k_cross, None, None,
-		knn_indices=knn_cross_indices, knn_dists=knn_cross_dists,
-		set_op_mix_ratio=set_op_mix_ratio,
-		local_connectivity=local_connectivity
-	)
-	if isinstance(cnts_cross, tuple):
-		cnts_cross = cnts_cross[0]
-	cnts_cross = cnts_cross.tocsr()
-
-	# compute merged distances for downstream compatibility (single sparse distance matrix)
+	connectivities = fuzzy_simplicial_set(X, n_neighbors, None, None,
+										  knn_indices=knn_indices, knn_dists=knn_dists,
+										  set_op_mix_ratio=set_op_mix_ratio,
+										  local_connectivity=local_connectivity)
+	if isinstance(connectivities, tuple):
+		# In umap-learn 0.4, this returns (result, sigmas, rhos)
+		connectivities = connectivities[0]
 	distances = get_sparse_matrix_from_indices_distances_umap(knn_indices, knn_dists, n_obs, n_neighbors)
 
-	# lambda: either scalar or adaptive per cell using intra-neighborhood dispersion
-	if adaptive_lambda:
-		# dispersion proxy: median intra distance; map higher dispersion -> higher lambda
-		intra_med = np.nanmedian(
-			np.where(np.isfinite(knn_intra_dists), knn_intra_dists, np.nan),
-			axis=1
-		)
-		# robust scale to [0,1]
-		lo = np.nanpercentile(intra_med, 10)
-		hi = np.nanpercentile(intra_med, 90)
-		den = (hi - lo) if np.isfinite(hi - lo) and (hi - lo) > 0 else 1.0
-		scaled_disp = (intra_med - lo) / den
-		scaled_disp = np.clip(scaled_disp, 0.0, 1.0)
-
-		# Fix bias: treat edge_type_mix_lambda as the *maximum* cross weight, scaled by dispersion.
-		lam = float(edge_type_mix_lambda) * scaled_disp
-		lam = np.clip(lam, float(lam_min), float(edge_type_mix_lambda))
-	else:
-		lam = float(edge_type_mix_lambda) * np.ones(n_obs, dtype=float)
-
-	# Row-wise scaling (Change 5): avoid diagonal sparse matmuls.
-	cnts_intra = cnts_intra.multiply((1.0 - lam)[:, None])
-	cnts_cross = cnts_cross.multiply(lam[:, None])
-	connectivities = cnts_intra + cnts_cross
-
 	return distances, connectivities.tocsr()
+
+
+def compute_connectivities_batchaware_kernel(knn_indices, knn_dists, batch_list,
+		set_op_mix_ratio=1.0, local_connectivity=1.0):
+	'''
+	Batch-aware connectivity construction using a self-tuning kernel mixture.
+
+	- Distances are converted to affinities via a self-tuning kernel (Zelnik-Manor & Perona).
+	- Within-batch and cross-batch edges are weighted with separate local scales and a
+	  cross-batch damping factor to reduce over-correction.
+	- Returns (distances, connectivities) as CSR matrices, matching scanpy/neighbors output.
+
+	Notes
+	-----
+	This function is internal and does not change the public API. It is called by bbknn()
+	with the available batch_list.
+	'''
+	batch_list = np.asarray([str(i) for i in batch_list])
+	n_obs = int(knn_indices.shape[0])
+	n_neighbors = int(knn_indices.shape[1])
+
+	# distances matrix (like scanpy) is still based on raw knn_dists
+	distances = get_sparse_matrix_from_indices_distances_umap(knn_indices, knn_dists, n_obs, n_neighbors)
+
+	# Build local scales for within- and cross-batch edges per node.
+	# Use a robust "kth neighbor" scale; fallback to median / 1.0 if absent.
+	d = np.asarray(knn_dists, dtype=np.float64, order='C')
+	inds = np.asarray(knn_indices, dtype=np.int64, order='C')
+
+	# per-edge batch relationship mask (n_obs, n_neighbors)
+	nb_batches = batch_list[inds]
+	self_batches = batch_list[:, None]
+	is_within = (nb_batches == self_batches)
+
+	# pick kth index within available neighbours for scale estimation
+	kth = int(max(0, min(n_neighbors - 1, int(local_connectivity))))
+	# compute within/cross scales: kth smallest within/cross distance per row (where available)
+	sigma_in = np.ones(n_obs, dtype=np.float64)
+	sigma_cross = np.ones(n_obs, dtype=np.float64)
+
+	for i in range(n_obs):
+		di = d[i]
+		wi = is_within[i]
+		# within
+		if np.any(wi):
+			v = di[wi]
+			kk = int(min(kth, v.shape[0] - 1))
+			s = np.partition(v, kk)[kk]
+			if np.isfinite(s) and s > 0:
+				sigma_in[i] = s
+			else:
+				m = np.nanmedian(v)
+				if np.isfinite(m) and m > 0:
+					sigma_in[i] = m
+		# cross
+		ci = ~wi
+		if np.any(ci):
+			v = di[ci]
+			kk = int(min(kth, v.shape[0] - 1))
+			s = np.partition(v, kk)[kk]
+			if np.isfinite(s) and s > 0:
+				sigma_cross[i] = s
+			else:
+				m = np.nanmedian(v)
+				if np.isfinite(m) and m > 0:
+					sigma_cross[i] = m
+
+	# mixture parameters (internal constants, no public API change)
+	# damping for cross-batch edges to avoid dominating local structure
+	lmbda = 0.5
+
+	rows = np.repeat(np.arange(n_obs, dtype=np.int64), n_neighbors)
+	cols = inds.reshape(-1).astype(np.int64, copy=False)
+	dvals = d.reshape(-1).astype(np.float64, copy=False)
+
+	# mask invalid neighbors (-1)
+	mask = cols >= 0
+	rows = rows[mask]
+	cols = cols[mask]
+	dvals = dvals[mask]
+
+	# compute weights with self-tuning kernel; choose within vs cross local scales
+	is_within_flat = (batch_list[rows] == batch_list[cols])
+
+	si = np.where(is_within_flat, sigma_in[rows], sigma_cross[rows])
+	sj = np.where(is_within_flat, sigma_in[cols], sigma_cross[cols])
+	den = (si * sj) + 1e-12
+
+	w = np.exp(-(dvals ** 2) / den)
+	w *= np.where(is_within_flat, 1.0, lmbda)
+
+	# Build directed weight matrix then symmetrise using a UMAP-like set operation mix on weights
+	W = coo_matrix((w, (rows, cols)), shape=(n_obs, n_obs)).tocsr()
+	W.eliminate_zeros()
+
+	WT = W.T.tocsr()
+	if set_op_mix_ratio is None:
+		set_op_mix_ratio = 1.0
+	set_op_mix_ratio = float(set_op_mix_ratio)
+
+	# union with mutual emphasis (UMAP-style on weights):
+	# W_union = W + WT - W*WT; then blend with intersection by set_op_mix_ratio
+	# Intersection = W*WT (elementwise)
+	inter = W.multiply(WT).tocsr()
+	union = (W + WT - inter).tocsr()
+	connectivities = (set_op_mix_ratio * union + (1.0 - set_op_mix_ratio) * inter).tocsr()
+	connectivities.eliminate_zeros()
+
+	return distances, connectivities
 
 def create_tree(data, params):
 	'''
@@ -198,13 +240,16 @@ def query_tree(data, ckd, params):
 		storing the knn algorithm to use.
 	'''
 	if params['computation'] == 'annoy':
-		ckdo_ind = []
-		ckdo_dist = []
-		for i in np.arange(data.shape[0]):
-			holder = ckd.get_nns_by_vector(data[i,:],params['neighbors_within_batch'],include_distances=True)
-			ckdo_ind.append(holder[0])
-			ckdo_dist.append(holder[1])
-		ckdout = (np.asarray(ckdo_dist),np.asarray(ckdo_ind))
+		# Reduce Python overhead by preallocating arrays and filling them
+		k = int(params['neighbors_within_batch'])
+		n = int(data.shape[0])
+		ckdo_ind = np.empty((n, k), dtype=np.int64)
+		ckdo_dist = np.empty((n, k), dtype=np.float64)
+		for i in range(n):
+			inds, dists = ckd.get_nns_by_vector(data[i, :], k, include_distances=True)
+			ckdo_ind[i, :] = inds
+			ckdo_dist[i, :] = dists
+		ckdout = (ckdo_dist, ckdo_ind)
 	elif params['computation'] == 'pynndescent':
 		ckdout = ckd.query(data, k=params['neighbors_within_batch'])
 		ckdout = (ckdout[1], ckdout[0])
@@ -226,18 +271,16 @@ def get_graph(pca, batch_list, params):
 	and ``bbknn.matrix.bbknn()``. Returns a tuple of distances and indices of neighbours for
 	each cell.
 
-	New behavior (Iteration 9):
-	Construct a degree-controlled neighbor list as the union of:
-	1) within-batch kNN edges (preserve manifold)
-	2) cross-batch OT-derived alignment edges (regularized optimal transport coupling)
+	This implementation performs two key improvements over the legacy BBKNN behaviour:
 
-	The output has exactly k_intra + k_cross neighbors per cell (padded with -1 where needed).
+	1) Within-batch neighbours ("biological backbone"):
+	   For each cell, we take `neighbors_within_batch` neighbours from its own batch only.
+	   These edges preserve local manifold structure and cell type separation.
 
-	Notes on OT implementation:
-	- We use entropic Sinkhorn with uniform marginals per batch-pair.
-	- To keep this viable, we compute OT on a *sparsified cost graph* obtained by querying
-	  k_cross_candidate nearest neighbors across batches (instead of full cost matrices).
-	- The OT plan is then converted into per-cell top-k_cross edges by mass.
+	2) Cross-batch neighbours (alignment edges) are MNN-constrained:
+	   Cross-batch candidate neighbours are queried per batch, but only kept if the edge
+	   is supported in both directions (Mutual Nearest Neighbours, MNN). This reduces
+	   spurious one-way cross-batch shortcuts.
 
 	Input
 	-----
@@ -245,7 +288,7 @@ def get_graph(pca, batch_list, params):
 		A dictionary of arguments used to call ``bbknn.matrix.bbknn()``, plus ['computation']
 		storing the knn algorithm to use.
 	'''
-	# get a list of all our batches
+	#get a list of all our batches
 	batches = np.unique(batch_list)
 	n_batches = len(batches)
 
@@ -253,391 +296,132 @@ def get_graph(pca, batch_list, params):
 	if params['computation'] == 'faiss':
 		pca = pca.astype('float32')
 
-	# Degree budget:
-	k_intra = int(params['neighbors_within_batch'])
-	# default cross edges slightly smaller than intra because OT edges are stronger constraints
-	k_cross = int(params.get('k_cross', int(np.ceil(0.7 * k_intra))))
-	k_cross = max(0, k_cross)
+	# cache PCA slice once
+	X = pca[:, :params['n_pcs']]
+	n_cells = X.shape[0]
 
-	# candidates used to sparsify the OT cost graph (per direction)
-	k_cross_candidate = int(params.get('k_cross_candidate', max(30, 5 * max(1, k_cross))))
-	# Sinkhorn regularization strength; higher -> smoother coupling
-	ot_epsilon = float(params.get('ot_epsilon', 1.0))
-	# Sinkhorn iterations/tolerance
-	ot_max_iter = int(params.get('ot_max_iter', 200))
-	ot_tol = float(params.get('ot_tol', 1e-3))
+	# batch sizes
+	unique, counts = np.unique(batch_list, return_counts=True)
+	count_map = {u: c for u, c in zip(unique, counts)}
 
-	# Change 6: distance-aware cross-edge ranking control
-	cross_dist_alpha = float(params.get('cross_dist_alpha', 1.0))
+	# parameters for neighbour selection
+	k_in = int(params['neighbors_within_batch'])
+	# cross-batch cap (derived from existing knobs; keep conservative fraction to protect biology)
+	k_cross_total = int((n_batches - 1) * params['neighbors_within_batch'])
+	k_cross_total = int(np.floor(0.7 * k_cross_total)) if k_cross_total > 0 else 0
+	k_total = int(k_in + k_cross_total)
 
-	n_cells = pca.shape[0]
-	total_k = k_intra + k_cross
+	# candidate pool size for MNN matching
+	expansion = 2 if n_batches <= 2 else 3
+	k_candidate = int(max(k_in * expansion, k_in))
+	k_candidate = int(min(k_candidate, int(np.min(counts))))
 
-	knn_indices = np.full((n_cells, total_k), -1, dtype=int)
-	knn_distances = np.full((n_cells, total_k), np.inf, dtype=float)
-
-	# Split outputs for edge-type-aware connectivity computation
-	knn_intra_indices = np.full((n_cells, k_intra), -1, dtype=int)
-	knn_intra_distances = np.full((n_cells, k_intra), np.inf, dtype=float)
-	knn_cross_indices = np.full((n_cells, k_cross), -1, dtype=int) if k_cross > 0 else None
-	knn_cross_distances = np.full((n_cells, k_cross), np.inf, dtype=float) if k_cross > 0 else None
-
-	# Precompute indices for each batch (Change 3: ensure sorted for searchsorted mapping)
-	batch_to_indices = {b: np.sort(np.where(batch_list == b)[0]) for b in batches}
-
-	# Change 2: prebuild one tree per batch and reuse it
-	batch_trees = {}
+	# mapping batch value -> indices in global space
+	batch_to_global = {}
 	for b in batches:
-		ind = batch_to_indices[b]
-		if ind.size == 0:
-			continue
-		batch_trees[b] = create_tree(data=pca[ind, :params['n_pcs']], params=params)
+		mask = batch_list == b
+		batch_to_global[b] = np.arange(len(batch_list), dtype=np.int64)[mask]
 
-	# ---- 1) Within-batch kNN phase ----
+	# compute within-batch KNN for each batch and fill into per-cell arrays
+	knn_in_idx = np.empty((n_cells, k_in), dtype=np.int64)
+	knn_in_dist = np.empty((n_cells, k_in), dtype=np.float64)
+
 	for b in batches:
-		ind = batch_to_indices[b]
-		if ind.size == 0:
-			continue
+		mask = batch_list == b
+		global_idx = batch_to_global[b]
+		Xb = X[mask, :]
 
-		ckd = batch_trees[b]
+		ckd_b = create_tree(data=Xb, params=params)
+		# query only within the batch
+		ckdout = query_tree(data=Xb, ckd=ckd_b, params=params)
+		# convert to global indices
+		knn_in_idx[global_idx, :] = global_idx[ckdout[1]]
+		knn_in_dist[global_idx, :] = np.asarray(ckdout[0], dtype=np.float64)
 
-		# Change 3: vectorize within-batch neighbor extraction by querying k_intra+1 and dropping self
-		kq = min(k_intra + 1, ind.size)
+	# cross-batch MNNs: build per ordered pair (A->B) top-k_candidate neighbor lists
+	# store in dict keyed by (A,B): (indices_global, dists)
+	params_q = params.copy()
+	params_q['neighbors_within_batch'] = k_candidate
 
-		params_q = dict(params)
-		params_q['neighbors_within_batch'] = kq
-		dists, inds_rel = query_tree(data=pca[ind, :params['n_pcs']], ckd=ckd, params=params_q)
+	cross = {}
+	for b_to in batches:
+		mask_to = batch_list == b_to
+		ind_to = batch_to_global[b_to]
 
-		# convert relative indices to global
-		inds_global = ind[inds_rel]
+		ckd = create_tree(data=X[mask_to, :], params=params)
+		ckdout = query_tree(data=X, ckd=ckd, params=params_q)
 
-		# If self appears first (typical for within-batch queries), drop it.
-		# Otherwise, fall back to masking + vectorized selection.
-		if kq >= 2 and np.all(inds_global[:, 0] == ind):
-			inds_keep = inds_global[:, 1:k_intra + 1]
-			dists_keep = dists[:, 1:k_intra + 1]
-		else:
-			# Change D: vectorized fallback self-removal
-			selfmask = (inds_global == ind[:, None])
-			dists_mod = np.array(dists, copy=True)
-			dists_mod[selfmask] = np.inf
+		cross[b_to] = (ind_to[ckdout[1]], np.asarray(ckdout[0], dtype=np.float64))
 
-			if k_intra == 0:
-				inds_keep = np.empty((ind.size, 0), dtype=int)
-				dists_keep = np.empty((ind.size, 0), dtype=float)
-			else:
-				k_take = min(k_intra, dists_mod.shape[1])
-				part = np.argpartition(dists_mod, kth=k_take - 1, axis=1)[:, :k_take]
-				inds_keep = np.take_along_axis(inds_global, part, axis=1)
-				dists_keep = np.take_along_axis(dists_mod, part, axis=1)
+	# build MNN-constrained cross neighbours for each cell by scanning batches
+	# and taking mutual matches; then keep up to k_cross_total closest by distance.
+	knn_cross_idx = np.full((n_cells, max(k_cross_total, 1)), -1, dtype=np.int64) if k_cross_total > 0 else None
+	knn_cross_dist = np.full((n_cells, max(k_cross_total, 1)), np.inf, dtype=np.float64) if k_cross_total > 0 else None
 
-				# sort these k by distance for consistency
-				ord2 = np.argsort(dists_keep, axis=1)
-				inds_keep = np.take_along_axis(inds_keep, ord2, axis=1)
-				dists_keep = np.take_along_axis(dists_keep, ord2, axis=1)
+	if k_cross_total > 0:
+		# for each cell i, collect mutual candidates (j, dist_ij) across other batches
+		batch_to_pos = {b: i for i, b in enumerate(batches)}
+		for i in range(n_cells):
+			b_i = batch_list[i]
+			mutual_js = []
+			mutual_ds = []
 
-				# pad if k_take < k_intra (tiny batches)
-				if k_take < k_intra:
-					inds_pad = np.full((ind.size, k_intra), -1, dtype=int)
-					dists_pad = np.full((ind.size, k_intra), np.inf, dtype=float)
-					inds_pad[:, :k_take] = inds_keep
-					dists_pad[:, :k_take] = dists_keep
-					inds_keep, dists_keep = inds_pad, dists_pad
+			for b_to in batches:
+				if b_to == b_i:
+					continue
 
-		take = inds_keep.shape[1]
-		knn_indices[ind, :take] = inds_keep
-		knn_distances[ind, :take] = dists_keep
-		knn_intra_indices[ind, :take] = inds_keep
-		knn_intra_distances[ind, :take] = dists_keep
+				# i -> (batch b_to) candidates
+				idx_i_to = cross[b_to][0][i, :]
+				dist_i_to = cross[b_to][1][i, :]
 
-	# Change C: precompute per-cell intra dispersion scale and alpha once
-	tiny = 1e-12
-	intra_scale = np.nanmedian(
-		np.where(np.isfinite(knn_intra_distances), knn_intra_distances, np.nan),
-		axis=1
-	)
-	intra_scale = np.where(np.isfinite(intra_scale) & (intra_scale > 0), intra_scale, 1.0)
-	alpha = cross_dist_alpha / (intra_scale + tiny)
+				# mutual test: for candidate j in batch b_to, check if i is in j->(batch b_i) list
+				# use the precomputed "to batch b_i" candidates for row j
+				idx_j_to_bi = cross[b_i][0][idx_i_to, :]  # shape (k_candidate, k_candidate)
+				# any occurrence of i in row-wise candidate sets
+				is_mnn = np.any(idx_j_to_bi == i, axis=1)
 
-	# Change B: global best cross-edge buffers (avoid overwrite across batch pairs)
-	if k_cross > 0:
-		cross_best_idx = np.full((n_cells, k_cross), -1, dtype=int)
-		cross_best_dist = np.full((n_cells, k_cross), np.inf, dtype=float)
-		cross_best_score = np.full((n_cells, k_cross), -np.inf, dtype=float)
+				if np.any(is_mnn):
+					mutual_js.append(idx_i_to[is_mnn])
+					mutual_ds.append(dist_i_to[is_mnn])
 
-	# ---- 2) Cross-batch OT coupling phase (pairwise batches, sparsified costs) ----
-	if k_cross > 0 and n_batches > 1:
-		def _sinkhorn_sparse_matvec(rows, cols, costs, n_rows, n_cols, epsilon, a, b, max_iter, tol):
-			'''
-			Change 1: Sparse Sinkhorn-Knopp scaling via vectorized sparse matvecs.
-			Build sparse kernel K once, then iterate:
-				u = a / (K @ v)
-				v = b / (K.T @ u)
-			Returns transport mass pi on the provided edges (aligned with rows/cols/costs).
-
-			Change 4: Stabilize kernel computation by shifting costs per-row to prevent underflow.
-			'''
-			tiny = 1e-12
-			eps = max(float(epsilon), tiny)
-
-			# Rows are assumed already grouped (sorted by row) by the caller (Change E).
-			# Per-row minima via reduceat directly.
-			starts = np.flatnonzero(np.r_[True, rows[1:] != rows[:-1]]) if rows.size > 0 else np.array([], dtype=int)
-			row_min = np.zeros(n_rows, dtype=float)
-			if rows.size > 0:
-				row_min_s = np.minimum.reduceat(costs, starts)
-				row_min[rows[starts]] = row_min_s
-
-			costs_shifted = costs - row_min[rows]
-
-			# avoid exp underflow/overflow: clamp exponent
-			exponent = -costs_shifted / eps
-			exponent = np.clip(exponent, -700.0, 700.0)
-
-			K_data = np.exp(exponent).astype(float, copy=False)
-			K = scipy.sparse.csr_matrix((K_data, (rows, cols)), shape=(n_rows, n_cols))
-			K.sum_duplicates()
-
-			# Change E: use CSC for transpose matvec without explicit transpose-to-CSR materialization
-			Kc = K.tocsc()
-
-			u = np.ones(n_rows, dtype=float)
-			v = np.ones(n_cols, dtype=float)
-			u_old = np.empty_like(u)
-
-			for _ in range(max_iter):
-				u_old[:] = u
-				Kv = K @ v
-				u = a / (Kv + tiny)
-				KTu = Kc.T @ u
-				v = b / (KTu + tiny)
-
-				du = np.nanmax(np.abs(u - u_old)) if u.size > 0 else 0.0
-				if np.isfinite(du) and du < tol:
-					break
-
-			pi = u[rows] * K_data * v[cols]
-			return pi
-
-		def _select_topk_by_group(src_local, tgt_local, costs_local, scores_local, k):
-			'''
-			Change A: fully vectorized top-k per source cell via lexsort + rank mask.
-
-			Inputs are 1D edge-aligned arrays:
-				src_local: int, source cell index in [0, n_src)
-				tgt_local: int, target cell index in [0, n_tgt)
-				costs_local: float
-				scores_local: float (higher is better)
-
-			Returns:
-				sel_src_local, sel_tgt_local, sel_costs, sel_scores
-			'''
-			if k <= 0 or src_local.size == 0:
-				return (np.array([], dtype=int), np.array([], dtype=int),
-						np.array([], dtype=float), np.array([], dtype=float))
-
-			# sort by (src, -score, cost)
-			order = np.lexsort((costs_local, -scores_local, src_local))
-			src_s = src_local[order]
-			tgt_s = tgt_local[order]
-			cost_s = costs_local[order]
-			score_s = scores_local[order]
-
-			starts = np.flatnonzero(np.r_[True, src_s[1:] != src_s[:-1]])
-			counts = np.diff(np.r_[starts, src_s.size])
-
-			rank = np.arange(src_s.size) - np.repeat(starts, counts)
-			keep = rank < k
-
-			return src_s[keep], tgt_s[keep], cost_s[keep], score_s[keep]
-
-		def _merge_cross_best(best_idx, best_dist, best_score, prop_idx, prop_dist, prop_score, k):
-			'''
-			Change B: merge current best buffers with per-pair proposals without Python loops.
-			Tie-break: primary by score (desc), secondary by distance (asc).
-			'''
-			if k <= 0:
-				return best_idx, best_dist, best_score
-
-			idx_cat = np.concatenate([best_idx, prop_idx], axis=1)
-			dist_cat = np.concatenate([best_dist, prop_dist], axis=1)
-			score_cat = np.concatenate([best_score, prop_score], axis=1)
-
-			valid = (idx_cat != -1) & np.isfinite(dist_cat) & np.isfinite(score_cat)
-			# combined key: score dominates; tiny dist penalty breaks ties deterministically
-			key = np.where(valid, score_cat - 1e-6 * dist_cat, -np.inf)
-
-			# choose top-k by key
-			part = np.argpartition(-key, kth=min(k - 1, key.shape[1] - 1), axis=1)[:, :k]
-			key_sel = np.take_along_axis(key, part, axis=1)
-			dist_sel = np.take_along_axis(dist_cat, part, axis=1)
-
-			# finalize ordering on this small set (desc key, asc dist)
-			ord2 = np.lexsort((dist_sel, -key_sel), axis=1)
-			part2 = np.take_along_axis(part, ord2, axis=1)
-
-			new_idx = np.take_along_axis(idx_cat, part2, axis=1)
-			new_dist = np.take_along_axis(dist_cat, part2, axis=1)
-			new_score = np.take_along_axis(score_cat, part2, axis=1)
-
-			# ensure invalid positions are reset (in case fewer than k valid)
-			new_valid = (new_idx != -1) & np.isfinite(new_dist) & np.isfinite(new_score)
-			new_idx = np.where(new_valid, new_idx, -1)
-			new_dist = np.where(new_valid, new_dist, np.inf)
-			new_score = np.where(new_valid, new_score, -np.inf)
-
-			return new_idx, new_dist, new_score
-
-		for a_i in range(n_batches):
-			b1 = batches[a_i]
-			ind1 = batch_to_indices[b1]
-			if ind1.size == 0:
+			if len(mutual_js) == 0:
 				continue
-			for a_j in range(a_i + 1, n_batches):
-				b2 = batches[a_j]
-				ind2 = batch_to_indices[b2]
-				if ind2.size == 0:
-					continue
 
-				ckd2 = batch_trees[b2]
-				ckd1 = batch_trees[b1]
+			js = np.concatenate(mutual_js)
+			ds = np.concatenate(mutual_ds)
 
-				k12 = min(k_cross_candidate, ind2.size)
-				k21 = min(k_cross_candidate, ind1.size)
+			# de-duplicate neighbors by keeping the best (smallest distance)
+			order = np.argsort(ds)
+			js = js[order]
+			ds = ds[order]
+			# unique by first occurrence in sorted order
+			_, uniq_pos = np.unique(js, return_index=True)
+			uniq_pos = np.sort(uniq_pos)
+			js = js[uniq_pos]
+			ds = ds[uniq_pos]
 
-				params_12 = dict(params)
-				params_12['neighbors_within_batch'] = k12
-				d12, i12_rel = query_tree(data=pca[ind1, :params['n_pcs']], ckd=ckd2, params=params_12)
-				i12 = ind2[i12_rel]  # global indices in b2
+			take = min(k_cross_total, js.shape[0])
+			if take > 0:
+				knn_cross_idx[i, :take] = js[:take]
+				knn_cross_dist[i, :take] = ds[:take]
 
-				params_21 = dict(params)
-				params_21['neighbors_within_batch'] = k21
-				d21, i21_rel = query_tree(data=pca[ind2, :params['n_pcs']], ckd=ckd1, params=params_21)
-				i21 = ind1[i21_rel]  # global indices in b1
+	# concatenate within + cross, then sort by (raw) distance
+	if k_cross_total > 0:
+		sel_idx = np.concatenate([knn_in_idx, knn_cross_idx], axis=1)
+		sel_dist = np.concatenate([knn_in_dist, knn_cross_dist], axis=1)
+	else:
+		sel_idx = knn_in_idx
+		sel_dist = knn_in_dist
 
-				# b1 -> b2 candidate edges
-				rows12 = np.repeat(np.arange(ind1.size, dtype=int), i12.shape[1])
-				cand12 = i12.reshape(-1)
+	# ensure we have exactly k_total neighbours per row (pad with within-batch if needed)
+	if sel_idx.shape[1] != k_total:
+		k_total = sel_idx.shape[1]
 
-				pos12 = np.searchsorted(ind2, cand12)
-				ok12 = (pos12 >= 0) & (pos12 < ind2.size) & (ind2[pos12] == cand12)
-				cols12 = pos12
-				costs12 = d12.reshape(-1).astype(float, copy=False)
+	ordr = np.argsort(sel_dist, axis=1)
+	knn_indices = np.take_along_axis(sel_idx, ordr, axis=1)
+	knn_distances = np.take_along_axis(sel_dist, ordr, axis=1).astype(np.float64, copy=False)
 
-				# b2 -> b1 candidate edges (store as b1->b2 edges by swapping)
-				cand21 = i21.reshape(-1)
-				pos21 = np.searchsorted(ind1, cand21)
-				ok21 = (pos21 >= 0) & (pos21 < ind1.size) & (ind1[pos21] == cand21)
-
-				rows21 = pos21
-				cols21 = np.repeat(np.arange(ind2.size, dtype=int), i21.shape[1])
-				costs21 = d21.reshape(-1).astype(float, copy=False)
-
-				# filter invalid mappings and non-finite costs
-				m12 = ok12 & np.isfinite(costs12)
-				m21 = ok21 & np.isfinite(costs21)
-
-				rows_all = np.concatenate([rows12[m12], rows21[m21]]).astype(int, copy=False)
-				cols_all = np.concatenate([cols12[m12], cols21[m21]]).astype(int, copy=False)
-				costs_all = np.concatenate([costs12[m12], costs21[m21]]).astype(float, copy=False)
-
-				if rows_all.size == 0:
-					continue
-
-				# min-reduce duplicates by sorting on linearized (row, col) keys
-				key = rows_all.astype(np.int64) * np.int64(ind2.size) + cols_all.astype(np.int64)
-				order = np.argsort(key, kind='mergesort')
-				key_s = key[order]
-				rows_s = rows_all[order]
-				cols_s = cols_all[order]
-				costs_s = costs_all[order]
-
-				starts = np.flatnonzero(np.r_[True, key_s[1:] != key_s[:-1]])
-				min_costs = np.minimum.reduceat(costs_s, starts) if costs_s.size > 0 else np.array([], dtype=float)
-
-				rows = rows_s[starts]
-				cols = cols_s[starts]
-				costs = min_costs
-
-				# Change E: ensure grouped by rows for Sinkhorn row-min optimization
-				order_r = np.argsort(rows, kind='mergesort')
-				rows = rows[order_r]
-				cols = cols[order_r]
-				costs = costs[order_r]
-
-				# Uniform marginals per batch (balanced OT)
-				a = np.ones(ind1.size, dtype=float) / float(ind1.size)
-				b = np.ones(ind2.size, dtype=float) / float(ind2.size)
-
-				pi = _sinkhorn_sparse_matvec(
-					rows=rows, cols=cols, costs=costs,
-					n_rows=ind1.size, n_cols=ind2.size,
-					epsilon=ot_epsilon, a=a, b=b,
-					max_iter=ot_max_iter, tol=ot_tol
-				)
-
-				# Change C: use precomputed alpha (slice once)
-				alpha1 = alpha[ind1]
-				alpha2 = alpha[ind2]
-
-				# scores for both directions (same edge set)
-				logpi = np.log(pi + 1e-30)
-				scores1 = logpi - alpha1[rows] * costs
-				scores2 = logpi - alpha2[cols] * costs
-
-				# per-pair proposals (filled only for participating cells)
-				pair_idx = np.full((n_cells, k_cross), -1, dtype=int)
-				pair_dist = np.full((n_cells, k_cross), np.inf, dtype=float)
-				pair_score = np.full((n_cells, k_cross), -np.inf, dtype=float)
-
-				# Fill proposals for ind1 (sources = rows, targets = cols)
-				s_src, s_tgt, s_cost, s_score = _select_topk_by_group(
-					src_local=rows.astype(int, copy=False),
-					tgt_local=cols.astype(int, copy=False),
-					costs_local=costs.astype(float, copy=False),
-					scores_local=scores1.astype(float, copy=False),
-					k=k_cross
-				)
-				if s_src.size > 0:
-					# scatter into [global_cell, rank] positions
-					starts_s = np.flatnonzero(np.r_[True, s_src[1:] != s_src[:-1]])
-					counts_s = np.diff(np.r_[starts_s, s_src.size])
-					rank_s = np.arange(s_src.size) - np.repeat(starts_s, counts_s)
-					cell_g = ind1[s_src]
-					pair_idx[cell_g, rank_s] = ind2[s_tgt]
-					pair_dist[cell_g, rank_s] = s_cost
-					pair_score[cell_g, rank_s] = s_score
-
-				# Fill proposals for ind2 (sources = cols, targets = rows)
-				t_src, t_tgt, t_cost, t_score = _select_topk_by_group(
-					src_local=cols.astype(int, copy=False),
-					tgt_local=rows.astype(int, copy=False),
-					costs_local=costs.astype(float, copy=False),
-					scores_local=scores2.astype(float, copy=False),
-					k=k_cross
-				)
-				if t_src.size > 0:
-					starts_t = np.flatnonzero(np.r_[True, t_src[1:] != t_src[:-1]])
-					counts_t = np.diff(np.r_[starts_t, t_src.size])
-					rank_t = np.arange(t_src.size) - np.repeat(starts_t, counts_t)
-					cell_g2 = ind2[t_src]
-					pair_idx[cell_g2, rank_t] = ind1[t_tgt]
-					pair_dist[cell_g2, rank_t] = t_cost
-					pair_score[cell_g2, rank_t] = t_score
-
-				# Change B: merge into global best buffers (no overwriting)
-				cross_best_idx, cross_best_dist, cross_best_score = _merge_cross_best(
-					cross_best_idx, cross_best_dist, cross_best_score,
-					pair_idx, pair_dist, pair_score, k_cross
-				)
-
-		# After all batch pairs, write cross buffers into knn_* (one final fill)
-		knn_cross_indices = cross_best_idx
-		knn_cross_distances = cross_best_dist
-		knn_indices[:, k_intra:k_intra + k_cross] = cross_best_idx
-		knn_distances[:, k_intra:k_intra + k_cross] = cross_best_dist
-
-	return knn_distances, knn_indices, knn_intra_distances, knn_intra_indices, knn_cross_distances, knn_cross_indices
+	return knn_distances, knn_indices
 
 def print_warning(message, scanpy_logging):
 	'''
@@ -743,93 +527,107 @@ def check_knn_metric(params, counts, scanpy_logging):
 		print_warning('unrecognised metric for type of neighbor calculation, switching to euclidean', scanpy_logging)
 	return params
 
-def trimming(cnts, trim, mutual_mask=None):
+def trimming(cnts, trim):
 	'''
-	Trims the graph to the top connectivities for each cell, while optionally preserving
-	mutual edges. All undescribed input as in ``bbknn.bbknn()``.
+	Trims the graph in a mutuality-aware manner.
+
+	Instead of keeping the top connectivities per row (batch-agnostic), this trimming:
+	- preferentially keeps *mutual* edges (i->j and j->i both present),
+	- then fills remaining budget per row with the strongest non-mutual edges,
+	- and finally symmetrises the result to preserve an undirected neighbourhood graph.
 
 	Input
 	-----
 	cnts : ``CSR``
 		Sparse matrix of processed connectivities to trim.
 	trim : ``int``
-		Maximum number of outgoing edges to retain per node.
-	mutual_mask : ``CSR`` or ``None``
-		Optional boolean sparse matrix where True entries indicate mutual edges to
-		preferentially retain during trimming.
+		Maximum number of edges to keep per row (before final symmetrisation).
 	'''
-	# fast path: original behavior if no mutual mask provided
-	if mutual_mask is None:
-		vals = np.zeros(cnts.shape[0])
-		for i in range(cnts.shape[0]):
-			#Get the row slice, not a copy, only the non zero elements
-			row_array = cnts.data[cnts.indptr[i]: cnts.indptr[i+1]]
-			if row_array.shape[0] <= trim:
-				continue
-			#fish out the threshold value
-			vals[i] = row_array[np.argsort(row_array)[-1*trim]]
-		for iter in range(2):
-			#filter rows, flip, filter columns using the same thresholds
-			for i in range(cnts.shape[0]):
-				#Get the row slice, not a copy, only the non zero elements
-				row_array = cnts.data[cnts.indptr[i]: cnts.indptr[i+1]]
-				#apply cutoff
-				row_array[row_array<vals[i]] = 0
-			cnts.eliminate_zeros()
-			cnts = cnts.T.tocsr()
+	if trim is None or trim <= 0:
 		return cnts
 
-	# mutual-first trimming: always keep mutual edges, fill remaining slots by weight
 	cnts = cnts.tocsr()
-	mutual_mask = mutual_mask.tocsr()
+	if not cnts.has_sorted_indices:
+		cnts.sort_indices()
 
-	out = cnts.copy()
-	out.data = out.data.copy()
+	n = cnts.shape[0]
 
-	# operate row-wise; avoid transpose-based thresholding that can drop key cross-batch anchors
-	for i in range(out.shape[0]):
-		start = out.indptr[i]
-		end = out.indptr[i+1]
-		row_nnz = end - start
-		if row_nnz <= trim:
+	# Avoid materializing cnts.minimum(cnts.T) (expensive sparse-sparse op).
+	# Compute a sparse mutual-existence mask via boolean structure intersection:
+	# mutual edges exist where both i->j and j->i are present.
+	AT = cnts.T.tocsr()
+	if not AT.has_sorted_indices:
+		AT.sort_indices()
+	mut_bool = cnts.sign().multiply(AT.sign()).tocsr()
+	if not mut_bool.has_sorted_indices:
+		mut_bool.sort_indices()
+
+	# precompute kept edges per row for preallocation
+	keep_counts = np.diff(cnts.indptr)
+	keep_counts = np.minimum(keep_counts, int(trim)).astype(np.int64, copy=False)
+
+	total_kept = int(np.sum(keep_counts))
+	rows_out = np.empty(total_kept, dtype=np.int64)
+	cols_out = np.empty(total_kept, dtype=np.int64)
+	data_out = np.empty(total_kept, dtype=np.float64)
+
+	# Priority trimming per row:
+	# - give mutual edges a large additive boost so they are preferentially retained,
+	# - then use original weights to break ties.
+	# This preserves the "mutual-first, then strongest remainder" intent without building a
+	# full weighted mutual matrix.
+	mutual_boost = float(cnts.data.max() + 1.0) if cnts.nnz > 0 else 1.0
+
+	pos = 0
+	for i in range(n):
+		start, end = cnts.indptr[i], cnts.indptr[i + 1]
+		deg = end - start
+		if deg == 0:
 			continue
 
-		cols = out.indices[start:end]
-		data = out.data[start:end]
+		cols = cnts.indices[start:end]
+		data = cnts.data[start:end]
 
-		mstart = mutual_mask.indptr[i]
-		mend = mutual_mask.indptr[i+1]
-		mcols = mutual_mask.indices[mstart:mend]
+		if deg <= trim:
+			nk = deg
+			rows_out[pos:pos + nk] = i
+			cols_out[pos:pos + nk] = cols
+			data_out[pos:pos + nk] = data
+			pos += nk
+			continue
 
-		# Change 5: vectorized membership rather than Python set() per row
-		if mcols.size == 0:
-			is_mutual = np.zeros(cols.shape[0], dtype=bool)
+		m_start, m_end = mut_bool.indptr[i], mut_bool.indptr[i + 1]
+		m_cols = mut_bool.indices[m_start:m_end]
+		if m_cols.shape[0] == 0:
+			priority = data
 		else:
-			is_mutual = np.in1d(cols, mcols, assume_unique=False)
+			# Determine which cols are mutual using sorted membership (both sorted)
+			is_mut = np.isin(cols, m_cols, assume_unique=False)
+			priority = data + (is_mut.astype(data.dtype, copy=False) * mutual_boost)
 
-		mutual_count = int(is_mutual.sum())
+		# pick top 'trim' by priority, then keep original weights
+		ch = np.argpartition(priority, -trim)[-trim:]
+		# stable-ish ordering by actual connectivity
+		ch = ch[np.argsort(data[ch])[::-1]]
 
-		# if too many mutual edges, keep strongest mutual only
-		if mutual_count >= trim:
-			mutual_idx = np.where(is_mutual)[0]
-			keep_rel = mutual_idx[np.argsort(data[mutual_idx])[-trim:]]
-		else:
-			non_mutual_idx = np.where(~is_mutual)[0]
-			need = trim - mutual_count
-			if need > 0 and non_mutual_idx.size > 0:
-				keep_non = non_mutual_idx[np.argsort(data[non_mutual_idx])[-need:]]
-				keep_rel = np.concatenate([np.where(is_mutual)[0], keep_non])
-			else:
-				keep_rel = np.where(is_mutual)[0]
+		nk = ch.shape[0]
+		rows_out[pos:pos + nk] = i
+		cols_out[pos:pos + nk] = cols[ch]
+		data_out[pos:pos + nk] = data[ch]
+		pos += nk
 
-		keep_mask = np.zeros(len(cols), dtype=bool)
-		keep_mask[keep_rel] = True
-		# zero out dropped edges; eliminate_zeros later
-		data[~keep_mask] = 0.0
-		out.data[start:end] = data
+	# build trimmed graph
+	rows_out = rows_out[:pos]
+	cols_out = cols_out[:pos]
+	data_out = data_out[:pos]
 
-	out.eliminate_zeros()
-	return out
+	trimmed = coo_matrix((data_out, (rows_out, cols_out)), shape=cnts.shape).tocsr()
+	trimmed.eliminate_zeros()
+
+	# symmetrise: keep the maximum connectivity between i<->j
+	trimmed = trimmed.maximum(trimmed.T).tocsr()
+	trimmed.eliminate_zeros()
+	return trimmed
 
 def bbknn(pca, batch_list, neighbors_within_batch=3, n_pcs=50, trim=None,
 		  computation='annoy', annoy_n_trees=10, pynndescent_n_neighbors=30, 
@@ -873,39 +671,24 @@ def bbknn(pca, batch_list, neighbors_within_batch=3, n_pcs=50, trim=None,
 	params = legacy_computation_selection(params, scanpy_logging)
 	#sanity check the metric
 	params = check_knn_metric(params, counts, scanpy_logging)
-
-	# obtain degree-controlled graph: within-batch kNN + cross-batch OT alignment edges
-	(knn_distances, knn_indices,
-	 knn_intra_distances, knn_intra_indices,
-	 knn_cross_distances, knn_cross_indices) = get_graph(pca=pca, batch_list=batch_list, params=params)
-
-	# sort the merged neighbours so that they're actually in order from closest to furthest
-	newidx = np.argsort(knn_distances, axis=1)
-	knn_indices = knn_indices[np.arange(np.shape(knn_indices)[0])[:, np.newaxis], newidx]
-	knn_distances = knn_distances[np.arange(np.shape(knn_distances)[0])[:, np.newaxis], newidx]
-
-	# Edge-type-aware UMAP connectivities: two-channel fuzzy union (intra vs cross)
-	dist, cnts = compute_connectivities_umap(
-		knn_indices, knn_distances, knn_indices.shape[0], knn_indices.shape[1],
+	#obtain the batch balanced KNN graph (returned already sorted by distance)
+	knn_distances, knn_indices = get_graph(pca=pca,batch_list=batch_list,params=params)
+	#this part of the processing is akin to scanpy.api.neighbors()
+	#Batch-aware connectivity weighting (self-tuning kernel mixture) to prevent cross-batch
+	#edges from dominating local structure.
+	dist, cnts = compute_connectivities_batchaware_kernel(
+		knn_indices, knn_distances, batch_list,
 		set_op_mix_ratio=set_op_mix_ratio,
-		local_connectivity=local_connectivity,
-		knn_intra_indices=knn_intra_indices,
-		knn_intra_dists=knn_intra_distances,
-		knn_cross_indices=knn_cross_indices,
-		knn_cross_dists=knn_cross_distances,
-		edge_type_mix_lambda=float(params.get('edge_type_mix_lambda', 0.5)),
-		adaptive_lambda=bool(params.get('adaptive_lambda', True)),
-		lam_min=float(params.get('lam_min', 0.03)),
+		local_connectivity=local_connectivity
 	)
-
-	# Degree is controlled at construction time; trimming is generally unnecessary.
-	# Preserve API: if user explicitly requested trimming (>0), apply legacy trimming.
+	#trimming. compute default range if absent
+	#both this and the parameter dictionary need a neighbour total for each cell
+	#easiest retrieved from the shape of the knn variables
 	if params['trim'] is None:
-		# default: disable trimming under the new degree-controlled construction
-		params['trim'] = 0
+		params['trim'] = 10 * knn_distances.shape[1]
+	#skip trimming if set to 0, otherwise trim
 	if params['trim'] > 0:
-		cnts = trimming(cnts=cnts, trim=params['trim'])
-
+		cnts = trimming(cnts=cnts,trim=params['trim'])
 	#create a collated parameters dictionary, formatted like scanpy's neighbours one
 	p_dict = {'n_neighbors': knn_distances.shape[1], 'method': 'umap', 
 			  'metric': params['metric'], 'n_pcs': params['n_pcs'], 

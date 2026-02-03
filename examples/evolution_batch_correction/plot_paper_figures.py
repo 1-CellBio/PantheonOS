@@ -216,16 +216,6 @@ def generate_bbknn_figures(dataset: str = "tma"):
     time_original = time.time() - start_time
     print(f"  Time: {time_original:.2f}s")
 
-    # Run BBKNN #71 (intermediate evolved version)
-    sys.modules.pop("bbknn.matrix", None)
-    bbknn_71 = load_bbknn_module(bbknn_dir / "results" / "bbknn_71")
-
-    print("\nRunning BBKNN (#71)...")
-    start_time = time.time()
-    X_corrected_71 = run_bbknn(bbknn_71, X, batch_labels, n_pcs)
-    time_71 = time.time() - start_time
-    print(f"  Time: {time_71:.2f}s")
-
     # Run evolved BBKNN (best)
     sys.modules.pop("bbknn.matrix", None)
     bbknn_evolved = load_bbknn_module(bbknn_dir / "results" / "bbknn_optimized")
@@ -249,11 +239,6 @@ def generate_bbknn_figures(dataset: str = "tma"):
             "bio": compute_bio_conservation_score(X_corrected_original, cell_types),
             "time": time_original,
         },
-        "BBKNN (#71)": {
-            "mixing": compute_batch_mixing_score(X_corrected_71, batch_labels),
-            "bio": compute_bio_conservation_score(X_corrected_71, cell_types),
-            "time": time_71,
-        },
         "BBKNN (Best)": {
             "mixing": compute_batch_mixing_score(X_corrected_evolved, batch_labels),
             "bio": compute_bio_conservation_score(X_corrected_evolved, cell_types),
@@ -269,7 +254,6 @@ def generate_bbknn_figures(dataset: str = "tma"):
     umap = UMAP(n_neighbors=30, min_dist=0.3, random_state=42)
     umap_original = umap.fit_transform(X)
     umap_bbknn = umap.fit_transform(X_corrected_original)
-    umap_71 = umap.fit_transform(X_corrected_71)
     umap_evolved = umap.fit_transform(X_corrected_evolved)
 
     output_dir = bbknn_dir / "results" / f"paper_figures_{dataset}"
@@ -292,15 +276,14 @@ def generate_bbknn_figures(dataset: str = "tma"):
     celltype_colors = {ct: mpl.colors.rgb2hex(cmap(i)) for i, ct in enumerate(unique_celltypes)}
 
     # =========================================================================
-    # Figure 1: UMAP Comparison (2x4 layout with external legend)
+    # Figure 1: UMAP Comparison (2x3 layout with external legend)
     # =========================================================================
     print("\nGenerating Figure 1: UMAP comparison...")
-    fig1, axes = plt.subplots(2, 4, figsize=(12, 5))
+    fig1, axes = plt.subplots(2, 3, figsize=(10, 5))
 
     datasets = [
         (umap_original, "Uncorrected", metrics["Original Data"]),
         (umap_bbknn, "BBKNN", metrics["BBKNN"]),
-        (umap_71, "BBKNN (#71)", metrics["BBKNN (#71)"]),
         (umap_evolved, "BBKNN (Best)", metrics["BBKNN (Best)"]),
     ]
 
@@ -346,7 +329,7 @@ def generate_bbknn_figures(dataset: str = "tma"):
     fig1.text(0.01, 0.28, 'Cell Type', va='center', ha='left', rotation=90, fontsize=10, fontweight='bold')
 
     # Add legends outside the plot area on the right
-    plt.tight_layout(rect=[0.02, 0, 0.85, 1])
+    plt.tight_layout(rect=[0.02, 0, 0.82, 1])
 
     # Batch legend (top right, outside plots)
     batch_legend = fig1.legend(batch_handles, list(unique_batches), title="Batch",
@@ -367,15 +350,15 @@ def generate_bbknn_figures(dataset: str = "tma"):
     # Figure 2: Performance Bar Chart
     # =========================================================================
     print("\nGenerating Figure 2: Performance comparison...")
-    fig2, axes2 = plt.subplots(1, 3, figsize=(9, 2.5))
+    fig2, axes2 = plt.subplots(1, 3, figsize=(8, 2.5))
 
-    methods = ["Uncorrected", "BBKNN", "BBKNN\n(#71)", "BBKNN\n(Best)"]
-    colors = ["#999999", "#3C5488", "#7E6148", "#00A087"]  # Nature-style
+    methods = ["Uncorrected", "BBKNN", "BBKNN\n(Best)"]
+    colors = ["#999999", "#3C5488", "#00A087"]  # Nature-style
 
     # Mixing score
     ax = axes2[0]
     mixing_vals = [metrics["Original Data"]["mixing"], metrics["BBKNN"]["mixing"],
-                   metrics["BBKNN (#71)"]["mixing"], metrics["BBKNN (Best)"]["mixing"]]
+                   metrics["BBKNN (Best)"]["mixing"]]
     bars = ax.bar(methods, mixing_vals, color=colors, edgecolor='black', linewidth=0.5)
     ax.set_ylabel("Batch Mixing Score")
     ax.set_ylim(0, 1)
@@ -387,7 +370,7 @@ def generate_bbknn_figures(dataset: str = "tma"):
     # Bio conservation
     ax = axes2[1]
     bio_vals = [metrics["Original Data"]["bio"], metrics["BBKNN"]["bio"],
-                metrics["BBKNN (#71)"]["bio"], metrics["BBKNN (Best)"]["bio"]]
+                metrics["BBKNN (Best)"]["bio"]]
     bars = ax.bar(methods, bio_vals, color=colors, edgecolor='black', linewidth=0.5)
     ax.set_ylabel("Bio Conservation Score")
     ax.set_ylim(0, 1)
@@ -398,9 +381,9 @@ def generate_bbknn_figures(dataset: str = "tma"):
 
     # Execution time
     ax = axes2[2]
-    time_methods = ["BBKNN", "BBKNN\n(#71)", "BBKNN\n(Best)"]
-    time_vals = [metrics["BBKNN"]["time"], metrics["BBKNN (#71)"]["time"], metrics["BBKNN (Best)"]["time"]]
-    time_colors = ["#3C5488", "#7E6148", "#00A087"]
+    time_methods = ["BBKNN", "BBKNN\n(Best)"]
+    time_vals = [metrics["BBKNN"]["time"], metrics["BBKNN (Best)"]["time"]]
+    time_colors = ["#3C5488", "#00A087"]
     bars = ax.bar(time_methods, time_vals, color=time_colors, edgecolor='black', linewidth=0.5)
     ax.set_ylabel("Execution Time (s)")
     ax.set_title("Computational Cost", fontweight='bold')
@@ -423,7 +406,6 @@ def generate_bbknn_figures(dataset: str = "tma"):
     for name, m, color, marker in [
         ("Uncorrected", metrics["Original Data"], "#999999", "o"),
         ("BBKNN", metrics["BBKNN"], "#3C5488", "s"),
-        ("BBKNN (#71)", metrics["BBKNN (#71)"], "#7E6148", "D"),
         ("BBKNN (Best)", metrics["BBKNN (Best)"], "#00A087", "^"),
     ]:
         ax3.scatter(m["mixing"], m["bio"], c=color, s=150, marker=marker,
@@ -859,16 +841,6 @@ def plot_evolution_fitness(algorithm: str = "bbknn"):
     best_idx = recalc_scores.index(best_score)
     best_order = orders[best_idx]
 
-    # Find #71 if exists (only for BBKNN)
-    iter_71_idx = None
-    iter_71_score = None
-    if algorithm == "bbknn":
-        for i, order in enumerate(orders):
-            if order == 71:
-                iter_71_idx = i
-                iter_71_score = recalc_scores[i]
-                break
-
     # Create figure
     fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -881,13 +853,6 @@ def plot_evolution_fitness(algorithm: str = "bbknn"):
     ax.scatter([best_order], [best_score], s=100, c='#00A087',
                marker='^', edgecolors='black', linewidth=1, zorder=4,
                label=f'Best #{best_order} ({best_score:.4f})')
-
-    # Mark #71 if exists (BBKNN only)
-    if iter_71_idx is not None:
-        ax.axvline(x=71, color='#7E6148', linestyle='--', alpha=0.7)
-        ax.scatter([71], [iter_71_score], s=100, c='#7E6148', marker='D',
-                   edgecolors='black', linewidth=1, zorder=4,
-                   label=f'#71 ({iter_71_score:.4f})')
 
     ax.set_xlabel("Iteration", fontsize=11)
     ax.set_ylabel("Fitness Score (rescaled)", fontsize=11)

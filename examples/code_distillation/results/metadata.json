@@ -1,0 +1,131 @@
+{
+  "config": {
+    "max_iterations": 15,
+    "checkpoint_interval": 10,
+    "early_stop_generations": 50,
+    "num_workers": 4,
+    "num_islands": 2,
+    "migration_interval": 20,
+    "migration_rate": 0.1,
+    "feature_dimensions": [
+      "fidelity"
+    ],
+    "feature_bins": 10,
+    "feature_range_padding": 0.1,
+    "feature_range_adaptive": true,
+    "archive_ratio": 0.25,
+    "population_size": 500,
+    "num_inspirations": 2,
+    "num_top_programs": 3,
+    "exploration_ratio": 0.2,
+    "exploitation_ratio": 0.7,
+    "evaluation_timeout": 120,
+    "max_parallel_evaluations": 2,
+    "function_weight": 1.0,
+    "llm_weight": 0.0,
+    "cascade_evaluation": false,
+    "cascade_thresholds": [
+      0.3,
+      0.6,
+      0.8
+    ],
+    "feedback_max_lines_per_file": null,
+    "diff_based_evolution": true,
+    "max_code_length": 50000,
+    "max_diff_size": 5000,
+    "temperature": 0.7,
+    "max_retries": 3,
+    "mutation_timeout": 120,
+    "use_analyzer": true,
+    "analyzer_model": "normal",
+    "analyzer_timeout": 600,
+    "top_programs_probability": 0.5,
+    "inspirations_probability": 0.2,
+    "analyzer_use_python": true,
+    "analyzer_python_workdir": "/Users/wzxu/Projects/Pantheon/pantheon-agents/examples/code_distillation",
+    "analyzer_exploration_initial": 0.9,
+    "analyzer_exploration_final": 0.1,
+    "analyzer_exploration_decay_generations": 10,
+    "summarizer_timeout": 30,
+    "evolution_history_max_siblings": 5,
+    "evolution_history_max_ancestors": 10,
+    "evolution_history_max_chars": 2000,
+    "mutator_model": "normal",
+    "feedback_model": "normal",
+    "db_path": "/Users/wzxu/Projects/Pantheon/pantheon-agents/examples/code_distillation/results",
+    "workspace_path": null,
+    "save_prompts": true,
+    "save_all_programs": false,
+    "log_level": "INFO",
+    "log_iterations": true,
+    "log_improvements": true
+  },
+  "best_program_id": "b3527953",
+  "archive": [
+    "0faac435",
+    "69feb58a",
+    "64eb9274",
+    "b3527953"
+  ],
+  "islands": [
+    [
+      "03483f9e",
+      "b3527953",
+      "4e051e6c",
+      "f010c50b",
+      "0faac435",
+      "66ce0e59",
+      "eefe9735",
+      "64eb9274"
+    ],
+    [
+      "9efdf4b6",
+      "37776798",
+      "7369496c",
+      "cdbb765c",
+      "44425bc1",
+      "59d40a46",
+      "69feb58a",
+      "54d0695d"
+    ]
+  ],
+  "total_added": 16,
+  "total_improved": 0,
+  "feature_ranges": {
+    "fidelity": [
+      0.0015,
+      0.652
+    ]
+  },
+  "metric_ranges": {
+    "llm_score": [
+      0.5,
+      0.5
+    ],
+    "fidelity": [
+      0.0015,
+      0.652
+    ],
+    "coverage": [
+      1.0,
+      1.0
+    ],
+    "complexity": [
+      339.0,
+      453.0
+    ],
+    "fitness_score": [
+      0.0015,
+      0.652
+    ],
+    "n_correct": [
+      3.0,
+      1304.0
+    ],
+    "n_samples": [
+      2000.0,
+      2000.0
+    ]
+  },
+  "next_order": 16
+}

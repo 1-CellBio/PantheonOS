@@ -69,7 +69,9 @@
       "WebFetch(domain:theislab.github.io)",
       "WebFetch(domain:figshare.com)",
       "Bash(curl:*)",
-      "WebFetch(domain:scib.readthedocs.io)"
+      "WebFetch(domain:scib.readthedocs.io)",
+      "Bash(git ls-tree:*)",
+      "Bash(pdflatex:*)"
     ],
     "deny": [],
     "ask": []
