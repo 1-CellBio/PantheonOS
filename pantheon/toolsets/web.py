@@ -35,7 +35,7 @@ class WebToolSet(ToolSet):
                 max_results=max_results,
                 timelimit=time_limit,
             )
-        return results
+        return list(results)
 
     @tool(job_type="thread")
     async def web_crawl(

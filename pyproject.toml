@@ -104,6 +104,7 @@ knowledge = [
     "fastembed>=0.2.0",
     "llama-index-postprocessor-flashrank-rerank>=0.2.0",
     "llama-index-postprocessor-cohere-rerank",
+    "nbconvert>=7.16.0",
 ]
 
 [dependency-groups]

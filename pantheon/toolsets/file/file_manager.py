@@ -453,6 +453,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
         - `observe_images` / `observe_pdf_screenshots`: LLM-assisted visual inspection.
         - `read_pdf`: PDF-to-text extraction for downstream consumption.
         - `fetch_image_base64`: encode images for frontend display pipelines.
+        - `fetch_resources_batch`: batch load resources for HTML preview (frontend-only).
 
     Args:
         name: The name of the toolset.
@@ -460,6 +461,148 @@ class FileManagerToolSet(FileManagerToolSetBase):
         black_list: The list of files to ignore.
         **kwargs: Additional keyword arguments.
     """
+
+    @tool(exclude=True)
+    async def fetch_resources_batch(
+        self,
+        resource_paths: list[str],
+        base_path: str | None = None,
+    ) -> dict:
+        """Batch fetch multiple resources for HTML preview (frontend-only).
+        
+        This tool is designed for frontend HTML preview to efficiently load
+        multiple resources (images, CSS, JS) referenced in HTML files.
+        
+        Args:
+            resource_paths: List of resource paths. Can be:
+                           - Absolute paths (starting with /)
+                           - Relative paths (if base_path is provided)
+            base_path: Optional base directory for resolving relative paths.
+                      Should be the directory containing the HTML file.
+        
+        Returns:
+            dict: {
+                "success": bool,
+                "resources": [
+                    {
+                        "path": str,           # Original path from input
+                        "resolved_path": str,  # Resolved absolute path
+                        "success": bool,
+                        "content": str,        # base64 data URI for images, text for css/js
+                        "mime_type": str,
+                        "error": str           # Only present if success=False
+                    }
+                ],
+                "total": int,
+                "loaded": int,
+                "failed": int
+            }
+        
+        Example:
+            # Load resources with relative paths
+            fetch_resources_batch(
+                resource_paths=["./images/logo.png", "../styles/main.css", "js/app.js"],
+                base_path="/workspace/project/pages"
+            )
+            
+            # Load resources with absolute paths
+            fetch_resources_batch(
+                resource_paths=["/workspace/project/images/logo.png"]
+            )
+        """
+        import mimetypes
+        from pathlib import Path
+        
+        results = []
+        loaded_count = 0
+        failed_count = 0
+        
+        for resource_path in resource_paths:
+            result = {
+                "path": resource_path,
+                "success": False
+            }
+            
+            try:
+                # Resolve path
+                if os.path.isabs(resource_path):
+                    # Absolute path
+                    target_path = Path(resource_path)
+                elif base_path:
+                    # Relative path with base_path
+                    base = Path(base_path) if os.path.isabs(base_path) else self.path / base_path
+                    target_path = (base / resource_path).resolve()
+                else:
+                    # Relative path without base_path (relative to workspace)
+                    target_path = self.path / resource_path
+                
+                result["resolved_path"] = str(target_path)
+                
+                # Security check: Ensure resolved path is within workspace
+                # This prevents path traversal attacks (e.g., ../../etc/passwd)
+                try:
+                    target_path.relative_to(self.path)
+                except ValueError:
+                    result["error"] = "Resource path escapes workspace boundary"
+                    failed_count += 1
+                    results.append(result)
+                    continue
+                
+                # Validate path exists
+                if not target_path.exists():
+                    result["error"] = "Resource file does not exist"
+                    failed_count += 1
+                    results.append(result)
+                    continue
+                
+                if not target_path.is_file():
+                    result["error"] = "Path is not a file"
+                    failed_count += 1
+                    results.append(result)
+                    continue
+                
+                # Determine MIME type
+                mime_type, _ = mimetypes.guess_type(str(target_path))
+                if mime_type is None:
+                    mime_type = "application/octet-stream"
+                
+                result["mime_type"] = mime_type
+                
+                # Load resource based on type
+                if mime_type.startswith("image/"):
+                    # Return base64 data URI for images
+                    with open(target_path, "rb") as f:
+                        file_bytes = f.read()
+                    content = base64.b64encode(file_bytes).decode()
+                    result["content"] = f"data:{mime_type};base64,{content}"
+                else:
+                    # Return text content for CSS/JS/HTML
+                    try:
+                        with open(target_path, "r", encoding="utf-8") as f:
+                            result["content"] = f.read()
+                    except UnicodeDecodeError:
+                        result["error"] = "File is not a valid text file"
+                        failed_count += 1
+                        results.append(result)
+                        continue
+                
+                result["success"] = True
+                loaded_count += 1
+                
+            except Exception as e:
+                result["error"] = str(e)
+                failed_count += 1
+            
+            results.append(result)
+        
+        return {
+            "success": True,
+            "resources": results,
+            "total": len(resource_paths),
+            "loaded": loaded_count,
+            "failed": failed_count
+        }
+
 
     @tool
     async def read_file(
