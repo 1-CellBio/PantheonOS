@@ -113,6 +113,31 @@ GPU acceleration, and memory optimization.
 
 ---
 
+## Upstream Processing
+
+Technology-specific pipelines for processing raw sequencing data into
+analysis-ready count matrices with spatial coordinates. These cover the steps
+that precede standard single-cell analysis (QC, normalization, clustering, etc.).
+
+**Skill index**: [upstream_processing/SKILL.md](./upstream_processing/SKILL.md)
+
+**Technologies covered**:
+- **nf-core Pipelines**: 143+ curated Nextflow pipelines for scRNA-seq, spatial
+  transcriptomics, bulk RNA-seq, ATAC-seq, ChIP-seq, CUT&Run, methylation,
+  and variant calling (WGS/WES)
+- **OpenST**: Open-source spatial transcriptomics at sub-cellular resolution —
+  flow cell barcode preprocessing, spacemake alignment, image registration,
+  Cellpose segmentation, 3D reconstruction, and downstream analysis
+
+**When to use**:
+- Processing raw BCL/FASTQ files with nf-core community pipelines
+- Running technology-specific alignment and preprocessing pipelines
+- Spatial coordinate registration and cell segmentation
+- Variant calling from WGS/WES/targeted sequencing
+- 3D reconstruction from serial tissue sections
+
+---
+
 ## Supplementary Reference: SC Best Practices
 
 For more comprehensive guidance on single-cell and spatial omics analysis, refer to
