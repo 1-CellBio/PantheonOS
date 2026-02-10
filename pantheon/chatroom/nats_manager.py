@@ -241,7 +241,7 @@ class NATSManager:
         jetstream_dir.mkdir(parents=True, exist_ok=True)
         config = re.sub(
             r'store_dir:\s*["\']?/tmp/nats/jetstream["\']?',
-            f'store_dir: "{jetstream_dir}"',
+            f'store_dir: "{jetstream_dir.as_posix()}"',
             config
         )
 
