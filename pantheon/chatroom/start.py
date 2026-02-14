@@ -221,8 +221,36 @@ async def start_services(
     nats_servers: str = None,
     auto_start_nats: bool = False,
     auto_ui: str | bool | None = None,
-    **kwargs,
 ):
+    """Start the chatroom service.
+
+    Args:
+        service_name: The name of the service. (default from settings)
+        memory_dir: The directory to store the memory. (default from settings)
+        endpoint_service_id: The service ID of the remote endpoint.
+        workspace_path: The path to the workspace. (default from settings)
+        log_level: The level of the log. (default from settings)
+        speech_to_text_model: The model to use for speech to text. (default from settings)
+        id_hash: Hash string to generate stable service_id (e.g., "alice", "bob"). If not provided, generates a unique UUID per instance.
+        endpoint_mode: How to start the endpoint. Options: "embedded" (same event loop),
+                      "process" (independent subprocess).
+        nats_servers: NATS server URL(s). Supports WebSocket (wss://) and TCP (nats://).
+                     Multiple servers separated by pipe (|). Overrides NATS_SERVERS env var.
+                     Example: "wss://pantheon.aristoteleo.com/nats"
+        auto_start_nats: Automatically start local NATS server (only works with --endpoint-mode embedded).
+                        Default: False. When enabled, provides nats://localhost:4222 and ws://127.0.0.1:8080.
+        auto_ui: Automatically open browser with auto-connect config when endpoint is ready.
+                Default: False. Requires --auto-start-nats. Can specify custom URL or use default
+                Vercel deployment. Examples: --auto-ui or --auto-ui "http://localhost:5173"
+
+    Note:
+        API keys should be set via:
+        - Environment variables: export OPENAI_API_KEY="sk-..."
+        - .env file: OPENAI_API_KEY=sk-...
+        - settings.json api_keys section
+
+        Use LiteLLM Proxy mode for secure API key handling (LITELLM_PROXY_ENABLED environment variable).
+    """
     # DIAGNOSTIC: Log startup parameters for debugging
     logger.debug(f"[DIAGNOSTIC] start_services() called with auto_start_nats={auto_start_nats}, auto_ui={auto_ui}")
 
@@ -375,35 +403,6 @@ async def start_services(
         else:
             logger.debug("[STARTUP] Cleanup: No zombie NATS processes found")
 
-    """Start the chatroom service.
-
-    Args:
-        service_name: The name of the service. (default from settings)
-        memory_dir: The directory to store the memory. (default from settings)
-        endpoint_service_id: The service ID of the remote endpoint.
-        workspace_path: The path to the workspace. (default from settings)
-        log_level: The level of the log. (default from settings)
-        speech_to_text_model: The model to use for speech to text. (default from settings)
-        id_hash: Hash string to generate stable service_id (e.g., "alice", "bob"). If not provided, generates a unique UUID per instance.
-        endpoint_mode: How to start the endpoint. Options: "embedded" (same event loop),
-                      "process" (independent subprocess).
-        nats_servers: NATS server URL(s). Supports WebSocket (wss://) and TCP (nats://).
-                     Multiple servers separated by pipe (|). Overrides NATS_SERVERS env var.
-                     Example: "wss://pantheon.aristoteleo.com/nats"
-        auto_start_nats: Automatically start local NATS server (only works with --endpoint-mode embedded).
-                        Default: False. When enabled, provides nats://localhost:4222 and ws://127.0.0.1:8080.
-        auto_ui: Automatically open browser with auto-connect config when endpoint is ready.
-                Default: False. Requires --auto-start-nats. Can specify custom URL or use default
-                Vercel deployment. Examples: --auto-ui or --auto-ui "http://localhost:5173"
-
-    Note:
-        API keys should be set via:
-        - Environment variables: export OPENAI_API_KEY="sk-..."
-        - .env file: OPENAI_API_KEY=sk-...
-        - settings.json api_keys section
-
-        Use LiteLLM Proxy mode for secure API key handling (LITELLM_PROXY_ENABLED environment variable).
-    """
     # ========== STARTUP ==========
     logger.info("[STARTUP] Starting chatroom service...")
     logger.info(f"[STARTUP] Parameters: auto_start_nats={auto_start_nats}, endpoint_mode={endpoint_mode}")
@@ -560,12 +559,6 @@ async def start_services(
     memory_dir = str(Path(memory_dir).resolve())
     workspace_path = str(Path(workspace_path).resolve())
 
-    # Convert any other Path-like kwargs to absolute paths
-    for key in list(kwargs.keys()):
-        if key.endswith("_path") or key.endswith("_dir"):
-            if isinstance(kwargs[key], str):
-                kwargs[key] = str(Path(kwargs[key]).resolve())
-
     # ===== Step 1: Start or connect Endpoint =====
     endpoint = None
     final_endpoint_service_id = endpoint_service_id
@@ -613,7 +606,6 @@ async def start_services(
         enable_auto_chat_name=True,  # Enable auto chat name for UI mode
         learning_config=settings.get_learning_config(),
         id_hash=id_hash,  # Pass id_hash to ensure stable Service ID
-        **kwargs,
     )
 
     # ===== Step 2.5: Verify NATS TCP connectivity (diagnostic) =====

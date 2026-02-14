@@ -27,7 +27,7 @@ _ORIGINAL_CWD = os.getcwd()
 # Load environment variables from .env file
 load_dotenv()
 # Also load global API keys from ~/.pantheon/.env
-load_dotenv(os.path.join(os.path.expanduser("~"), ".pantheon", ".env"))
+load_dotenv(os.path.join(os.path.expanduser("~"), ".pantheon", ".env"), override=False)
 
 # Enable UTF-8 mode on Windows for fancy Unicode characters
 if sys.platform == "win32":
