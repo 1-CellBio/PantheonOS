@@ -105,39 +105,103 @@ class TemplateManager:
             logger.error(f"Failed to create template directories: {e}")
             raise
 
-    def _copy_missing_templates(self, src_dir: Path, dest_dir: Path, label: str):
-        """Copy missing templates from src to dest (files and subdirectories)."""
+    def _copy_missing_templates(self, src_dir: Path, dest_dir: Path, label: str, overwrite: bool = False):
+        """Copy templates from src to dest.
+
+        When overwrite=True, compares file content and only overwrites if different.
+        When overwrite=False, only copies files that don't exist yet.
+        """
         if not src_dir.exists():
             return 0
-        copied = 0
-        for item in src_dir.iterdir():
-            dest_item = dest_dir / item.name
-            if dest_item.exists():
+
+        copied_files = []
+        updated_files = []
+        
+        # Use rglob to recursively traverse all files (fixes multi-level directory skipped update issue)
+        for src_file in src_dir.rglob('*'):
+            if not src_file.is_file():
                 continue
-            if item.is_dir():
-                shutil.copytree(item, dest_item)
-            else:
-                shutil.copy(item, dest_item)
-            copied += 1
-        if copied:
-            logger.info(f"Copied {copied} {label} from system templates")
-        return copied
+                
+            # Calculate relative path to get destination file path
+            rel_path = src_file.relative_to(src_dir)
+            dest_file = dest_dir / rel_path
+            
+            is_new = False
+            is_updated = False
+
+            if not dest_file.exists():
+                is_new = True
+                copied_files.append(str(rel_path))
+            elif overwrite:
+                # File exists and overwrite is allowed, compare byte content directly
+                # Optimization 1: Compare file sizes first (fast path for different files)
+                src_stat = src_file.stat()
+                dest_stat = dest_file.stat()
+                
+                if src_stat.st_size != dest_stat.st_size:
+                    is_updated = True
+                    updated_files.append(str(rel_path))
+                else:
+                    # Sizes are identical, read into memory to confirm exact match
+                    src_bytes = src_file.read_bytes()
+                    dest_bytes = dest_file.read_bytes()
+                    
+                    if src_bytes != dest_bytes:
+                        is_updated = True
+                        updated_files.append(str(rel_path))
+            
+            # Trigger disk write only when actual changes occur
+            if is_new or is_updated:
+                dest_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_file, dest_file)
+                    
+        total_changes = len(copied_files) + len(updated_files)
+        
+        if total_changes > 0:
+            msg_parts = [f"Synced {total_changes} {label} from factory"]
+            
+            if copied_files:
+                msg_parts.append(f"{len(copied_files)} new: {', '.join(copied_files)}")
+                
+            if updated_files:
+                msg_parts.append(f"{len(updated_files)} overwritten: {', '.join(updated_files)}")
+                
+            logger.info(" | ".join(msg_parts))
+            
+        return total_changes
+
 
     def _ensure_default_templates(self):
-        """Copy all default templates (agents, teams, prompts, skills)."""
-        template_dirs = [
+        """Copy all default templates (agents, teams, prompts, skills).
+
+        Respects the `default_template_auto_update` setting for agents/teams/prompts:
+        - True (default): overwrite existing files with latest factory versions.
+        - False: only copy files that don't exist yet (preserves user edits).
+        Skills are always copy-missing-only regardless of the setting,
+        since they contain user-generated data.
+        """
+        overwrite = self.settings.default_template_auto_update
+        if overwrite:
+            logger.info("default_template_auto_update=true: overwriting agents/teams/prompts with latest factory defaults")
+        # agents/teams/prompts: respect overwrite flag
+        for subdir, dest_dir, label in [
             ("agents", self.agents_dir, "agent(s)"),
             ("teams", self.teams_dir, "team(s)"),
             ("prompts", self.prompts_dir, "prompt(s)"),
-            ("skills", self.settings.skills_dir, "skill(s)"),
-        ]
-        for subdir, dest_dir, label in template_dirs:
+        ]:
             try:
                 self._copy_missing_templates(
-                    self.system_templates_dir / subdir, dest_dir, label
+                    self.system_templates_dir / subdir, dest_dir, label, overwrite=overwrite
                 )
             except Exception as e:
                 logger.error(f"Failed to copy default {label}: {e}")
+        # skills: always copy-missing-only (user-generated data, never overwrite)
+        try:
+            self._copy_missing_templates(
+                self.system_templates_dir / "skills", self.settings.skills_dir, "skill(s)", overwrite=False
+            )
+        except Exception as e:
+            logger.error(f"Failed to copy default skill(s): {e}")
 
     def _ensure_settings(self):
         """Copy settings.json from templates if it doesn't exist in .pantheon/"""

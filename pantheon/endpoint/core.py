@@ -71,13 +71,13 @@ class Endpoint(FileTransferToolSet):
         # Switch to workspace directory for this Endpoint instance
         os.chdir(workspace_path)
 
-        self.log_dir = Path(workspace_path) / ".endpoint-logs"
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-
         # Generate id_hash if not provided in kwargs or config
         if "id_hash" not in kwargs:
             kwargs["id_hash"] = self.config.get("id_hash") or str(uuid.uuid4())
         self.id_hash = kwargs["id_hash"]
+
+        self.log_dir = get_settings().pantheon_dir / "logs" / "endpoint" / self.id_hash
+        self.log_dir.mkdir(parents=True, exist_ok=True)
 
         self.allow_file_transfer = self.config.get("allow_file_transfer", True)
 

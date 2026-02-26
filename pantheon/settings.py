@@ -642,6 +642,12 @@ class Settings:
         return self._settings.get("enable_mcp_tools", True)
 
     @property
+    def default_template_auto_update(self) -> bool:
+        """Whether to overwrite factory templates (agents/prompts/teams) on startup. Defaults to True."""
+        self._ensure_loaded()
+        return self._settings.get("default_template_auto_update", True)
+
+    @property
     def tool_timeout(self) -> int:
         """
         Get local toolset timeout configuration.

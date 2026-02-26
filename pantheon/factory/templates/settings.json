@@ -8,6 +8,8 @@
     // Whether to auto-inject MCP tools (from unified gateway) into agents
     // For mcp abilities, this is not necessary, Package APIs are sufficient for all mcp tools
     "enable_mcp_tools": false,
+    // Auto-overwrite agents/prompts/teams with latest factory defaults on startup. Set false to preserve user edits (settings.json and mcp.json are never overwritten).
+    "default_template_auto_update": true,
     // ===== Endpoint Service Configuration =====
     "endpoint": {
         "service_name": "pantheon-chatroom-endpoint",

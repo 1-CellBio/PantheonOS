@@ -83,15 +83,17 @@ class EndpointHub(ToolSet):
         self.endpoint_configs[id_hash] = config
 
         # Create log directory and config file
-        (workspace_path / ".endpoint-logs").mkdir(parents=True, exist_ok=True)
-        tmp_config_file = workspace_path / ".endpoint-logs" / "endpoint_config.yaml"
+        from pantheon.settings import get_settings
+        log_dir = get_settings().pantheon_dir / "logs" / "endpoint" / id_hash
+        log_dir.mkdir(parents=True, exist_ok=True)
+        tmp_config_file = log_dir / "endpoint_config.yaml"
         with open(tmp_config_file, "w", encoding="utf-8") as f:
             yaml.dump(config, f)
         cmd = (
             f"python -m pantheon.toolsets.endpoint start "
             f"--config-path {tmp_config_file} "
         )
-        log_file = workspace_path / ".endpoint-logs" / "endpoint.log"
+        log_file = log_dir / "endpoint.log"
 
         # Inherit current environment variables for remote backend and server URLs
         env = os.environ.copy()
@@ -101,7 +103,7 @@ class EndpointHub(ToolSet):
         await job.wait_until_status("running")
         await asyncio.sleep(1)
         self.jobs[id_hash] = job
-        with open(workspace_path / ".endpoint-logs" / "service_id.txt", "r", encoding="utf-8") as f:
+        with open(log_dir / "service_id.txt", "r", encoding="utf-8") as f:
             service_id = f.read().strip()
 
         logger.info(f"Endpoint: {service_id} started with config: {config}")
