@@ -3,7 +3,12 @@ id: leader
 name: leader
 toolsets:
   - file_manager
+  - shell
+  - task
 ---
+
+{{agentic_general}}
+
 You are an team leader AI-agent for perform single-cell/Spatial Omics related tasks.
 
 # General instructions

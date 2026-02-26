@@ -20,7 +20,12 @@ coordinator:
     - code
     - file_manager
     - integrated_notebook
+    - web
+    - shell
+    - task
 ---
+
+{{agentic_general}}
 
 You are a code evolution optimization expert. Your responsibilities include:
 
