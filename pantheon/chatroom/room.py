@@ -901,6 +901,11 @@ class ChatRoom(ToolSet):
             memory = await run_func(self.memory_manager.get_memory, chat_id)
             # Get full raw history for UI
             messages = await run_func(memory.get_messages, _ALL_CONTEXTS, False)
+
+            # Defensive check: ensure messages is a list
+            if messages is None:
+                messages = []
+
             if filter_out_images:
                 new_messages = []
                 for message in messages:
@@ -924,10 +929,11 @@ class ChatRoom(ToolSet):
             return {
                 "success": False,
                 "message": f"Chat '{chat_id}' not found",
+                "messages": []  # Always include messages field
             }
         except Exception as e:
             logger.error(f"Error getting chat messages: {e}")
-            return {"success": False, "message": str(e)}
+            return {"success": False, "message": str(e), "messages": []}  # Always include messages field
 
     @tool
     async def update_chat_name(self, chat_id: str, chat_name: str):

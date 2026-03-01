@@ -50,46 +50,9 @@ RUN --mount=type=cache,target=/root/.cache/uv,id=uv-${CACHE_VERSION} \
     echo "Installing base dependencies (cache: ${CACHE_VERSION}, venv: ${VENV_PATH})" && \
     uv sync --no-dev --extra r --extra knowledge --extra slack --no-install-project --python /usr/local/bin/python
 
-# ── Layer 2: single-cell analysis extras ────────────────────────────────────
-# These packages are fixed (not in pyproject.toml), so they are also cached
-# as long as the list below doesn't change.
-#
-# ============================================
-# Single Cell Analysis Dependencies (Optimized - 12 packages)
-# ============================================
-# Based on comprehensive dependency testing with uv pip compile
-# ALL packages below are verified CUDA-free (no torch/nvidia dependencies)
-# Covers 70-80% of single-cell analysis workflows (core workflows: 100%)
-#
-# Optimized single-cell stack (~120MB, adds ~3-4 min to build time)
-# Focuses on most frequently used packages (>70% usage rate)
-#
-# IMPORTANT: Uses ${VENV_PATH} variable to ensure consistency with ENV setting.
-# Includes verification step to catch installation failures early.
-RUN --mount=type=cache,target=/root/.cache/uv,id=uv-${CACHE_VERSION} \
-    echo "Installing single-cell packages (cache: ${CACHE_VERSION}, venv: ${VENV_PATH})" && \
-    uv pip install --python ${VENV_PATH}/bin/python \
-    # Core data structures & framework (~55MB) - 95% usage
-    anndata \
-    scanpy \
-    # Quality control (~5MB) - 85% usage
-    scrublet \
-    # Clustering & dimensionality reduction (~55MB) - 90% usage
-    leidenalg \
-    igraph \
-    numba \
-    umap-learn \
-    # Batch correction (~5MB) - 70% usage
-    scanorama \
-    # Cell type annotation (~18MB) - 75% usage
-    celltypist \
-    # Functional analysis (~12MB) - 80% usage
-    gseapy \
-    # Visualization & R interop (~11MB) - 85% usage
-    seaborn \
-    anndata2ri && \
-    echo "Verifying single-cell packages installation..." && \
-    ${VENV_PATH}/bin/python -c "import anndata, scanpy, scrublet, leidenalg; print('✓ Single-cell packages verified successfully')"
+# ── Layer 2: single-cell analysis extras (MOVED TO AFTER FINAL UV SYNC) ────
+# NOTE: Single-cell packages installation moved to Layer 3.5 (after uv sync)
+# to prevent them from being removed by 'uv sync' which cleans packages not in lock file
 
 # Packages removed to reduce image size (install on-demand via system_manager):
 # Python packages (~6GB+ saved):
@@ -129,6 +92,57 @@ COPY . /app/
 # making Layer A (venv) change on every code commit.
 RUN --mount=type=cache,target=/root/.cache/uv,id=uv-${CACHE_VERSION} \
     uv sync --no-dev --extra r --extra knowledge --extra slack --no-install-project --python /usr/local/bin/python
+
+# ── Layer 3.5: single-cell analysis extras ──────────────────────────────────
+# IMPORTANT: Install AFTER uv sync to prevent removal by sync's cleanup process.
+# uv sync removes packages not in lock file, so single-cell packages must be
+# installed after the final sync to persist in the image.
+#
+# ============================================
+# Single Cell Analysis Dependencies (Optimized - 12 packages)
+# ============================================
+# Based on comprehensive dependency testing with uv pip compile
+# ALL packages below are verified CUDA-free (no torch/nvidia dependencies)
+# Covers 70-80% of single-cell analysis workflows (core workflows: 100%)
+#
+# Optimized single-cell stack (~120MB, adds ~3-4 min to build time)
+# Focuses on most frequently used packages (>70% usage rate)
+#
+# IMPORTANT: Uses ${VENV_PATH} variable to ensure consistency with ENV setting.
+# Includes verification step to catch installation failures early.
+# NOTE: No cache mount used - packages installed directly to venv to avoid hardlink issues
+RUN echo "Installing single-cell packages (venv: ${VENV_PATH})" && \
+    uv pip install --python ${VENV_PATH}/bin/python --no-cache \
+    # Core data structures & framework (~55MB) - 95% usage
+    anndata \
+    scanpy \
+    # Quality control (~5MB) - 85% usage
+    scrublet \
+    # Clustering & dimensionality reduction (~55MB) - 90% usage
+    leidenalg \
+    igraph \
+    numba \
+    umap-learn \
+    # Batch correction (~5MB) - 70% usage
+    scanorama \
+    # Cell type annotation (~18MB) - 75% usage
+    celltypist \
+    # Functional analysis (~12MB) - 80% usage
+    gseapy \
+    # Visualization & R interop (~11MB) - 85% usage
+    seaborn \
+    anndata2ri && \
+    echo "Verifying single-cell packages installation..." && \
+    ${VENV_PATH}/bin/python -c "import anndata, scanpy, scrublet, leidenalg; print('✓ Single-cell packages verified successfully')"
+
+# ── Layer 3.6: Install pip in venv ──────────────────────────────────────────
+# uv creates venvs without pip by design (recommends using 'uv pip' instead).
+# However, for compatibility with shell tools and standard workflows, we install pip.
+# This allows 'pip list' and other pip commands to work correctly in the venv.
+RUN echo "Installing pip in venv for compatibility..." && \
+    uv pip install --python ${VENV_PATH}/bin/python --no-cache pip && \
+    ${VENV_PATH}/bin/pip --version && \
+    echo "✓ pip installed successfully"
 
 # Pre-compile project source files to .pyc bytecode.
 # Only compile /app/pantheon (source), NOT the venv, so the venv directory stays
@@ -227,8 +241,9 @@ ARG VENV_PATH=/venv
 ENV PATH="${VENV_PATH}/bin:$PATH" \
     PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
-    # PYTHONOPTIMIZE=2: Remove docstrings and assert statements for smaller memory footprint
-    PYTHONOPTIMIZE=2 \
+    # PYTHONOPTIMIZE removed: Some packages (e.g., anndata) rely on docstrings at runtime
+    # and break when PYTHONOPTIMIZE=2 removes them. Trade-off: slightly higher memory usage
+    # for better compatibility with scientific packages.
     # Use jemalloc for better memory management (10-20% improvement)
     LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 \
     # PYTHONDONTWRITEBYTECODE removed: .pyc files are pre-compiled in builder stage
