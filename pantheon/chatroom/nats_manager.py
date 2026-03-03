@@ -100,6 +100,13 @@ class NATSManager:
         logger.error(error_msg)
         return (False, error_msg)
 
+    @staticmethod
+    def _is_port_in_use(port: int) -> bool:
+        """Check if a port is in use by attempting to connect to it."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            return s.connect_ex(("127.0.0.1", port)) == 0
+
     def check_ports_available(self) -> Tuple[bool, list]:
         """
         Check if required ports are available.
@@ -114,13 +121,11 @@ class NATSManager:
             ("WebSocket", self.ws_port),
             ("HTTP", self.http_port),
         ]:
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind(("0.0.0.0", port))
-                logger.debug(f"Port {port_name}:{port} is available")
-            except OSError as e:
-                logger.debug(f"Port {port_name}:{port} is occupied: {e}")
+            if self._is_port_in_use(port):
+                logger.debug(f"Port {port_name}:{port} is occupied")
                 occupied.append(port)
+            else:
+                logger.debug(f"Port {port_name}:{port} is available")
 
         return (len(occupied) == 0, occupied)
 
@@ -139,13 +144,9 @@ class NATSManager:
             RuntimeError: If no available port found after max_attempts
         """
         for port in range(start_port, start_port + max_attempts):
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind(("0.0.0.0", port))
+            if not self._is_port_in_use(port):
                 logger.debug(f"Found available port: {port}")
                 return port
-            except OSError:
-                continue
 
         raise RuntimeError(
             f"Could not find available port in range {start_port}-{start_port + max_attempts}"
@@ -494,19 +495,22 @@ class NATSManager:
 
         logger.info(f"[NATS] Stopping server (PID={self._process.pid})...")
 
-        # Send SIGTERM
-        self._process.terminate()
+        if self._process.returncode is not None:
+            logger.info(f"[NATS] Process already exited with code {self._process.returncode}")
+        else:
+            # Send SIGTERM
+            self._process.terminate()
 
-        try:
-            # Wait up to 5 seconds for graceful shutdown
-            await asyncio.wait_for(self._process.wait(), timeout=5.0)
-            logger.info("[NATS] Server stopped gracefully")
-        except asyncio.TimeoutError:
-            # Force kill
-            logger.warning("[NATS] Server did not stop gracefully, force killing...")
-            self._process.kill()
-            await self._process.wait()
-            logger.info("[NATS] Server force killed")
+            try:
+                # Wait up to 5 seconds for graceful shutdown
+                await asyncio.wait_for(self._process.wait(), timeout=5.0)
+                logger.info("[NATS] Server stopped gracefully")
+            except asyncio.TimeoutError:
+                # Force kill
+                logger.warning("[NATS] Server did not stop gracefully, force killing...")
+                self._process.kill()
+                await self._process.wait()
+                logger.info("[NATS] Server force killed")
 
         # Cleanup temp config file
         if self._config_file and self._config_file.exists():

@@ -277,12 +277,12 @@ async def start_services(
             service_id: Service ID for connection
         """
         import webbrowser
+        from urllib.parse import urlencode
 
         # Build full connection URL with parameters
         # For Vue Router hash mode, query parameters must come after the hash (#/)
-        connection_url = (
-            f"{frontend_url}/#/?nats={nats_url}&service={service_id}&auto=true"
-        )
+        query = urlencode({"nats": nats_url, "service": service_id, "auto": "true"})
+        connection_url = f"{frontend_url}/#/?{query}"
 
         logger.info("")
         logger.info("[FRONTEND] Opening browser for auto-connect...")
@@ -479,7 +479,9 @@ async def start_services(
             logger.info("[FRONTEND] WebSocket endpoint for local browser:")
             logger.info(f"  {server_info['ws_url']}")
             logger.info("[FRONTEND] To connect from external network:")
-            logger.info(f"  ws://<your-local-ip>:8080 (or use port forwarding/ngrok)")
+            from urllib.parse import urlparse as _urlparse
+            _ws_port = _urlparse(server_info['ws_url']).port or 8080
+            logger.info(f"  ws://<your-local-ip>:{_ws_port} (or use port forwarding/ngrok)")
             logger.info("")
 
             # Override nats_servers with local URL (this takes precedence over .env)

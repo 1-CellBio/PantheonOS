@@ -180,7 +180,7 @@ class UnifiedMCPGateway:
                 return False
 
             # Mount to unified endpoint with prefix
-            self._ensure_unified_mcp().mount(proxy, namespace=name)
+            self._ensure_unified_mcp().mount(proxy, prefix=name)
 
             # Track metadata
             self._mounted_servers[name] = MountedServerInfo(
@@ -189,7 +189,7 @@ class UnifiedMCPGateway:
                 client=client,
             )
 
-            logger.info(f"Mounted '{name}' to /mcp (namespace={name}_)")
+            logger.info(f"Mounted '{name}' to /mcp (prefix={name}_)")
             return True
 
     async def disable_server(self, name: str) -> bool:
