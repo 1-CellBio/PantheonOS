@@ -36,6 +36,7 @@ from .utils.llm_providers import (
     call_llm_provider,
     create_enhanced_process_chunk,
     detect_provider,
+    get_api_key_for_provider,
     get_base_url,
 )
 from .utils.log import logger
@@ -1214,12 +1215,29 @@ class Agent:
         # Step 2: Detect provider and get configuration
         provider_config = detect_provider(model, self.force_litellm)
 
-        # Step 3: Get base URL from environment if available
-        # Skip if detect_provider already set base_url (e.g. OpenAI-compatible providers)
+        # Step 3: Get base URL and API key from environment if available
+        # Skip if detect_provider already set them (e.g. OpenAI-compatible providers)
+        using_universal_base = False
         if not provider_config.base_url:
             base_url = get_base_url(provider_config.provider_type)
             if base_url:
                 provider_config.base_url = base_url
+                # Check if base_url came from LLM_API_BASE (universal fallback)
+                from pantheon.settings import get_settings
+                provider_env = f"{provider_config.provider_type.value.upper()}_API_BASE"
+                if not get_settings().get_api_key(provider_env):
+                    using_universal_base = True
+        if not provider_config.api_key:
+            if using_universal_base:
+                # Universal proxy: prefer LLM_API_KEY over provider-specific key
+                from pantheon.settings import get_settings
+                api_key = get_settings().get_api_key("LLM_API_KEY")
+                if not api_key:
+                    api_key = get_api_key_for_provider(provider_config.provider_type)
+            else:
+                api_key = get_api_key_for_provider(provider_config.provider_type)
+            if api_key:
+                provider_config.api_key = api_key
 
         # Step 4: Get unified tools (base functions + provider tools)
         tools = None

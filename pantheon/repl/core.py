@@ -1849,10 +1849,25 @@ class Repl(ReplUI):
         from pantheon.utils.model_selector import reset_model_selector
 
         if not args:
-            # List providers
+            # List custom API endpoint
             self.console.print()
             self.console.print("[bold]LLM Provider API Keys[/bold]")
             self.console.print()
+
+            # Custom API endpoint (option 0)
+            for env_var, label in [("LLM_API_BASE", "Base URL"), ("LLM_API_KEY", "API Key")]:
+                val = os.environ.get(env_var, "")
+                if val:
+                    if env_var == "LLM_API_KEY":
+                        masked = val[:4] + "..." + val[-4:] if len(val) > 12 else "***"
+                    else:
+                        masked = val
+                    status = f"[green]{masked}[/green]"
+                else:
+                    status = "[dim]not set[/dim]"
+                self.console.print(f"  [cyan] 0[/cyan]  {label:<16} {env_var:<24} {status}")
+
+            # Provider list
             for i, (provider_key, display_name, env_var) in enumerate(PROVIDER_MENU, 1):
                 val = os.environ.get(env_var, "")
                 if val:
@@ -1863,17 +1878,36 @@ class Repl(ReplUI):
                 self.console.print(f"  [cyan]{i:>2}[/cyan]  {display_name:<16} {env_var:<24} {status}")
             self.console.print()
             self.console.print("[dim]Usage: /keys <number|name> <api_key>[/dim]")
+            self.console.print("[dim]       /keys 0 <base_url> <api_key>  (custom endpoint)[/dim]")
             self.console.print("[dim]Keys are saved to ~/.pantheon/.env[/dim]")
             self.console.print()
             return
 
-        # Parse: /keys <provider> <key>
+        # Parse args
         parts = args.split(None, 1)
         if len(parts) < 2:
             self.console.print("[yellow]Usage: /keys <number|name> <api_key>[/yellow]")
+            self.console.print("[yellow]       /keys 0 <base_url> <api_key>[/yellow]")
             return
 
-        provider_arg, api_key = parts[0], parts[1].strip()
+        provider_arg, rest = parts[0], parts[1].strip()
+
+        # Handle custom API endpoint (option 0)
+        if provider_arg == "0":
+            custom_parts = rest.split(None, 1)
+            if len(custom_parts) < 2:
+                self.console.print("[yellow]Usage: /keys 0 <base_url> <api_key>[/yellow]")
+                return
+            base_url, api_key = custom_parts[0].strip(), custom_parts[1].strip()
+            _save_key_to_env_file("LLM_API_BASE", base_url)
+            os.environ["LLM_API_BASE"] = base_url
+            _save_key_to_env_file("LLM_API_KEY", api_key)
+            os.environ["LLM_API_KEY"] = api_key
+            reset_model_selector()
+            self.console.print(f"[green]\u2713[/green] Custom API endpoint saved to ~/.pantheon/.env")
+            return
+
+        api_key = rest
 
         # Resolve provider by number or name
         target = None

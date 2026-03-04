@@ -122,7 +122,7 @@ CAPABILITY_MAP = {
 QUALITY_TAGS = {"high", "normal", "low"}
 
 # Ultimate fallback model when nothing else works (must be concrete model, not tag)
-ULTIMATE_FALLBACK = "gpt-4.1-mini"
+ULTIMATE_FALLBACK = "openai/gpt-5.2"
 
 # Recommended fallback tag for general use
 FALLBACK_TAG = "low"
@@ -194,6 +194,11 @@ class ModelSelector:
             api_key_value = os.environ.get(env_key, "")
             if api_key_value:
                 self._available_providers.add(provider)
+
+        # Universal proxy: LLM_API_KEY makes openai provider available
+        # (most third-party proxies are OpenAI-compatible)
+        if not self._available_providers and os.environ.get("LLM_API_KEY", ""):
+            self._available_providers.add("openai")
 
         return self._available_providers
 

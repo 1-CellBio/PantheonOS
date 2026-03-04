@@ -111,6 +111,10 @@ def is_responses_api_model(config: ProviderConfig) -> bool:
 def get_base_url(provider: ProviderType) -> Optional[str]:
     """Get base URL from environment variables or settings.
 
+    Priority:
+    1. Provider-specific: ``{PROVIDER}_API_BASE`` (e.g. OPENAI_API_BASE)
+    2. Universal fallback: ``LLM_API_BASE`` (covers all providers)
+
     Args:
         provider: Provider type
 
@@ -119,8 +123,43 @@ def get_base_url(provider: ProviderType) -> Optional[str]:
     """
     from pantheon.settings import get_settings
 
+    settings = get_settings()
+
+    # 1. Provider-specific override
     env_var = f"{provider.value.upper()}_API_BASE"
-    return get_settings().get_api_key(env_var)
+    value = settings.get_api_key(env_var)
+    if value:
+        return value
+
+    # 2. Universal fallback
+    return settings.get_api_key("LLM_API_BASE")
+
+
+def get_api_key_for_provider(provider: ProviderType) -> Optional[str]:
+    """Get API key from environment variables or settings.
+
+    Priority:
+    1. Provider-specific: ``{PROVIDER}_API_KEY`` (e.g. OPENAI_API_KEY)
+    2. Universal fallback: ``LLM_API_KEY`` (covers all providers)
+
+    Args:
+        provider: Provider type
+
+    Returns:
+        API key if set, None otherwise
+    """
+    from pantheon.settings import get_settings
+
+    settings = get_settings()
+
+    # 1. Provider-specific key
+    env_var = f"{provider.value.upper()}_API_KEY"
+    value = settings.get_api_key(env_var)
+    if value:
+        return value
+
+    # 2. Universal fallback
+    return settings.get_api_key("LLM_API_KEY")
 
 
 # ============ Response Extraction ============
@@ -442,6 +481,7 @@ async def call_llm_provider(
             response_format=response_format,
             process_chunk=process_chunk,
             base_url=config.base_url,
+            api_key=config.api_key,
             model_params=model_params,
         )
         error_prefix = "LiteLLM"

@@ -1,5 +1,5 @@
-Installation
-============
+Installation & Setup
+====================
 
 This guide will help you install Pantheon and set up your environment.
 
@@ -165,6 +165,31 @@ You can also create a ``.env`` file in your project directory:
    # .env
    OPENAI_API_KEY=your-openai-key
    ANTHROPIC_API_KEY=your-anthropic-key
+
+Custom API Endpoint (Third-party Proxy)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you use a third-party API proxy service, set these two universal variables
+to route all LLM calls through your proxy:
+
+.. code-block:: bash
+
+   export LLM_API_BASE="https://your-proxy.com/v1"
+   export LLM_API_KEY="your-proxy-key"
+
+You can also configure this interactively:
+
+.. code-block:: bash
+
+   # Launch the setup wizard at any time
+   pantheon setup
+
+   # Or use /keys in the REPL
+   /keys 0 https://your-proxy.com/v1 your-proxy-key
+
+**Priority**: Provider-specific keys (e.g. ``OPENAI_API_KEY``) take precedence
+over universal keys. When ``LLM_API_BASE`` is active, ``LLM_API_KEY`` is preferred
+over provider-specific keys.
 
 Configuration Directory
 ~~~~~~~~~~~~~~~~~~~~~~~

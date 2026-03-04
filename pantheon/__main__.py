@@ -34,17 +34,25 @@ if sys.platform == "win32":
         pass
 
 
-def main():
-    # Check for API keys and run setup wizard if none found
-    from pantheon.repl.setup_wizard import check_and_run_setup
+def setup():
+    """Launch the setup wizard to configure LLM provider API keys."""
+    from pantheon.repl.setup_wizard import run_setup_wizard
 
-    check_and_run_setup()
+    run_setup_wizard(standalone=True)
+
+
+def main():
+    # Skip auto-setup if user explicitly requested "pantheon setup"
+    if len(sys.argv) < 2 or sys.argv[1] != "setup":
+        from pantheon.repl.setup_wizard import check_and_run_setup
+
+        check_and_run_setup()
 
     # Import REAL functions — Fire reads their signatures for --help
     from pantheon.repl.__main__ import start as cli
     from pantheon.chatroom.start import start_services as ui
 
-    fire.Fire({"cli": cli, "ui": ui}, name="pantheon")
+    fire.Fire({"cli": cli, "ui": ui, "setup": setup}, name="pantheon")
 
 
 if __name__ == "__main__":

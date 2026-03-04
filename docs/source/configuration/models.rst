@@ -389,6 +389,41 @@ Or in ``.pantheon/settings.json`` (not recommended for security):
      }
    }
 
+Custom API Endpoint (Third-party Proxy)
+---------------------------------------
+
+To route all LLM calls through a third-party proxy or custom OpenAI-compatible endpoint,
+set the universal ``LLM_API_BASE`` and ``LLM_API_KEY``:
+
+.. code-block:: bash
+
+   export LLM_API_BASE="https://your-proxy.com/v1"
+   export LLM_API_KEY="your-proxy-key"
+
+Or add to your ``.env`` / ``~/.pantheon/.env`` file:
+
+.. code-block:: bash
+
+   LLM_API_BASE=https://your-proxy.com/v1
+   LLM_API_KEY=your-proxy-key
+
+**Interactive setup:**
+
+.. code-block:: bash
+
+   # Launch the setup wizard
+   pantheon setup
+   # Select option [0] Custom API Endpoint
+
+   # Or use /keys in the REPL
+   /keys 0 https://your-proxy.com/v1 your-proxy-key
+
+**Priority rules:**
+
+- ``OPENAI_API_BASE`` / ``LITELLM_API_BASE`` (provider-specific) > ``LLM_API_BASE`` (universal)
+- When ``LLM_API_BASE`` is active, ``LLM_API_KEY`` is preferred over provider-specific keys
+- When using a provider-specific base URL, provider-specific keys take priority as usual
+
 Azure OpenAI
 ------------
 

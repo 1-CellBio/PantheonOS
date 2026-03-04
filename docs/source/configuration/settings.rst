@@ -49,6 +49,15 @@ API Keys
    export OPENAI_API_KEY="sk-..."
    export ANTHROPIC_API_KEY="sk-ant-..."
 
+For third-party proxy services, use the universal endpoint variables:
+
+.. code-block:: bash
+
+   export LLM_API_BASE="https://your-proxy.com/v1"
+   export LLM_API_KEY="your-proxy-key"
+
+See :doc:`models` for full details on custom API endpoints and priority rules.
+
 Models
 ~~~~~~
 
