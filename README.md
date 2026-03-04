@@ -47,7 +47,7 @@ PantheonOS is an **evolvable and privacy-preserving multi-agent framework** desi
 
 | | |
 | :--- | :--- |
-| [![][online-app-shield]][online-app] | `Play with our Web UI` |
+| [![][online-app-shield]][online-app] | Play with our Web UI! |
 | [![][pypi-shield]][pypi-link] | `pip install pantheon-agents` |
 | [![][slack-shield-badge]][slack-link] | Join our Slack community! |
 | [![][discord-shield-badge]][discord-link] | Join our Discord community! |
