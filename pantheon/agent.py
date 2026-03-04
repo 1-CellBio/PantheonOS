@@ -551,6 +551,101 @@ class Agent:
         # Context injectors for dynamic content injection
         self.context_injectors: list = []  # List of ContextInjector instances
 
+        # Background task support
+        from .background import BackgroundTaskManager
+
+        self._bg_manager = BackgroundTaskManager()
+        self._tool_output_buffers: dict[str, list[str]] = {}
+        self._register_bg_tools()
+
+    def _register_bg_tools(self) -> None:
+        """Register background task management tools."""
+        bg_manager = self._bg_manager
+        agent_self = self
+
+        _BG_BLOCKED_TOOLS = {
+            "run_in_background",
+            "get_background_task",
+            "cancel_background_task",
+        }
+
+        async def run_in_background(
+            tool_name: str,
+            tool_arguments: str,
+        ) -> dict:
+            """Start any tool (including call_agent) in background without blocking.
+            Returns a task_id for tracking. Use get_background_task() to check status/results.
+
+            Args:
+                tool_name: Name of the tool to run in background.
+                tool_arguments: JSON string of the tool arguments.
+            """
+            if tool_name in _BG_BLOCKED_TOOLS or tool_name.startswith("transfer_to_"):
+                return {"error": f"Tool '{tool_name}' cannot be run in background."}
+
+            try:
+                args = json.loads(tool_arguments) if tool_arguments else {}
+            except json.JSONDecodeError as e:
+                return {"error": f"Invalid JSON arguments: {e}"}
+
+            from uuid import uuid4 as _uuid4
+
+            bg_tool_call_id = f"bg_call_{_uuid4()}"
+
+            coro = agent_self.call_tool(
+                tool_name, args, context_variables=None, tool_call_id=bg_tool_call_id
+            )
+
+            bg_task = bg_manager.start(
+                tool_name=tool_name,
+                tool_call_id=bg_tool_call_id,
+                args=args,
+                coro=coro,
+                source="explicit",
+            )
+
+            return {
+                "task_id": bg_task.task_id,
+                "status": "running",
+                "tool_name": tool_name,
+            }
+
+        async def get_background_task(task_id: str = "") -> dict:
+            """Check status of background tasks. If task_id provided, get details
+            (including result and stdout output). If omitted, list all tasks.
+
+            Args:
+                task_id: ID of a specific task (e.g. 'bg_1'), or empty to list all.
+            """
+            if task_id:
+                task = bg_manager.get(task_id)
+                if task is None:
+                    return {"error": f"Task '{task_id}' not found."}
+                return bg_manager.to_summary(task)
+            else:
+                return {
+                    "tasks": [
+                        bg_manager.to_summary(t) for t in bg_manager.list_tasks()
+                    ]
+                }
+
+        async def cancel_background_task(task_id: str) -> dict:
+            """Cancel a running background task.
+
+            Args:
+                task_id: ID of the task to cancel (e.g. 'bg_1').
+            """
+            if bg_manager.cancel(task_id):
+                return {"task_id": task_id, "status": "cancelling"}
+            task = bg_manager.get(task_id)
+            if task is None:
+                return {"error": f"Task '{task_id}' not found."}
+            return {"error": f"Task '{task_id}' is already {task.status}."}
+
+        self._base_functions["run_in_background"] = run_in_background
+        self._base_functions["get_background_task"] = get_background_task
+        self._base_functions["cancel_background_task"] = cancel_background_task
+
     def _get_tool_timeout(self) -> int:
         """Get tool timeout with priority: user override > settings."""
         if self._tool_timeout_override is not None:
@@ -902,6 +997,12 @@ class Agent:
         full_context["_call_agent"] = _call_agent_wrap
         full_context["caller_models"] = self.models  # For scfm_router LLM calls
 
+        # Pre-inject output buffer for background task adoption on timeout
+        if tool_call_id is not None:
+            output_buffer: list[str] = []
+            self._tool_output_buffers[tool_call_id] = output_buffer
+            full_context["_report_output"] = lambda line, buf=output_buffer: buf.append(str(line))
+
         # Remove debug call_* variables
         for k in list(full_context.keys()):
             if k.startswith("call_"):
@@ -1063,12 +1164,19 @@ class Agent:
                     f"Raw arguments: {truncated}"
                 )
             else:
+                # Enable stdout capture for this tool call via contextvar
+                from .background import _bg_output_buffer
+
+                _stdout_buffer: list[str] = []
+                _token = _bg_output_buffer.set(_stdout_buffer)
+
                 call_task = asyncio.create_task(
                     self.call_tool(
                         func_name, params, context_variables, tool_call_id=tool_call_id
                     )
                 )
 
+                adopted_to_bg = False
                 try:
                     result: Any
                     while True:
@@ -1084,29 +1192,52 @@ class Agent:
                         logger.debug("Check stop when tool calling")
                         elapsed = time.time() - start_time
                         if allow_timeout and timeout is not None and elapsed > timeout:
-                            call_task.cancel()
-                            raise asyncio.TimeoutError()
+                            # Adopt into background instead of cancelling.
+                            # Merge _report_output items INTO _stdout_buffer so
+                            # post-adoption prints keep accumulating in the same list.
+                            report_buf = self._tool_output_buffers.pop(tool_call_id, [])
+                            _stdout_buffer.extend(report_buf)
+                            bg_task = self._bg_manager.adopt(
+                                tool_name=func_name,
+                                tool_call_id=tool_call_id,
+                                args=params,
+                                existing_task=call_task,
+                                output_buffer=_stdout_buffer,  # same list object
+                            )
+                            adopted_to_bg = True
+                            result = (
+                                f"Tool '{func_name}' exceeded timeout ({timeout}s) and was moved to "
+                                f"background execution. task_id='{bg_task.task_id}'. "
+                                f"Use get_background_task('{bg_task.task_id}') to check progress and results."
+                            )
+                            context_variables[tool_call_id] = result
+                            break
                         if check_stop is not None and check_stop(elapsed):
                             call_task.cancel()
                             raise StopRunning()
-                    context_variables[tool_call_id] = result
+                    if not adopted_to_bg:
+                        context_variables[tool_call_id] = result
+                        self._tool_output_buffers.pop(tool_call_id, None)
                 except StopRunning:
+                    self._tool_output_buffers.pop(tool_call_id, None)
                     raise
                 except SystemExit as e:
                     if not call_task.done():
                         call_task.cancel()
                     result = f"SystemExit: {e}"
                     context_variables[tool_call_id] = result
+                    self._tool_output_buffers.pop(tool_call_id, None)
                 except Exception as e:
                     if not call_task.done():
                         call_task.cancel()
-                        # with contextlib.suppress(Exception):
-                        #    await call_task
                     result = repr(e)
                     context_variables[tool_call_id] = result
+                    self._tool_output_buffers.pop(tool_call_id, None)
                 finally:
+                    _bg_output_buffer.reset(_token)
                     # Critical Fix: Ensure child task is cancelled if WE are cancelled
-                    if not call_task.done():
+                    # But skip if it was adopted to background
+                    if not call_task.done() and not self._bg_manager._is_adopted(call_task):
                         logger.warning(f"Cancelling orphaned tool task for {func_name}")
                         call_task.cancel()
 
