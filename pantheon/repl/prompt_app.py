@@ -629,10 +629,19 @@ def create_key_bindings(app_instance: "PantheonInputApp") -> KeyBindings:
 
     @kb.add("up", filter=is_bg_panel)
     def _(event):
-        """Up arrow in bg panel: move up, or close panel if at first item."""
-        if app_instance._bg_panel_selected <= 0:
-            # At top — close panel, return to input
+        """Up arrow in bg panel: detail→list, or move up, or close panel."""
+        if app_instance._bg_detail_task_id is not None:
+            # In detail view — go back to list
+            app_instance._bg_detail_task_id = None
+            try:
+                app_instance.app.renderer.erase()
+            except Exception:
+                pass
+            app_instance.app.invalidate()
+        elif app_instance._bg_panel_selected <= 0:
+            # At top of list — close panel, return to input
             app_instance._bg_panel_visible = False
+            app_instance._bg_detail_task_id = None
             try:
                 app_instance.app.renderer.erase()
             except Exception:
@@ -643,8 +652,29 @@ def create_key_bindings(app_instance: "PantheonInputApp") -> KeyBindings:
 
     @kb.add("escape", filter=is_bg_panel & ~is_processing)
     def _(event):
-        """Escape in bg panel: close panel."""
-        app_instance._bg_panel_visible = False
+        """Escape in bg panel: detail→list, or list→close."""
+        if app_instance._bg_detail_task_id is not None:
+            app_instance._bg_detail_task_id = None
+        else:
+            app_instance._bg_panel_visible = False
+            app_instance._bg_detail_task_id = None
+        try:
+            app_instance.app.renderer.erase()
+        except Exception:
+            pass
+        app_instance.app.invalidate()
+
+    @kb.add("enter", filter=is_bg_panel & ~is_processing)
+    def _(event):
+        """Enter in bg panel: toggle detail view."""
+        if app_instance._bg_detail_task_id is not None:
+            # Already in detail view — go back to list
+            app_instance._bg_detail_task_id = None
+        else:
+            # Open detail view for selected task
+            tasks = app_instance._get_all_bg_tasks()
+            if tasks and app_instance._bg_panel_selected < len(tasks):
+                app_instance._bg_detail_task_id = tasks[app_instance._bg_panel_selected].task_id
         try:
             app_instance.app.renderer.erase()
         except Exception:
@@ -716,6 +746,7 @@ class PantheonInputApp:
         # Background task panel state
         self._bg_panel_visible = False
         self._bg_panel_selected = 0  # Selected task index
+        self._bg_detail_task_id: str | None = None  # When set, show detail view
 
         # Style
         self.style = Style.from_dict(
@@ -1281,13 +1312,21 @@ class PantheonInputApp:
 
     def _get_bg_panel_height(self) -> Dimension:
         """Dynamic height for bg panel."""
+        if self._bg_detail_task_id is not None:
+            # Detail view: needs more space
+            return Dimension(min=5, max=20, preferred=15)
         tasks = self._get_all_bg_tasks()
-        # Header(1) + tasks + footer(1), capped at 12
+        # Header(1) + tasks, capped at 12
         n = min(len(tasks), 10)
         return Dimension(min=3, max=n + 2, preferred=n + 2)
 
     def _get_bg_panel_text(self):
         """Render background task panel as formatted text."""
+        # Detail view
+        if self._bg_detail_task_id is not None:
+            return self._render_bg_detail()
+
+        # List view
         tasks = self._get_all_bg_tasks()
         if not tasks:
             return HTML('<ansigray> No background tasks </ansigray>')
@@ -1299,7 +1338,7 @@ class PantheonInputApp:
             self._bg_panel_selected = 0
 
         lines = []
-        lines.append('<ansiblue>─── Background Tasks (↑↓ navigate, c=cancel, esc=close) ───</ansiblue>')
+        lines.append('<ansiblue>─── Background Tasks (↑↓ navigate, enter=detail, c=cancel, esc=close) ───</ansiblue>')
 
         for i, task in enumerate(tasks):
             is_selected = (i == self._bg_panel_selected)
@@ -1341,15 +1380,67 @@ class PantheonInputApp:
 
         return HTML('\n'.join(lines))
 
+    def _render_bg_detail(self):
+        """Render detail view for a single background task."""
+        def esc(s):
+            return str(s).replace('<', '&lt;').replace('>', '&gt;')
+
+        # Find the task
+        task = None
+        for t in self._get_all_bg_tasks():
+            if t.task_id == self._bg_detail_task_id:
+                task = t
+                break
+        if task is None:
+            self._bg_detail_task_id = None
+            return HTML('<ansigray> Task not found </ansigray>')
+
+        elapsed = (task.completed_at or time.time()) - task.created_at
+
+        # Status with color
+        if task.status == "running":
+            status_colored = f'<ansiyellow>running</ansiyellow>'
+        elif task.status == "completed":
+            status_colored = f'<ansigreen>completed</ansigreen>'
+        elif task.status == "failed":
+            status_colored = f'<ansired>failed</ansired>'
+        else:
+            status_colored = f'<ansigray>{esc(task.status)}</ansigray>'
+
+        lines = []
+        lines.append(f'<ansiblue>─── Task Detail (enter/esc=back) ───</ansiblue>')
+        lines.append(f'  <ansiwhite>ID:</ansiwhite>      {esc(task.task_id)}')
+        lines.append(f'  <ansiwhite>Tool:</ansiwhite>    {esc(task.tool_name)}')
+        lines.append(f'  <ansiwhite>Args:</ansiwhite>    {esc(str(task.args)[:200])}')
+        lines.append(f'  <ansiwhite>Status:</ansiwhite>  {status_colored}')
+        lines.append(f'  <ansiwhite>Elapsed:</ansiwhite> {elapsed:.1f}s')
+        lines.append(f'  <ansiwhite>Source:</ansiwhite>  {esc(task.source)}')
+
+        if task.result is not None:
+            result_str = esc(str(task.result)[:500])
+            lines.append(f'  <ansiwhite>Result:</ansiwhite>  {result_str}')
+        if task.error:
+            lines.append(f'  <ansired>Error:</ansired>   {esc(task.error[:500])}')
+
+        # Recent output lines
+        if task.output_lines:
+            lines.append(f'  <ansiwhite>Output:</ansiwhite>  ({len(task.output_lines)} lines)')
+            for line in task.output_lines[-8:]:
+                lines.append(f'    <ansigray>{esc(line[:120])}</ansigray>')
+
+        return HTML('\n'.join(lines))
+
     def toggle_bg_panel(self):
         """Toggle background task panel visibility."""
         if self._bg_panel_visible:
             self._bg_panel_visible = False
+            self._bg_detail_task_id = None
         else:
             tasks = self._get_all_bg_tasks()
             if tasks:
                 self._bg_panel_visible = True
                 self._bg_panel_selected = 0
+                self._bg_detail_task_id = None
         try:
             self.app.renderer.erase()
         except Exception:
