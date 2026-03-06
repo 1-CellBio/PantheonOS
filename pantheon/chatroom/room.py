@@ -1129,6 +1129,11 @@ class ChatRoom(ToolSet):
         chatroom_self = self
 
         def _on_bg_complete(bg_task):
+            # In UI mode (NATS streaming available), skip auto-chat notification
+            # since the UI receives real-time bg_task_update events instead.
+            if chatroom_self._nats_adapter is not None:
+                return
+
             status = bg_task.status
             result_preview = ""
             if bg_task.result is not None:
@@ -1160,7 +1165,123 @@ class ChatRoom(ToolSet):
             if hasattr(agent, "_bg_manager"):
                 # Only set if no external consumer (REPL, SDK) has already wired it
                 if agent._bg_manager.on_complete is None:
-                    agent._bg_manager.on_complete = _on_bg_complete
+                    agent_name = agent.name
+
+                    def _on_bg_complete_with_notify(bg_task, _agent_name=agent_name):
+                        _on_bg_complete(bg_task)
+                        # Publish NATS stream event for UI real-time updates
+                        if chatroom_self._nats_adapter is not None:
+                            async def _publish():
+                                await chatroom_self._nats_adapter.publish(
+                                    chat_id, "bg_task_update",
+                                    {
+                                        "type": "bg_task_update",
+                                        "task_id": bg_task.task_id,
+                                        "tool_name": bg_task.tool_name,
+                                        "status": bg_task.status,
+                                        "agent_name": _agent_name,
+                                    },
+                                )
+                            try:
+                                loop = asyncio.get_running_loop()
+                                loop.create_task(_publish())
+                            except RuntimeError:
+                                pass
+
+                    agent._bg_manager.on_complete = _on_bg_complete_with_notify
+
+    @tool
+    async def list_background_tasks(self, chat_id: str) -> dict:
+        """List all background tasks across all agents for a chat.
+
+        Args:
+            chat_id: The ID of the chat.
+        """
+        try:
+            team = await self.get_team_for_chat(chat_id, save_to_memory=False)
+            tasks = []
+            for agent in team.agents.values():
+                if hasattr(agent, "_bg_manager"):
+                    for t in agent._bg_manager.list_tasks():
+                        summary = agent._bg_manager.to_summary(t)
+                        summary["agent_name"] = agent.name
+                        tasks.append(summary)
+            return {"success": True, "tasks": tasks}
+        except Exception as e:
+            logger.error(f"Error listing background tasks: {e}")
+            return {"success": False, "message": str(e), "tasks": []}
+
+    @tool
+    async def get_background_task_detail(self, chat_id: str, task_id: str) -> dict:
+        """Get detailed info for a specific background task.
+
+        Args:
+            chat_id: The ID of the chat.
+            task_id: The ID of the background task.
+        """
+        try:
+            team = await self.get_team_for_chat(chat_id, save_to_memory=False)
+            for agent in team.agents.values():
+                if hasattr(agent, "_bg_manager"):
+                    t = agent._bg_manager.get(task_id)
+                    if t is not None:
+                        summary = agent._bg_manager.to_summary(t)
+                        summary["agent_name"] = agent.name
+                        summary["output_lines"] = t.output_lines
+                        summary["args"] = t.args
+                        return {"success": True, "task": summary}
+            return {"success": False, "message": f"Task '{task_id}' not found"}
+        except Exception as e:
+            logger.error(f"Error getting background task detail: {e}")
+            return {"success": False, "message": str(e)}
+
+    @tool
+    async def cancel_background_task(self, chat_id: str, task_id: str) -> dict:
+        """Cancel a running background task.
+
+        Args:
+            chat_id: The ID of the chat.
+            task_id: The ID of the background task to cancel.
+        """
+        try:
+            team = await self.get_team_for_chat(chat_id, save_to_memory=False)
+            for agent in team.agents.values():
+                if hasattr(agent, "_bg_manager"):
+                    t = agent._bg_manager.get(task_id)
+                    if t is not None:
+                        result = agent._bg_manager.cancel(task_id)
+                        if result:
+                            return {"success": True, "message": f"Task '{task_id}' cancelled"}
+                        else:
+                            return {"success": False, "message": f"Task '{task_id}' could not be cancelled (already finished?)"}
+            return {"success": False, "message": f"Task '{task_id}' not found"}
+        except Exception as e:
+            logger.error(f"Error cancelling background task: {e}")
+            return {"success": False, "message": str(e)}
+
+    @tool
+    async def remove_background_task(self, chat_id: str, task_id: str) -> dict:
+        """Remove a background task from the manager.
+
+        Args:
+            chat_id: The ID of the chat.
+            task_id: The ID of the background task to remove.
+        """
+        try:
+            team = await self.get_team_for_chat(chat_id, save_to_memory=False)
+            for agent in team.agents.values():
+                if hasattr(agent, "_bg_manager"):
+                    t = agent._bg_manager.get(task_id)
+                    if t is not None:
+                        result = agent._bg_manager.remove(task_id)
+                        if result:
+                            return {"success": True, "message": f"Task '{task_id}' removed"}
+                        else:
+                            return {"success": False, "message": f"Task '{task_id}' could not be removed"}
+            return {"success": False, "message": f"Task '{task_id}' not found"}
+        except Exception as e:
+            logger.error(f"Error removing background task: {e}")
+            return {"success": False, "message": str(e)}
 
     @tool
     async def chat(
