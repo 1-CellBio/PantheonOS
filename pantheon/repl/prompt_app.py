@@ -606,15 +606,16 @@ def create_key_bindings(app_instance: "PantheonInputApp") -> KeyBindings:
 
     @kb.add("down", filter=~is_processing & ~is_bg_panel)
     def _(event):
-        """Down arrow: open bg panel when input is empty and cursor at end."""
+        """Down arrow: open bg panel when cursor is on the last line."""
         buffer = event.current_buffer
-        # Only toggle if input is empty or cursor is at the last line
         text = buffer.text
         cursor = buffer.cursor_position
-        if not text.strip() or cursor >= len(text):
+        # Check if cursor is on the last line
+        after_cursor = text[cursor:]
+        on_last_line = "\n" not in after_cursor
+        if on_last_line:
             app_instance.toggle_bg_panel()
         else:
-            # Default behavior: move cursor down in multiline input
             buffer.cursor_down()
 
     @kb.add("down", filter=is_bg_panel)
@@ -624,8 +625,17 @@ def create_key_bindings(app_instance: "PantheonInputApp") -> KeyBindings:
 
     @kb.add("up", filter=is_bg_panel)
     def _(event):
-        """Up arrow in bg panel: move selection up."""
-        app_instance.bg_panel_move(-1)
+        """Up arrow in bg panel: move up, or close panel if at first item."""
+        if app_instance._bg_panel_selected <= 0:
+            # At top — close panel, return to input
+            app_instance._bg_panel_visible = False
+            try:
+                app_instance.app.renderer.erase()
+            except Exception:
+                pass
+            app_instance.app.invalidate()
+        else:
+            app_instance.bg_panel_move(-1)
 
     @kb.add("escape", filter=is_bg_panel & ~is_processing)
     def _(event):
