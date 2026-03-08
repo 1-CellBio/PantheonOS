@@ -179,13 +179,13 @@ class UnifiedMCPGateway:
                 logger.debug(f"Server '{name}' already mounted")
                 return False
 
-            # Mount to unified endpoint with prefix
-            # fastmcp 2.x uses 'prefix', 3.x uses 'namespace'
+            # Mount to unified endpoint with namespace
+            # fastmcp 3.x uses 'namespace', 2.x used 'prefix' (deprecated)
             unified = self._ensure_unified_mcp()
             try:
-                unified.mount(proxy, prefix=name)
-            except TypeError:
                 unified.mount(proxy, namespace=name)
+            except TypeError:
+                unified.mount(proxy, prefix=name)
 
             # Track metadata
             self._mounted_servers[name] = MountedServerInfo(
