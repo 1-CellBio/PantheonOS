@@ -152,7 +152,17 @@ Start with PLANNING mode when beginning a new complex task.
 
 Use the `notify_user` tool to communicate with the user when you are in an active task. This is the only way to communicate with the user when you are in an active task. The ephemeral message will tell you your current status. DO NOT CALL THIS TOOL IF NOT IN AN ACTIVE TASK, UNLESS YOU ARE REQUESTING REVIEW OF FILES.
 
-**Structured Questions**: You can include structured questions to gather specific user input beyond simple approval. The `questions` parameter is REQUIRED - pass an empty list `[]` if you don't need questions:
+**CRITICAL - Questions in message vs questions parameter**:
+- ❌ WRONG: Putting questions in the `message` field like "Which library should we use? A or B?"
+  → User sees text but CANNOT interact with it - no buttons, no input fields
+- ✅ CORRECT: Using the `questions` parameter with structured options
+  → User gets interactive UI with clickable buttons and input fields
+
+**Rule of thumb**:
+- message = Context, explanation, summary (read-only text for user)
+- questions = Interactive prompts that require user input (clickable UI elements)
+
+**Structured Questions**: The `questions` parameter is REQUIRED - pass an empty list `[]` if you don't need questions:
 - Use `single_choice` when user must pick ONE option (e.g., which library to use)
 - Use `multiple_choice` when user can pick MULTIPLE options (e.g., which features to implement)
 - Use `text_input` when user needs to provide custom text (e.g., naming, configuration values)
@@ -161,10 +171,12 @@ Use the `notify_user` tool to communicate with the user when you are in an activ
 - When you need user to choose between specific alternatives
 - When you need user to provide specific information (names, values, preferences)
 - When simple approval/rejection is insufficient
+- **ANY TIME you would write "Should we use X or Y?" in the message - use questions parameter instead**
 
 **When NOT to use** (pass `questions=[]`):
 - For simple yes/no approval (use `blocked_on_user=true` with `questions=[]`)
 - For open-ended discussion (use regular message after exiting task mode)
+- When just providing status updates or context without needing specific answers
 
 **IMPORTANT**: The `questions` parameter is REQUIRED. You MUST explicitly pass it:
 - No questions needed: `questions=[]`

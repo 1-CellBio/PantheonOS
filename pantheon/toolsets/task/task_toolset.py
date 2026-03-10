@@ -158,18 +158,32 @@ class TaskToolSet(ToolSet):
         STRUCTURED QUESTIONS: You can include structured questions to gather specific user input beyond simple approval.
         Pass an empty list [] if you don't need questions. Pass a list of question dicts if you do.
 
+        CRITICAL - When to use structured questions vs message text:
+        - ✅ USE questions parameter: When you need user to SELECT from options or PROVIDE specific input
+          Examples: "Which library?", "What port number?", "Which features to implement?"
+        - ❌ DO NOT put questions in message text: Questions in message are NOT interactive and user cannot answer them directly
+          The message field is for CONTEXT and EXPLANATION only, not for asking questions that need answers
+
+        Rule: If you need an answer to proceed, use the questions parameter. If you just want to inform the user, use message.
+
         Args:
             paths_to_review: List of ABSOLUTE paths to files that the user should be notified about. MUST populate this if requesting review.
             blocked_on_user: Set to true if you are blocked on user approval to proceed. Set false if just notifying about completion.
-            message: Required message to notify the user with, e.g to provide context or ask questions. Use GitHub Flavored Markdown (GFM) format.
+                IMPORTANT: If you provide questions, the tool will automatically set interrupt=True regardless of this value,
+                as asking questions implies waiting for answers. You typically should set this to True when providing questions.
+            message: Required message to notify the user with, e.g to provide context or explanation. Use GitHub Flavored Markdown (GFM) format.
+                IMPORTANT: Do NOT put questions in this field. Questions here are NOT interactive. Use the questions parameter instead.
             confidence_justification: Justification for the confidence score. MUST answer the 6 assessment questions with Yes/No.
             confidence_score: Agent's confidence from 0.0-1.0. MUST follow scoring rules above.
-            questions: List of structured questions (0-4 questions). Pass [] if no questions needed. Each question is a dict with:
+            questions: List of structured questions. REQUIRED parameter - pass [] if no questions needed.
+                IMPORTANT: Questions in the message text will NOT create interactive prompts. Only questions in this parameter will be rendered as interactive UI elements.
+                NOTE: Providing questions will automatically cause the tool to interrupt and wait for user response, even if blocked_on_user=False.
+                Each question is a dict with:
                 - question (str): The question text to ask the user
                 - header (str): Short label for the question (max 12 chars), e.g. "Auth method", "Library"
                 - input_type (str): Type of input - "single_choice", "multiple_choice", "text_input"
-                - options (list[dict], required for choice types): List of 2-4 options, each with:
-                    - label (str): Display text for the option (1-5 words)
+                - options (list[dict], required for choice types): List of options, each with:
+                    - label (str): Display text for the option
                     - description (str): Explanation of what this option means
                     - value (str): Internal value to return when selected
                 - placeholder (str, optional for text_input): Placeholder text
@@ -248,11 +262,8 @@ class TaskToolSet(ToolSet):
                     "error": "questions must be a list",
                 }
 
-            if len(questions) > 4:
-                return {
-                    "success": False,
-                    "error": "Maximum 4 questions allowed",
-                }
+            # No limit on number of questions - removed the 4-question restriction
+            # Frontend can handle any number of questions with tab navigation
 
             for i, q in enumerate(questions):
                 if not isinstance(q, dict):
@@ -283,10 +294,10 @@ class TaskToolSet(ToolSet):
                             "error": f"Question {i+1} with {input_type} must have options list",
                         }
 
-                    if len(q["options"]) < 2 or len(q["options"]) > 4:
+                    if len(q["options"]) < 1:
                         return {
                             "success": False,
-                            "error": f"Question {i+1} must have 2-4 options",
+                            "error": f"Question {i+1} must have at least 1 option",
                         }
 
                     for j, opt in enumerate(q["options"]):
@@ -309,12 +320,17 @@ class TaskToolSet(ToolSet):
             brain_dir = self._get_brain_dir(context)
             self._save(brain_dir)
 
+        # Auto-adjust interrupt behavior: if questions are provided, always interrupt
+        # This ensures logical consistency - asking questions implies waiting for answers
+        has_questions = len(questions) > 0
+        actual_interrupt = blocked_on_user or has_questions
+
         return {
             "success": True,
-            "interrupt": blocked_on_user,
+            "interrupt": actual_interrupt,
             "message": message,
             "paths": paths_to_review,
-            "has_questions": len(questions) > 0,
+            "has_questions": has_questions,
             "questions": questions,
         }
 
