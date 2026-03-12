@@ -86,6 +86,13 @@ EXTERNAL_REPOS = {
         "source_url": "https://github.com/ClawBio/ClawBio",
         "has_categories": False,
     },
+    "omicclaw": {
+        "url": "https://github.com/Starlitnightly/omicclaw.git",
+        "skills_dir": "src/omicverse_skills/skills",
+        "display_name": "OmicClaw",
+        "source_url": "https://github.com/Starlitnightly/omicclaw",
+        "has_categories": False,
+    },
 }
 
 
