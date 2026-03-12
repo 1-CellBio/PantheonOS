@@ -113,7 +113,8 @@ class StoreCLI:
 
     def publish(self, item_id: str, type: str, version: str = "1.0.0",
                 display_name: str = None, description: str = None,
-                category: str = "general", hub_url: str = None):
+                category: str = "general", source: str = "Pantheon",
+                source_url: str = None, hub_url: str = None):
         """Publish an agent, team, or skill to the Store.
 
         Args:
@@ -123,6 +124,8 @@ class StoreCLI:
             display_name: Display name (defaults to item_id)
             description: Package description
             category: Category (default: general)
+            source: Source provider label (default: Pantheon)
+            source_url: Source provider URL
             hub_url: Hub server URL
         """
         from .publisher import PackageCollector
@@ -162,7 +165,7 @@ class StoreCLI:
             pass  # Fall through to create new package
 
         # Create new package
-        data = _run(client.publish({
+        payload = {
             "name": name,
             "type": type,
             "display_name": display_name or item_id,
@@ -171,7 +174,11 @@ class StoreCLI:
             "version": version,
             "content": content,
             "files": files,
-        }))
+            "source": source,
+        }
+        if source_url:
+            payload["source_url"] = source_url
+        data = _run(client.publish(payload))
 
         console.print(f"[green]Published {type} '{name}' v{version}[/green]")
         return data

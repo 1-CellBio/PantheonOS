@@ -67,6 +67,15 @@ class PackageInstaller:
             target.write_text(content, encoding="utf-8")
             written.append(target)
 
+            # Write bundled skill files (for skill groups)
+            if files:
+                for rel_path, file_content in files.items():
+                    # rel_path is like "skills/omics/quality_control.md"
+                    file_target = self.settings.pantheon_dir / rel_path
+                    file_target.parent.mkdir(parents=True, exist_ok=True)
+                    file_target.write_text(file_content, encoding="utf-8")
+                    written.append(file_target)
+
         else:
             raise ValueError(f"Unknown package type: {pkg_type}")
 

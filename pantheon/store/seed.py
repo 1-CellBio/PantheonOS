@@ -6,12 +6,13 @@ Two modes:
 """
 
 import asyncio
+import hashlib
 import json
 import re
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import frontmatter
 from loguru import logger
@@ -78,6 +79,13 @@ EXTERNAL_REPOS = {
         "source_url": "https://github.com/K-Dense-AI/claude-scientific-skills",
         "has_categories": False,
     },
+    "clawbio": {
+        "url": "https://github.com/ClawBio/ClawBio.git",
+        "skills_dir": "skills",
+        "display_name": "ClawBio",
+        "source_url": "https://github.com/ClawBio/ClawBio",
+        "has_categories": False,
+    },
 }
 
 
@@ -129,10 +137,15 @@ class StoreSeed:
     # ------------------------------------------------------------------ #
 
     def _discover_factory_skills(self):
-        """Discover all publishable skill files in factory/templates/skills/."""
+        """Discover all publishable skill files in factory/templates/skills/.
+
+        Returns both individual skills AND skill groups (directories with SKILL.md).
+        Skill groups bundle their direct sibling .md files in the `files` dict.
+        """
         factory_dir = Path(__file__).parent.parent / "factory" / "templates" / "skills"
         skills = []
 
+        # --- Individual skills (non-index .md files) ---
         for md_file in sorted(factory_dir.rglob("*.md")):
             rel = md_file.relative_to(factory_dir)
             if any(p.startswith("_") or p.startswith(".") for p in rel.parts[:-1]):
@@ -161,6 +174,74 @@ class StoreSeed:
                 "category": category,
                 "tags": tags if isinstance(tags, list) else [],
                 "content": frontmatter.dumps(post),
+                "source": "factory",
+            })
+
+        # --- Skill groups (directories with SKILL.md index) ---
+        for skill_md in sorted(factory_dir.rglob("SKILL.md")):
+            skill_dir = skill_md.parent
+            rel_dir = skill_dir.relative_to(factory_dir)
+            if any(p.startswith("_") or p.startswith(".") for p in rel_dir.parts):
+                continue
+
+            try:
+                post = frontmatter.load(str(skill_md))
+            except Exception:
+                continue
+
+            skill_id = post.get("id", skill_dir.name + "_index")
+            name = post.get("name", skill_id)
+            description = post.get("description", "")
+            tags = post.get("tags", [])
+
+            rel_dir_str = str(rel_dir).replace("\\", "/")
+            store_name = rel_dir_str.replace("/", "_") + "_group"
+            category = _get_factory_category(rel_dir_str)
+
+            # Bundle direct sibling files (not SKILL.md, not entering sub-groups)
+            # Sub-directories that have their own SKILL.md are separate groups
+            sub_group_dirs = {
+                d for d in skill_dir.iterdir()
+                if d.is_dir() and (d / "SKILL.md").exists()
+            }
+            files: Dict[str, str] = {}
+            for child in sorted(skill_dir.iterdir()):
+                if child.is_dir():
+                    # Skip sub-group dirs and hidden/underscore dirs
+                    if child in sub_group_dirs or child.name.startswith(("_", ".")):
+                        continue
+                    # Recursively collect files from non-group subdirs
+                    for sub_file in sorted(child.rglob("*")):
+                        if not sub_file.is_file():
+                            continue
+                        sub_rel = sub_file.relative_to(factory_dir)
+                        if any(p.startswith(("_", ".")) or p == "__pycache__" for p in sub_rel.parts):
+                            continue
+                        try:
+                            content_text = sub_file.read_text(encoding="utf-8")
+                        except (UnicodeDecodeError, PermissionError):
+                            continue
+                        file_key = f"skills/{str(sub_rel).replace(chr(92), '/')}"
+                        files[file_key] = content_text
+                elif child.is_file():
+                    if child.name in ("SKILL.md", "SKILLS.md"):
+                        continue
+                    try:
+                        content_text = child.read_text(encoding="utf-8")
+                    except (UnicodeDecodeError, PermissionError):
+                        continue
+                    child_rel = child.relative_to(factory_dir)
+                    file_key = f"skills/{str(child_rel).replace(chr(92), '/')}"
+                    files[file_key] = content_text
+
+            skills.append({
+                "store_name": store_name,
+                "display_name": name,
+                "description": description.strip() if isinstance(description, str) else str(description).strip(),
+                "category": category,
+                "tags": tags if isinstance(tags, list) else [],
+                "content": frontmatter.dumps(post),
+                "files": files,
                 "source": "factory",
             })
 
@@ -252,7 +333,10 @@ class StoreSeed:
     def _convert_external_skill(self, skill_md_path: Path, source_name: str,
                                  source_config: dict,
                                  category_hint: Optional[str] = None) -> Optional[dict]:
-        """Convert an external SKILL.md to Pantheon format."""
+        """Convert an external SKILL.md to Pantheon format.
+
+        Also bundles sibling .md files from the same directory into `files`.
+        """
         try:
             post = frontmatter.load(str(skill_md_path))
         except Exception as e:
@@ -314,6 +398,26 @@ class StoreSeed:
 
         store_name = f"{source_name}_{skill_id}"
 
+        # Bundle all files in the skill directory recursively (code, data, etc.)
+        files: Dict[str, str] = {}
+        skill_dir = skill_md_path.parent
+        for child in sorted(skill_dir.rglob("*")):
+            if not child.is_file():
+                continue
+            if child.name == "SKILL.md":
+                continue
+            # Skip hidden files, __pycache__, tests
+            rel_to_skill = child.relative_to(skill_dir)
+            parts = rel_to_skill.parts
+            if any(p.startswith(".") or p == "__pycache__" for p in parts):
+                continue
+            try:
+                file_content = child.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, PermissionError):
+                continue
+            file_key = f"skills/{store_name}/{str(rel_to_skill).replace(chr(92), '/')}"
+            files[file_key] = file_content
+
         return {
             "store_name": store_name,
             "display_name": display_name,
@@ -321,6 +425,7 @@ class StoreSeed:
             "category": category,
             "tags": tags,
             "content": frontmatter.dumps(new_post),
+            "files": files,
             "source": source_name,
         }
 
@@ -394,16 +499,30 @@ class StoreSeed:
         for skill in skills:
             fpath = skills_dir / f"{skill['store_name']}.md"
             fpath.write_text(skill["content"], encoding="utf-8")
-            manifest.append({
+            entry = {
                 "name": skill["store_name"],
                 "type": "skill",
                 "display_name": skill["display_name"],
                 "description": skill["description"],
                 "category": skill["category"],
                 "tags": skill.get("tags", []),
-                "source": "factory",
+                "source": "Pantheon",
+                "source_url": None,
                 "file": str(fpath.relative_to(out)).replace("\\", "/"),
-            })
+            }
+            # Save bundled skill files (for skill groups)
+            files = skill.get("files", {})
+            if files:
+                bundled_dir = skills_dir / f"{skill['store_name']}_bundled"
+                bundled_dir.mkdir(parents=True, exist_ok=True)
+                bundled_files = {}
+                for rel_path, content in files.items():
+                    bf_name = hashlib.md5(rel_path.encode()).hexdigest()[:12] + Path(rel_path).suffix
+                    bf = bundled_dir / bf_name
+                    bf.write_text(content, encoding="utf-8")
+                    bundled_files[rel_path] = str(bf.relative_to(out)).replace("\\", "/")
+                entry["bundled_files"] = bundled_files
+            manifest.append(entry)
 
         # --- Factory agents ---
         agents = self._discover_factory_agents()
@@ -420,7 +539,8 @@ class StoreSeed:
                 "description": agent["description"],
                 "category": agent["category"],
                 "tags": [],
-                "source": "factory",
+                "source": "Pantheon",
+                "source_url": None,
                 "file": str(fpath.relative_to(out)).replace("\\", "/"),
             })
 
@@ -439,7 +559,8 @@ class StoreSeed:
                 "description": team["description"],
                 "category": team["category"],
                 "tags": [],
-                "source": "factory",
+                "source": "Pantheon",
+                "source_url": None,
                 "file": str(fpath.relative_to(out)).replace("\\", "/"),
             }
             # Save bundled agent files
@@ -449,7 +570,8 @@ class StoreSeed:
                 bundled_dir.mkdir(parents=True, exist_ok=True)
                 bundled_files = {}
                 for rel_path, content in files.items():
-                    bf = bundled_dir / rel_path.replace("/", "_")
+                    bf_name = hashlib.md5(rel_path.encode()).hexdigest()[:12] + Path(rel_path).suffix
+                    bf = bundled_dir / bf_name
                     bf.write_text(content, encoding="utf-8")
                     bundled_files[rel_path] = str(bf.relative_to(out)).replace("\\", "/")
                 entry["bundled_files"] = bundled_files
@@ -476,16 +598,30 @@ class StoreSeed:
                 for skill in ext_skills:
                     fpath = ext_dir / f"{skill['store_name']}.md"
                     fpath.write_text(skill["content"], encoding="utf-8")
-                    manifest.append({
+                    entry = {
                         "name": skill["store_name"],
                         "type": "skill",
                         "display_name": skill["display_name"],
                         "description": skill["description"],
                         "category": skill["category"],
                         "tags": skill.get("tags", []),
-                        "source": source_name,
+                        "source": config["display_name"],
+                        "source_url": config["source_url"],
                         "file": str(fpath.relative_to(out)).replace("\\", "/"),
-                    })
+                    }
+                    # Save bundled skill files
+                    files = skill.get("files", {})
+                    if files:
+                        bundled_dir = ext_dir / f"{skill['store_name']}_bundled"
+                        bundled_dir.mkdir(parents=True, exist_ok=True)
+                        bundled_files = {}
+                        for rel_path, content in files.items():
+                            bf_name = hashlib.md5(rel_path.encode()).hexdigest()[:12] + Path(rel_path).suffix
+                            bf = bundled_dir / bf_name
+                            bf.write_text(content, encoding="utf-8")
+                            bundled_files[rel_path] = str(bf.relative_to(out)).replace("\\", "/")
+                        entry["bundled_files"] = bundled_files
+                    manifest.append(entry)
                     progress.advance(task)
 
             # Cleanup cloned repo
@@ -555,7 +691,7 @@ class StoreSeed:
 
                 content = file_path.read_text(encoding="utf-8")
 
-                # Load bundled files for teams
+                # Load bundled files (teams bundle agents, skill groups bundle sub-skills)
                 files = {}
                 if entry.get("bundled_files"):
                     for rel_path, bf_rel in entry["bundled_files"].items():
@@ -571,6 +707,8 @@ class StoreSeed:
                     category=entry["category"],
                     content=content,
                     files=files,
+                    source=entry.get("source", "Pantheon"),
+                    source_url=entry.get("source_url"),
                     dry_run=dry_run,
                 )
                 progress.advance(task)
@@ -582,6 +720,7 @@ class StoreSeed:
     def _publish_one(self, name: str, pkg_type: str, display_name: str,
                      description: str, category: str, content: str,
                      files: dict = None, version: str = "1.0.0",
+                     source: str = "Pantheon", source_url: str = None,
                      dry_run: bool = False) -> bool:
         """Publish a single package. Returns True if published."""
         if dry_run:
@@ -590,7 +729,7 @@ class StoreSeed:
             return True
 
         try:
-            _run(self.client.publish({
+            payload = {
                 "name": name,
                 "type": pkg_type,
                 "display_name": display_name,
@@ -599,7 +738,11 @@ class StoreSeed:
                 "version": version,
                 "content": content,
                 "files": files or {},
-            }))
+                "source": source,
+            }
+            if source_url:
+                payload["source_url"] = source_url
+            _run(self.client.publish(payload))
             self.stats["published"] += 1
             return True
         except SystemExit:
