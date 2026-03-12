@@ -1,7 +1,7 @@
 # Pantheon Agents - Docker Image
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/pantheon/pantheon-agents)](https://hub.docker.com/r/pantheon/pantheon-agents)
-[![Docker Image Size](https://img.shields.io/docker/image-size/pantheon/pantheon-agents/latest)](https://hub.docker.com/r/pantheon/pantheon-agents)
+[![Docker Pulls](https://img.shields.io/docker/pulls/nanguage/pantheon-agents)](https://hub.docker.com/r/nanguage/pantheon-agents)
+[![Docker Image Size](https://img.shields.io/docker/image-size/nanguage/pantheon-agents/latest)](https://hub.docker.com/r/nanguage/pantheon-agents)
 [![GitHub](https://img.shields.io/badge/GitHub-PantheonOS-blue)](https://github.com/aristoteleo/PantheonOS)
 
 Run Pantheon AI agents in a containerized environment with everything pre-configured.
@@ -16,7 +16,7 @@ docker run -it --rm \
   -e OPENAI_API_KEY="sk-your-key" \
   -v $(pwd)/workspace:/workspace \
   -p 8080:8080 \
-  pantheon/pantheon-agents:latest
+  nanguage/pantheon-agents:latest
 ```
 
 **After startup, you'll see a connection URL like this:**
@@ -41,7 +41,7 @@ docker run -it --rm \
   -e PANTHEON_MODE=standalone \
   -v $(pwd)/workspace:/workspace \
   -p 8080:8080 \
-  pantheon/pantheon-agents:latest
+  nanguage/pantheon-agents:latest
 ```
 
 ### With API Keys
@@ -53,7 +53,7 @@ docker run -it --rm \
   -e ANTHROPIC_API_KEY="sk-ant-your-key" \
   -v $(pwd)/workspace:/workspace \
   -p 8080:8080 \
-  pantheon/pantheon-agents:latest
+  nanguage/pantheon-agents:latest
 ```
 
 ### With Custom Port
@@ -64,7 +64,7 @@ docker run -it --rm \
   -e NATS_EXTERNAL_PORT=9000 \
   -v $(pwd)/workspace:/workspace \
   -p 9000:8080 \
-  pantheon/pantheon-agents:latest
+  nanguage/pantheon-agents:latest
 ```
 
 The connection URL will automatically use port 9000 instead of 8080.
@@ -170,7 +170,7 @@ docker logs <container-id>
 
 **Recommended for production:**
 ```bash
-docker pull pantheon/pantheon-agents:v1.0.0
+docker pull nanguage/pantheon-agents:v1.0.0
 ```
 
 ---
@@ -191,7 +191,7 @@ For production Kubernetes deployments with centralized NATS server:
 docker run -d \
   -e ID_HASH=agent-001 \
   -e NATS_SERVERS=nats://hub-nats:4222 \
-  pantheon/pantheon-agents:latest
+  nanguage/pantheon-agents:latest
 ```
 
 See [full documentation](https://github.com/aristoteleo/PantheonOS/tree/main/pantheon-agents/docker) for details.

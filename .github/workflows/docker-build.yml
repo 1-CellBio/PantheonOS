@@ -145,8 +145,9 @@ jobs:
         run: |
           echo "Testing image basic functionality..."
           docker run --rm \
+            --entrypoint python \
             ${{ env.DOCKER_IMAGE }}:latest \
-            python -c "import pantheon; print(f'✓ Pantheon version: {pantheon.__version__}')"
+            -c "import pantheon; print(f'✓ Pantheon version: {pantheon.__version__}')"
 
       - name: Image scan with Trivy
         if: github.event_name != 'pull_request'
