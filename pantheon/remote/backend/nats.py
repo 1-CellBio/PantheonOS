@@ -512,14 +512,25 @@ class NATSRemoteWorker(RemoteWorker):
         self._functions: Dict[str, Callable] = {}
         self._running = False
         self._subscription = None
+        self._activity_callback: Optional[Callable[[], dict]] = None
 
         # Auto-register ping function for connection checking
         self.register(self._ping)
 
+    def set_activity_callback(self, callback: Callable[[], dict]):
+        """Register a callback that returns activity status for _ping responses."""
+        self._activity_callback = callback
+
     async def _ping(self) -> dict:
         """Ping function for connection checking"""
         from pantheon import __version__
-        return {"status": "ok", "service_id": self._service_id, "version": __version__}
+        result = {"status": "ok", "service_id": self._service_id, "version": __version__}
+        if self._activity_callback:
+            try:
+                result.update(self._activity_callback())
+            except Exception:
+                pass
+        return result
 
     def register(self, func: Callable, **kwargs):
         """Register function"""

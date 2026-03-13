@@ -225,6 +225,28 @@ class ChatRoom(ToolSet):
             task = asyncio.create_task(self._ensure_plugins())
             self._background_tasks.add(task)
 
+        # Register activity callback for _ping responses (used by Hub idle cleanup)
+        if hasattr(self, 'worker') and self.worker and hasattr(self.worker, 'set_activity_callback'):
+            self.worker.set_activity_callback(self._get_activity_status)
+
+    def _get_activity_status(self) -> dict:
+        """Return current activity status for _ping responses."""
+        active_threads = len(self.threads)
+        bg_task_count = 0
+        for team in self.chat_teams.values():
+            for agent in team.agents.values():
+                if hasattr(agent, '_bg_manager'):
+                    bg_task_count += sum(
+                        1 for t in agent._bg_manager.list_tasks()
+                        if t.status == "running"
+                    )
+        has_active_tasks = active_threads > 0 or bg_task_count > 0
+        return {
+            "active_threads": active_threads,
+            "bg_tasks": bg_task_count,
+            "has_active_tasks": has_active_tasks,
+        }
+
     async def _ensure_plugins(self, endpoint_service: object = None) -> list:
         """Lazily initialize plugins (idempotent).
         
