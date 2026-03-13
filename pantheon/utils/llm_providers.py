@@ -52,6 +52,8 @@ def detect_provider(model: str, force_litellm: bool) -> ProviderConfig:
     Model format:
     - "gpt-4" → OpenAI (via LiteLLM)
     - "provider/model" → LiteLLM (handles zhipu, anthropic, etc. natively)
+    - "custom_anthropic/model" → OpenAI-compatible with CUSTOM_ANTHROPIC_* env vars
+    - "custom_openai/model" → OpenAI-compatible with CUSTOM_OPENAI_* env vars
 
     Args:
         model: Model identifier string
@@ -60,8 +62,38 @@ def detect_provider(model: str, force_litellm: bool) -> ProviderConfig:
     Returns:
         ProviderConfig with detected provider and model name
     """
+    from pantheon.utils.model_selector import CUSTOM_ENDPOINT_ENVS
+
     base_url = None
     api_key = None
+
+    # Check for custom endpoint prefix first (e.g., "custom_anthropic/glm-5")
+    if "/" in model:
+        provider_prefix, model_name = model.split("/", 1)
+        provider_lower = provider_prefix.lower()
+
+        # Check if it's a custom endpoint
+        if provider_lower in CUSTOM_ENDPOINT_ENVS:
+            config = CUSTOM_ENDPOINT_ENVS[provider_lower]
+            base_url = os.environ.get(config.api_base_env, "")
+            api_key = os.environ.get(config.api_key_env, "")
+
+            # Determine the litellm model format based on endpoint type
+            # LiteLLM needs a provider prefix to route correctly.
+            # Explicitly passed api_key in call_llm_provider overrides env vars.
+            if "anthropic" in provider_lower:
+                litellm_model = f"anthropic/{model_name}"
+            else:
+                litellm_model = f"openai/{model_name}"
+
+            logger.debug(f"Using custom endpoint '{provider_lower}' with base_url={base_url}, litellm_model={litellm_model}")
+            return ProviderConfig(
+                provider_type=ProviderType.OPENAI,
+                model_name=litellm_model,
+                base_url=base_url or None,
+                api_key=api_key or None,
+                force_litellm=force_litellm,
+            )
 
     if "/" in model:
         provider_str, model_name = model.split("/", 1)
@@ -112,8 +144,9 @@ def get_base_url(provider: ProviderType) -> Optional[str]:
     """Get base URL from environment variables or settings.
 
     Priority:
-    1. Provider-specific: ``{PROVIDER}_API_BASE`` (e.g. OPENAI_API_BASE)
-    2. Universal fallback: ``LLM_API_BASE`` (covers all providers)
+    1. Custom endpoint: ``CUSTOM_{PROVIDER}_API_BASE`` (e.g. CUSTOM_OPENAI_API_BASE)
+    2. Provider-specific: ``{PROVIDER}_API_BASE`` (e.g. OPENAI_API_BASE)
+    3. Universal fallback: ``LLM_API_BASE`` (covers all providers, deprecated)
 
     Args:
         provider: Provider type
@@ -121,30 +154,39 @@ def get_base_url(provider: ProviderType) -> Optional[str]:
     Returns:
         Base URL if set, None otherwise
     """
+    import os
     from pantheon.settings import get_settings
+    from pantheon.utils.model_selector import CUSTOM_ENDPOINT_ENVS
 
     settings = get_settings()
+    provider_lower = provider.value.lower()
 
-    # 1. Provider-specific override
+    # 1. Check custom endpoint base URL first
+    custom_key = f"custom_{provider_lower}"
+    if custom_key in CUSTOM_ENDPOINT_ENVS:
+        config = CUSTOM_ENDPOINT_ENVS[custom_key]
+        custom_base = os.environ.get(config.api_base_env, "")
+        if custom_base:
+            return custom_base
+
+    # 2. Provider-specific override
     env_var = f"{provider.value.upper()}_API_BASE"
     value = settings.get_api_key(env_var)
     if value:
         return value
 
-    # 2. Universal fallback
+    # 3. Universal fallback (deprecated)
     return settings.get_api_key("LLM_API_BASE")
 
 
 def get_api_key_for_provider(provider: ProviderType) -> Optional[str]:
     """Get API key from environment variables or settings.
 
-    Priority (when LLM_API_BASE is set, i.e. unified proxy mode):
-    1. ``LLM_API_KEY`` — user explicitly routes all traffic to a proxy
-    2. Provider-specific fallback: ``{PROVIDER}_API_KEY``
-
-    Priority (normal mode, no LLM_API_BASE):
-    1. Provider-specific: ``{PROVIDER}_API_KEY`` (e.g. OPENAI_API_KEY)
-    2. Universal fallback: ``LLM_API_KEY``
+    Priority:
+    1. Custom endpoint key: ``CUSTOM_{PROVIDER}_API_KEY`` (if custom endpoint configured)
+    2. When LLM_API_BASE is set: ``LLM_API_KEY`` (unified proxy mode)
+    3. Provider-specific: ``{PROVIDER}_API_KEY`` (e.g. OPENAI_API_KEY)
+    4. Universal fallback: ``LLM_API_KEY``
 
     Args:
         provider: Provider type
@@ -152,23 +194,34 @@ def get_api_key_for_provider(provider: ProviderType) -> Optional[str]:
     Returns:
         API key if set, None otherwise
     """
+    import os
     from pantheon.settings import get_settings
+    from pantheon.utils.model_selector import CUSTOM_ENDPOINT_ENVS
 
     settings = get_settings()
+    provider_lower = provider.value.lower()
 
-    # When LLM_API_BASE is set, LLM_API_KEY takes priority (unified proxy mode)
+    # 1. Check custom endpoint key first
+    custom_key = f"custom_{provider_lower}"
+    if custom_key in CUSTOM_ENDPOINT_ENVS:
+        config = CUSTOM_ENDPOINT_ENVS[custom_key]
+        custom_key_value = os.environ.get(config.api_key_env, "")
+        if custom_key_value:
+            return custom_key_value
+
+    # 2. When LLM_API_BASE is set, LLM_API_KEY takes priority (unified proxy mode)
     if settings.get_api_key("LLM_API_BASE"):
         llm_key = settings.get_api_key("LLM_API_KEY")
         if llm_key:
             return llm_key
 
-    # Provider-specific key
+    # 3. Provider-specific key
     env_var = f"{provider.value.upper()}_API_KEY"
     value = settings.get_api_key(env_var)
     if value:
         return value
 
-    # Universal fallback
+    # 4. Universal fallback
     return settings.get_api_key("LLM_API_KEY")
 
 
@@ -462,11 +515,12 @@ async def call_llm_provider(
         # LiteLLM requires explicit provider prefixes for models it cannot auto-detect.
         # Ensure OpenAI models include the provider namespace to avoid BadRequestError.
         model_name = config.model_name
+
         if "/" not in model_name:
             model_name = f"{config.provider_type.value}/{model_name}"
 
         logger.debug(
-            f"[CALL_LLM_PROVIDER] Using OpenAI provider with model={model_name}"
+            f"[CALL_LLM_PROVIDER] Using OpenAI provider with model={model_name}, base_url={config.base_url}"
         )
         complete_resp = await acompletion_litellm(
             messages=clean_messages,

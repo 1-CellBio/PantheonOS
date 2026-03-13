@@ -14,12 +14,47 @@ Usage:
     models = selector.resolve_model("high,vision")  # Quality + capability combo
 """
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .log import logger
 
 if TYPE_CHECKING:
     from pantheon.settings import Settings
+
+
+# ============ Custom Endpoint Configuration ============
+
+@dataclass
+class CustomEndpointConfig:
+    """Configuration for custom API endpoints (e.g., custom Anthropic/OpenAI proxies)."""
+    provider_key: str      # e.g., "custom_anthropic"
+    display_name: str      # e.g., "Custom Anthropic"
+    api_key_env: str       # e.g., "CUSTOM_ANTHROPIC_API_KEY"
+    api_base_env: str      # e.g., "CUSTOM_ANTHROPIC_API_BASE"
+    model_env: str         # e.g., "CUSTOM_ANTHROPIC_MODEL"
+
+
+# Custom endpoint environment variable configurations
+CUSTOM_ENDPOINT_ENVS: dict[str, CustomEndpointConfig] = {
+    "custom_anthropic": CustomEndpointConfig(
+        provider_key="custom_anthropic",
+        display_name="Custom Anthropic",
+        api_key_env="CUSTOM_ANTHROPIC_API_KEY",
+        api_base_env="CUSTOM_ANTHROPIC_API_BASE",
+        model_env="CUSTOM_ANTHROPIC_MODEL",
+    ),
+    "custom_openai": CustomEndpointConfig(
+        provider_key="custom_openai",
+        display_name="Custom OpenAI",
+        api_key_env="CUSTOM_OPENAI_API_KEY",
+        api_base_env="CUSTOM_OPENAI_API_BASE",
+        model_env="CUSTOM_OPENAI_MODEL",
+    ),
+}
+
+# Sentinel object for negative cache (better than empty string)
+_NOT_FOUND = object()
 
 # ============ Default Configuration ============
 # Built-in defaults based on February 2026 flagship models
@@ -195,9 +230,20 @@ class ModelSelector:
             if api_key_value:
                 self._available_providers.add(provider)
 
+        # Check custom endpoint keys
+        for provider_key, config in CUSTOM_ENDPOINT_ENVS.items():
+            if os.environ.get(config.api_key_env, ""):
+                self._available_providers.add(provider_key)
+
         # Universal proxy: LLM_API_KEY makes openai provider available
         # (most third-party proxies are OpenAI-compatible)
+        # Note: LLM_API_BASE is deprecated, warn user to use custom endpoints instead
         if not self._available_providers and os.environ.get("LLM_API_KEY", ""):
+            if os.environ.get("LLM_API_BASE", ""):
+                logger.warning(
+                    "LLM_API_BASE is deprecated. Consider using CUSTOM_OPENAI_API_BASE or "
+                    "CUSTOM_ANTHROPIC_API_BASE for better control over custom endpoints."
+                )
             self._available_providers.add("openai")
 
         return self._available_providers
@@ -205,11 +251,17 @@ class ModelSelector:
     def detect_available_provider(self) -> str | None:
         """Detect first available provider based on API keys.
 
-        Priority: user-configured priority > code default priority > any available
+        Priority:
+        1. Custom endpoints (if configured with model) - highest priority
+        2. User-configured priority list
+        3. Code default priority list
+        4. Any other available provider
 
         Returns:
             Provider name if found, None otherwise
         """
+        import os
+
         if self._detected_provider is not None:
             return self._detected_provider
 
@@ -219,21 +271,30 @@ class ModelSelector:
             logger.warning("No LLM providers detected from environment API keys")
             return None
 
-        # Priority: user config > code defaults
+        # 1. Check custom endpoints first (highest priority if model is configured)
+        for provider_key, config in CUSTOM_ENDPOINT_ENVS.items():
+            if provider_key in available:
+                model = os.environ.get(config.model_env, "")
+                if model:
+                    self._detected_provider = provider_key
+                    logger.info(f"Selected custom endpoint '{provider_key}' with model '{model}'")
+                    return provider_key
+
+        # 2. Priority: user config > code defaults
         priority = self.settings.get(
             "models.provider_priority", DEFAULT_PROVIDER_PRIORITY
         )
 
-        # 1. Check priority list first
+        # 3. Check priority list
         for provider in priority:
             if provider in available:
                 self._detected_provider = provider
                 logger.info(f"Selected provider '{provider}' from priority list")
                 return provider
 
-        # 2. Check any available provider not in priority list
+        # 4. Check any available provider not in priority list (excluding custom endpoints without model)
         for provider in available:
-            if provider not in priority:
+            if provider not in priority and provider not in CUSTOM_ENDPOINT_ENVS:
                 self._detected_provider = provider
                 logger.info(
                     f"Selected provider '{provider}' (not in priority list, "
@@ -254,6 +315,11 @@ class ModelSelector:
         Returns:
             Dict mapping quality levels to model lists
         """
+        # Custom endpoints don't have predefined model lists in litellm
+        # They use environment-specified models instead
+        if provider in CUSTOM_ENDPOINT_ENVS:
+            return {}
+
         # Try user configuration first
         user_config = self.settings.get(f"models.provider_models.{provider}", {})
 
@@ -360,7 +426,8 @@ class ModelSelector:
         Supports:
         - Quality tags: "high", "normal", "low"
         - Capability tags: "vision", "reasoning", "tools", etc.
-        - Combinations: "high,vision", "low,reasoning"
+        - Custom tag: "custom" - uses custom endpoint model if configured
+        - Combinations: "high,vision", "low,reasoning", "custom,vision"
 
         Args:
             tag: Single tag or comma-separated tags (e.g., "normal", "high,vision")
@@ -368,6 +435,20 @@ class ModelSelector:
         Returns:
             List of models as fallback chain, can be passed directly to Agent(model=...)
         """
+        import os
+
+        # Parse tags
+        tags = [t.strip().lower() for t in tag.split(",")]
+
+        # Check if explicitly requesting custom model
+        # Custom endpoint models only activate when "custom" tag is used
+        if "custom" in tags:
+            for provider_key, config in CUSTOM_ENDPOINT_ENVS.items():
+                model = os.environ.get(config.model_env, "")
+                if model:
+                    logger.info(f"Using custom model: {provider_key}/{model}")
+                    return [f"{provider_key}/{model}"]
+
         provider = self._detected_provider or self.detect_available_provider()
         if not provider:
             logger.warning(
@@ -375,8 +456,35 @@ class ModelSelector:
             )
             return [ULTIMATE_FALLBACK]
 
-        # Parse tags
-        tags = [t.strip().lower() for t in tag.split(",")]
+        # Check if provider is a custom endpoint
+        # Note: Custom endpoints should ONLY be used when "custom" tag is explicitly requested
+        # (handled above at lines 445-450). Skip auto-selection for custom endpoint providers.
+        if provider in CUSTOM_ENDPOINT_ENVS:
+            # Find next available non-custom provider
+            available = self._get_available_providers()
+            priority = self.settings.get("models.provider_priority", DEFAULT_PROVIDER_PRIORITY)
+            fallback_found = False
+            for fallback_provider in priority:
+                if fallback_provider in available and fallback_provider not in CUSTOM_ENDPOINT_ENVS:
+                    provider = fallback_provider
+                    fallback_found = True
+                    logger.info(
+                        f"Custom endpoint detected as default provider. "
+                        f"Falling back to '{provider}' for non-custom request."
+                    )
+                    break
+
+            if not fallback_found:
+                # No other provider available, use custom endpoint as fallback
+                config = CUSTOM_ENDPOINT_ENVS[provider]
+                model = os.environ.get(config.model_env, "")
+                if model:
+                    logger.info(
+                        f"No standard provider available. Using custom endpoint as fallback: "
+                        f"{provider}/{model}"
+                    )
+                    return [f"{provider}/{model}"]
+                return [ULTIMATE_FALLBACK]
 
         # Get provider configuration
         provider_models = self._get_provider_models(provider)
@@ -616,4 +724,6 @@ __all__ = [
     "DEFAULT_IMAGE_GEN_MODELS",
     "ULTIMATE_FALLBACK",
     "FALLBACK_TAG",
+    "CUSTOM_ENDPOINT_ENVS",
+    "CustomEndpointConfig",
 ]
