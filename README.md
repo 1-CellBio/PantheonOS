@@ -16,11 +16,12 @@
 
 [![][website-shield]][website-link]
 [![][online-app-shield]][online-app]
+[![][store-shield]][store-link]
 [![][manuscript-shield]][manuscript-link]
 [![][slack-shield]][slack-link]
 [![][discord-shield]][discord-link]
 [![][x-shield]][x-link]
-[![][bluesky-shield]][bluesky-link]<br/>
+<br/>
 [![][github-contributors-shield]][github-contributors-link]
 [![][github-forks-shield]][github-forks-link]
 [![][github-stars-shield]][github-stars-link]
@@ -42,12 +43,14 @@ PantheonOS is an **evolvable and privacy-preserving multi-agent framework** desi
 - **Multi-Agent Teams** — PantheonTeam, Sequential, Swarm, Mixture-of-Agents (MoA), and AgentAsTool team patterns for flexible orchestration
 - **Distributed Architecture** — NATS-based messaging for scalable, fault-tolerant deployments across machines
 - **Friendly Interfaces** — Interactive CLI (`pantheon cli`) and Chatroom UI (`pantheon ui`)
+- **[Pantheon Store](https://app.pantheonos.stanford.edu/#/store)** — A community marketplace with 1,000+ curated agents, teams, and skills for biomedical AI, installable via UI or CLI
 
 ## `2` [Quick Start & Community](#2-quick-start--community)
 
 | | |
 | :--- | :--- |
 | [![][online-app-shield]][online-app] | Play with our Web UI! |
+| [![][store-shield]][store-link] | Browse 1,000+ agents, teams, and skills! |
 | [![][pypi-shield]][pypi-link] | `pip install pantheon-agents` |
 | [![][slack-shield-badge]][slack-link] | Join our Slack community! |
 | [![][discord-shield-badge]][discord-link] | Join our Discord community! |
@@ -142,9 +145,10 @@ Please refer to our [Documents][docs] for detailed API usage, including creating
 
 ## `5` [Contributing](#5-contributing)
 
-Contributions of all types are more than welcome! If you are interested in contributing code, feel free to check out our GitHub [Issues][github-issues-link] to dive in.
+Contributions of all types are more than welcome! Whether it's publishing skills to the [Pantheon Store][store-link] or contributing code, feel free to check out our GitHub [Issues][github-issues-link] to dive in.
 
 [![][pr-welcome-shield]][pr-welcome-link]
+[![][store-contribute-shield]][store-link]
 
 ## License
 
@@ -189,6 +193,11 @@ Copyright © 2026 [Qiu Lab](https://www.devo-evo.com/).
 [python-shield]: https://img.shields.io/badge/python-3.10%2B-3776AB?labelColor=black&style=flat-square&logo=python&logoColor=white
 [status-shield]: https://img.shields.io/badge/status-beta-orange?labelColor=black&style=flat-square
 
+
+[store-link]: https://app.pantheonos.stanford.edu/#/store
+[store-shield]: https://img.shields.io/badge/store-explore-8B5CF6?labelColor=black&logo=googlechrome&logoColor=white&style=flat-square
+
+[store-contribute-shield]: https://img.shields.io/badge/store-contribute-8B5CF6?labelColor=black&logo=googlechrome&logoColor=white&style=for-the-badge
 
 [pr-welcome-link]: https://github.com/aristoteleo/PantheonOS/pulls
 [pr-welcome-shield]: https://img.shields.io/badge/👌_pr_welcome-%E2%86%92-ffcb47?labelColor=black&style=for-the-badge
