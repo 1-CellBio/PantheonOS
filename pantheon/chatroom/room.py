@@ -1429,49 +1429,68 @@ class ChatRoom(ToolSet):
         return {"success": True, "message": "Chat stopped successfully"}
 
     @tool
-    async def speech_to_text(self, bytes_data: bytes):
+    async def speech_to_text(self, bytes_data):
         """Convert speech to text.
 
         Args:
-            bytes_data: The bytes data of the audio.
+            bytes_data: The bytes data of the audio (bytes, base64 string, or list).
         """
         try:
             import litellm
+            import base64
             from pantheon.utils.llm_providers import get_litellm_proxy_kwargs
 
-            # Try different audio formats until one works
-            formats = ["webm", "mp4", "wav", "mp3"]
-            last_error = None
+            logger.info(f"[STT] Received bytes_data type={type(bytes_data).__name__}, "
+                        f"len={len(bytes_data) if hasattr(bytes_data, '__len__') else 'N/A'}")
 
-            for fmt in formats:
-                try:
-                    # Create a BytesIO object with a proper filename for format detection
-                    audio_file = io.BytesIO(bytes_data)
-                    audio_file.name = f"audio.{fmt}"
+            # Normalize bytes_data: JSON transport may encode bytes as list/dict/base64
+            if isinstance(bytes_data, str):
+                bytes_data = base64.b64decode(bytes_data)
+            elif isinstance(bytes_data, list):
+                bytes_data = bytes(bytes_data)
+            elif isinstance(bytes_data, dict):
+                if "data" in bytes_data:
+                    data = bytes_data["data"]
+                    if isinstance(data, list):
+                        bytes_data = bytes(data)
+                    elif isinstance(data, str):
+                        bytes_data = base64.b64decode(data)
+                    else:
+                        bytes_data = bytes(data)
+                else:
+                    bytes_data = bytes(bytes_data[str(i)] for i in range(len(bytes_data)))
 
-                    response = await litellm.atranscription(
-                        model=self.speech_to_text_model,
-                        file=audio_file,
-                        **get_litellm_proxy_kwargs(),
-                    )
+            logger.info(f"[STT] Audio bytes size: {len(bytes_data)}, "
+                        f"model: {self.speech_to_text_model}")
 
-                    return {
-                        "success": True,
-                        "text": response.text,
-                    }
-                except Exception as format_error:
-                    last_error = format_error
-                    logger.debug(f"Failed with format {fmt}: {format_error}")
-                    continue
+            if len(bytes_data) == 0:
+                return {"success": False, "text": "Empty audio data"}
 
-            # If all formats failed, raise the last error
-            if last_error:
-                raise last_error
-            else:
-                raise Exception("No audio formats worked")
+            # Create a BytesIO object with webm format (browser MediaRecorder default)
+            audio_file = io.BytesIO(bytes_data)
+            audio_file.name = "audio.webm"
 
+            logger.info("[STT] Calling litellm.atranscription...")
+            response = await asyncio.wait_for(
+                litellm.atranscription(
+                    model=self.speech_to_text_model,
+                    file=audio_file,
+                    **get_litellm_proxy_kwargs(),
+                ),
+                timeout=30,
+            )
+            logger.info(f"[STT] Transcription result: {response.text[:100] if response.text else '(empty)'}")
+
+            return {
+                "success": True,
+                "text": response.text,
+            }
+
+        except asyncio.TimeoutError:
+            logger.error("[STT] Transcription timed out (30s)")
+            return {"success": False, "text": "Transcription timed out"}
         except Exception as e:
-            logger.error(f"Error transcribing speech: {e}")
+            logger.error(f"[STT] Error transcribing speech: {e}")
             return {
                 "success": False,
                 "text": str(e),
