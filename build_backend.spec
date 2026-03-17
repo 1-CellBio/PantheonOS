@@ -87,6 +87,8 @@ a = Analysis(
         'torch', 'tensorflow', 'sklearn', 'cv2',
         'IPython', 'ipywidgets',
         'sympy',
+        'pandas',                         # ~45MB, not imported by backend code
+        'litellm.proxy',                  # ~19MB, proxy server not used (SDK only)
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -99,11 +101,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
-    name='pantheon-backend',
+    name='pantheon-backend-exe',
     debug=False,
     bootloader_ignore_signals=False,
     strip=sys.platform != 'win32',  # MinGW strip corrupts MSVC-built DLLs on Windows
@@ -115,11 +114,28 @@ exe = EXE(
         'ucrtbase.dll',
         'api-ms-win-*.dll',
     ],
-    runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+# COLLECT renames the exe back to 'pantheon-backend' inside the output directory
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=sys.platform != 'win32',
+    upx=True,
+    upx_exclude=[
+        'python3*.dll',
+        'vcruntime*.dll',
+        'msvcp*.dll',
+        'ucrtbase.dll',
+        'api-ms-win-*.dll',
+    ],
+    name='pantheon-backend',
 )

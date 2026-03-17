@@ -49,7 +49,6 @@ dependencies = [
     "ddgs>=9.5.2",
     "crawl4ai>=0.5.0",
     "matplotlib>=3.10.3",
-    "pandas",
     "cloudpickle>=3.0.0",
     "PyMuPDF>=1.25.5",
     "lancedb>=0.20.0",
@@ -139,6 +138,7 @@ packages = {find = {where = ["."], exclude = ["tests*", "examples*", "tmp*", "tr
     "templates/**/*.md",
     "templates/**/*.json",
     "templates/*.json",
+    "templates/*.example",
 ]
 "pantheon.toolsets.database_api" = [
     "schemas/*.json",
