@@ -656,7 +656,16 @@ class FileManagerToolSet(FileManagerToolSetBase):
                 lines = f.readlines()
 
             total_lines = len(lines)
-            
+
+            # Empty file - return early
+            if total_lines == 0:
+                return {
+                    "success": True,
+                    "content": "",
+                    "total_lines": 0,
+                    "format": "1-indexed",
+                }
+
             # Get line limit from settings
             from pantheon.settings import get_settings
             max_lines = get_settings().max_file_read_lines

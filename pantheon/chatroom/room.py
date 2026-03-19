@@ -656,19 +656,24 @@ class ChatRoom(ToolSet):
                 f"chatroom proxy_toolset: method_name={method_name}, toolset_name={toolset_name}, args={args}"
             )
 
-            # Inject workdir from project metadata if session_id is available
-            session_id = (args or {}).get("session_id")
+            # Inject workdir from project metadata if session is in isolated mode
+            session_id = (args or {}).get("session_id") or getattr(self, '_current_chat_id', None)
             if session_id:
                 try:
-                    # Read-only: reading project metadata, no need to fix
                     memory = await run_func(self.memory_manager.get_memory, session_id)
                     project = memory.extra_data.get("project", {})
-                    workspace_path = project.get("workspace_path") if isinstance(project, dict) else None
-                    if workspace_path:
+                    if isinstance(project, dict):
+                        workspace_mode = project.get("workspace_mode",
+                            "isolated" if project.get("workspace_path") else "project")
+                        workspace_path = project.get("workspace_path")
                         from pantheon.toolset import get_current_context_variables
                         ctx = get_current_context_variables()
                         if ctx is not None:
-                            ctx["workdir"] = workspace_path
+                            if workspace_mode == "isolated" and workspace_path:
+                                ctx["workdir"] = workspace_path
+                            else:
+                                # Clear workdir so toolset falls back to project root
+                                ctx.pop("workdir", None)
                 except Exception as e:
                     logger.debug(f"Could not inject workdir for session {session_id}: {e}")
 
@@ -798,10 +803,11 @@ class ChatRoom(ToolSet):
 
     @tool
     async def create_chat(
-        self, 
+        self,
         chat_name: str | None = None,
         project_name: str | None = None,
         workspace_path: str | None = None,
+        workspace_mode: str = "project",
     ) -> dict:
         """Create a new chat.
 
@@ -809,32 +815,49 @@ class ChatRoom(ToolSet):
             chat_name: The name of the chat.
             project_name: Optional project name for grouping.
             workspace_path: Optional workspace directory path.
+            workspace_mode: Workspace mode - "project" (shared, default) or "isolated" (per-chat).
         """
-        # Ensure workspace directory exists if provided
+        memory = await run_func(self.memory_manager.new_memory, chat_name)
+        memory.extra_data["last_activity_date"] = datetime.now().isoformat()
+
         if workspace_path:
+            # Explicit path provided — always isolated
+            workspace_mode = "isolated"
             import os
             try:
                 os.makedirs(workspace_path, exist_ok=True)
                 logger.info(f"Ensured workspace directory exists: {workspace_path}")
             except Exception as e:
                 logger.warning(f"Failed to create workspace directory {workspace_path}: {e}")
-                # Continue anyway - the directory might be created later or error will surface when used
-        
-        memory = await run_func(self.memory_manager.new_memory, chat_name)
-        memory.extra_data["last_activity_date"] = datetime.now().isoformat()
-        
-        # Set project metadata if provided
+        elif workspace_mode == "isolated":
+            # Create per-session workspace
+            settings = get_settings()
+            session_workspace_dir = settings.pantheon_dir / "workspaces" / memory.id
+            try:
+                session_workspace_dir.mkdir(parents=True, exist_ok=True)
+                workspace_path = str(session_workspace_dir)
+                logger.info(f"Created session workspace directory: {workspace_path}")
+            except Exception as e:
+                logger.warning(f"Failed to create session workspace directory: {e}")
+                workspace_mode = "project"  # Fallback to project mode
+
+        # Set project metadata
+        project = {}
         if project_name:
-            project = {"name": project_name}
-            if workspace_path:
-                project["workspace_path"] = workspace_path
+            project["name"] = project_name
+        project["workspace_mode"] = workspace_mode
+        if workspace_path:
+            project["workspace_path"] = workspace_path
+        if project:
             memory.extra_data["project"] = project
-        
+
         return {
             "success": True,
             "message": "Chat created successfully",
             "chat_name": memory.name,
             "chat_id": memory.id,
+            "workspace_mode": workspace_mode,
+            "workspace_path": workspace_path,
         }
 
     @tool
@@ -844,9 +867,40 @@ class ChatRoom(ToolSet):
         Args:
             chat_id: The ID of the chat.
         """
+        import shutil
+
         try:
+            # Check if chat has an isolated workspace to clean up
+            workspace_path_to_delete = None
+            try:
+                memory = await run_func(self.memory_manager.get_memory, chat_id)
+                project = memory.extra_data.get("project", {})
+                if isinstance(project, dict):
+                    workspace_mode = project.get("workspace_mode",
+                        "isolated" if project.get("workspace_path") else "project")
+                    workspace_path = project.get("workspace_path")
+                    if workspace_mode == "isolated" and workspace_path:
+                        settings = get_settings()
+                        workspaces_dir = settings.pantheon_dir / "workspaces"
+                        workspace_path_obj = Path(workspace_path)
+                        try:
+                            workspace_path_obj.relative_to(workspaces_dir)
+                            workspace_path_to_delete = workspace_path_obj
+                        except ValueError:
+                            pass  # Not under .pantheon/workspaces/, don't delete
+            except Exception as e:
+                logger.debug(f"Could not get workspace path for chat {chat_id}: {e}")
+
             await run_func(self.memory_manager.delete_memory, chat_id)
-            # File is deleted immediately by delete_memory, no need for save()
+
+            # Clean up isolated workspace directory
+            if workspace_path_to_delete and workspace_path_to_delete.exists():
+                try:
+                    shutil.rmtree(workspace_path_to_delete)
+                    logger.info(f"Deleted session workspace: {workspace_path_to_delete}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete workspace folder {workspace_path_to_delete}: {e}")
+
             return {"success": True, "message": "Chat deleted successfully"}
         except Exception as e:
             logger.error(f"Error deleting chat: {e}")
@@ -984,11 +1038,65 @@ class ChatRoom(ToolSet):
             }
 
     @tool
+    async def set_chat_workspace_mode(
+        self,
+        chat_id: str,
+        workspace_mode: str,
+    ) -> dict:
+        """Toggle workspace mode for a chat.
+
+        Args:
+            chat_id: The chat ID.
+            workspace_mode: "project" (shared) or "isolated" (per-chat).
+
+        Returns:
+            A dictionary with success status, workspace_mode, and workspace_path.
+        """
+        if workspace_mode not in ("project", "isolated"):
+            return {"success": False, "message": "workspace_mode must be 'project' or 'isolated'"}
+
+        try:
+            memory = await run_func(self.memory_manager.get_memory, chat_id)
+            project = memory.extra_data.get("project", {})
+            if not isinstance(project, dict):
+                project = {}
+
+            workspace_path = project.get("workspace_path")
+
+            if workspace_mode == "isolated" and not workspace_path:
+                # Create per-session workspace if switching to isolated
+                settings = get_settings()
+                session_workspace_dir = settings.pantheon_dir / "workspaces" / chat_id
+                try:
+                    session_workspace_dir.mkdir(parents=True, exist_ok=True)
+                    workspace_path = str(session_workspace_dir)
+                    project["workspace_path"] = workspace_path
+                    logger.info(f"Created workspace for chat {chat_id}: {workspace_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to create workspace for chat {chat_id}: {e}")
+                    return {"success": False, "message": f"Failed to create workspace: {e}"}
+
+            project["workspace_mode"] = workspace_mode
+            memory.extra_data["project"] = project
+            memory.mark_dirty()
+
+            return {
+                "success": True,
+                "message": f"Workspace mode set to '{workspace_mode}'",
+                "workspace_mode": workspace_mode,
+                "workspace_path": workspace_path if workspace_mode == "isolated" else None,
+            }
+        except Exception as e:
+            logger.error(f"Error setting workspace mode: {e}")
+            return {"success": False, "message": str(e)}
+
+    @tool
     async def set_chat_project(
         self,
         chat_id: str,
         project_name: str | None = None,
         workspace_path: str | None = None,
+        workspace_mode: str | None = None,
         **kwargs,
     ) -> dict:
         """Set or update project metadata for a chat.
@@ -997,34 +1105,38 @@ class ChatRoom(ToolSet):
             chat_id: The ID of the chat.
             project_name: Project name (None to remove project).
             workspace_path: Optional workspace directory path.
+            workspace_mode: Optional workspace mode ("project" or "isolated").
             **kwargs: Additional project metadata (color, icon, etc.)
 
         Returns:
             A dictionary with success status and message.
         """
         try:
-            # Read-only: setting project metadata, no need to fix
             memory = await run_func(self.memory_manager.get_memory, chat_id)
 
-            if project_name is None:
+            if project_name is None and workspace_path is None and workspace_mode is None and not kwargs:
                 # Remove project metadata
                 memory.extra_data.pop("project", None)
                 message = "Project metadata removed"
             else:
                 # Create or update project object
                 project = memory.extra_data.get("project", {})
-                project["name"] = project_name
+                if not isinstance(project, dict):
+                    project = {}
 
+                if project_name is not None:
+                    project["name"] = project_name
                 if workspace_path is not None:
                     project["workspace_path"] = workspace_path
+                if workspace_mode is not None:
+                    project["workspace_mode"] = workspace_mode
 
-                # Support future extensions (color, icon, etc.)
                 for key, value in kwargs.items():
                     if value is not None:
                         project[key] = value
 
                 memory.extra_data["project"] = project
-                message = f"Project '{project_name}' set for chat"
+                message = f"Project metadata updated for chat"
 
             memory.mark_dirty()
             return {"success": True, "message": message}
@@ -1350,12 +1462,15 @@ class ChatRoom(ToolSet):
         team = await self.get_team_for_chat(chat_id)
         self._setup_bg_auto_notify(chat_id, team)
 
-        # Inject workdir from project metadata if available
+        # Inject workdir from project metadata if in isolated mode
         project = memory.extra_data.get("project", {})
-        workspace_path = project.get("workspace_path") if isinstance(project, dict) else None
-        if workspace_path:
-            context_variables = context_variables or {}
-            context_variables["workdir"] = workspace_path
+        if isinstance(project, dict):
+            workspace_mode = project.get("workspace_mode",
+                "isolated" if project.get("workspace_path") else "project")
+            workspace_path = project.get("workspace_path")
+            if workspace_mode == "isolated" and workspace_path:
+                context_variables = context_variables or {}
+                context_variables["workdir"] = workspace_path
 
         thread = Thread(
             team_getter,  # Pass team getter
