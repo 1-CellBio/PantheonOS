@@ -139,6 +139,9 @@ class ChatRoom(ToolSet):
         # Auto chat name generation (disabled by default, enable for UI mode)
         self._enable_auto_chat_name = enable_auto_chat_name
 
+        # PantheonClaw gateway manager (lazy init; tied to chatroom event loop)
+        self._gateway_channel_manager = None
+
         # Plugin system (learning, compression, etc.)
         self._init_plugins(learning_config)
 
@@ -607,6 +610,98 @@ class ChatRoom(ToolSet):
         except Exception as e:
             logger.error(f"Error setting endpoint service: {e}")
             return {"success": False, "message": str(e)}
+
+    def _get_gateway_manager(self):
+        if self._gateway_channel_manager is None:
+            from pantheon.claw import GatewayChannelManager
+
+            self._gateway_channel_manager = GatewayChannelManager(
+                chatroom=self,
+                loop=asyncio.get_running_loop(),
+            )
+        return self._gateway_channel_manager
+
+    @tool
+    async def get_gateway_channel_config(self) -> dict:
+        manager = self._get_gateway_manager()
+        return {
+            "success": True,
+            "config": manager.get_config(masked=True),
+            "channels": manager.list_states(),
+        }
+
+    @tool
+    async def save_gateway_channel_config(self, config: dict) -> dict:
+        manager = self._get_gateway_manager()
+        manager.save_config(config)
+        return {
+            "success": True,
+            "config": manager.get_config(masked=True),
+            "channels": manager.list_states(),
+        }
+
+    @tool
+    async def list_gateway_channels(self) -> dict:
+        manager = self._get_gateway_manager()
+        return {
+            "success": True,
+            "channels": manager.list_states(),
+        }
+
+    @tool
+    async def start_gateway_channel(self, channel: str) -> dict:
+        manager = self._get_gateway_manager()
+        result = manager.start_channel(channel)
+        return {
+            "success": bool(result.get("ok")),
+            **result,
+            "channels": manager.list_states(),
+        }
+
+    @tool
+    async def stop_gateway_channel(self, channel: str) -> dict:
+        manager = self._get_gateway_manager()
+        result = manager.stop_channel(channel)
+        return {
+            "success": bool(result.get("ok")),
+            **result,
+            "channels": manager.list_states(),
+        }
+
+    @tool
+    async def get_gateway_channel_logs(self, channel: str) -> dict:
+        manager = self._get_gateway_manager()
+        return {
+            "success": True,
+            "channel": channel,
+            "logs": manager.get_logs(channel),
+        }
+
+    @tool
+    async def wechat_login_qr(self) -> dict:
+        manager = self._get_gateway_manager()
+        try:
+            result = await asyncio.to_thread(manager.wechat_get_login_qr)
+            return {"success": True, **result}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    @tool
+    async def wechat_login_status(self, qrcode_id: str) -> dict:
+        manager = self._get_gateway_manager()
+        try:
+            result = await asyncio.to_thread(manager.wechat_poll_login_status, qrcode_id)
+            return {"success": True, **result}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    @tool
+    async def list_gateway_sessions(self) -> dict:
+        manager = self._get_gateway_manager()
+        return {
+            "success": True,
+            "sessions": await manager.list_sessions(),
+        }
 
     @tool
     async def get_toolsets(self) -> dict:
