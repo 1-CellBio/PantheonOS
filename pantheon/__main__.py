@@ -18,10 +18,13 @@ import sys
 import fire
 from dotenv import load_dotenv
 
-# Load .env files
+# Load .env files: cwd/.env > ~/.pantheon/.env > ~/.env (legacy fallback)
 load_dotenv()
 load_dotenv(
     os.path.join(os.path.expanduser("~"), ".pantheon", ".env"), override=False
+)
+load_dotenv(
+    os.path.join(os.path.expanduser("~"), ".env"), override=False
 )
 
 # Windows UTF-8 setup

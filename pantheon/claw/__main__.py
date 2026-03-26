@@ -54,6 +54,10 @@ def _prepare_runtime() -> None:
         os.path.join(os.path.expanduser("~"), ".pantheon", ".env"),
         override=False,
     )
+    load_dotenv(
+        os.path.join(os.path.expanduser("~"), ".env"),
+        override=False,
+    )
     os.environ.setdefault("PANTHEON_LAUNCHER", "pantheonclaw")
     try:
         asyncio.get_event_loop()
