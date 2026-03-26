@@ -70,7 +70,7 @@ DEFAULT_PROVIDER_MODELS = {
     "openai": {
         "high": ["openai/gpt-5.4-pro", "openai/gpt-5.4", "openai/gpt-5.2-pro", "openai/gpt-5.2"],
         "normal": ["openai/gpt-5.4", "openai/gpt-5.2-codex", "openai/gpt-5.2", "openai/gpt-5"],
-        "low": ["openai/gpt-5.4-mini", "openai/gpt-5-mini", "openai/gpt-5-nano", "openai/gpt-4.1-mini"],
+        "low": ["openai/gpt-5.4-mini", "openai/gpt-5.4-nano", "openai/gpt-5-mini", "openai/gpt-4.1-mini"],
     },
     # Anthropic: Claude 4.6 series
     # https://docs.anthropic.com/en/docs/about-claude/models/overview
