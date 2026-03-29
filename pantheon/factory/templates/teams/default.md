@@ -20,7 +20,6 @@ leader:
     - shell
     - package
     - task
-    - code
     - integrated_notebook
     - web
     - evolution
