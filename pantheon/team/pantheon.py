@@ -48,6 +48,82 @@ Example instruction:
     'Expected Outcome: Report with UMAP visualization and marker genes.'"""
 
 
+def _get_cache_safe_child_run_overrides(
+    run_context,
+    target_agent: Agent | RemoteAgent,
+    child_context_variables: dict,
+) -> tuple[dict, dict]:
+    cache_params = getattr(run_context, "cache_safe_runtime_params", None)
+    caller_agent = getattr(run_context, "agent", None)
+
+    if (
+        cache_params is None
+        or not isinstance(caller_agent, Agent)
+        or not isinstance(target_agent, Agent)
+    ):
+        return {}, child_context_variables
+
+    from pantheon.utils.token_optimization import normalize_cache_safe_value
+
+    if list(target_agent.models) != list(caller_agent.models):
+        return {}, child_context_variables
+
+    if normalize_cache_safe_value(target_agent.response_format) != cache_params.response_format_normalized:
+        return {}, child_context_variables
+
+    overrides = {
+        "model": cache_params.model,
+        "response_format": cache_params.response_format_raw,
+    }
+
+    updated_context_variables = dict(child_context_variables)
+    if (
+        "model_params" not in updated_context_variables
+        and cache_params.model_params_raw
+    ):
+        updated_context_variables["model_params"] = copy.deepcopy(
+            cache_params.model_params_raw
+        )
+
+    return overrides, updated_context_variables
+
+
+async def _get_cache_safe_child_fork_context_messages(
+    run_context,
+    target_agent: Agent | RemoteAgent,
+) -> list[dict] | None:
+    caller_agent = getattr(run_context, "agent", None)
+    parent_messages = getattr(run_context, "cache_safe_prompt_messages", None)
+    parent_tools = getattr(run_context, "cache_safe_tool_definitions", None)
+
+    if (
+        parent_messages is None
+        or parent_tools is None
+        or not isinstance(caller_agent, Agent)
+        or not isinstance(target_agent, Agent)
+    ):
+        return None
+
+    if target_agent.instructions != caller_agent.instructions:
+        return None
+
+    if list(target_agent.models) != list(caller_agent.models):
+        return None
+
+    from pantheon.utils.token_optimization import normalize_cache_safe_value
+
+    target_tools = await target_agent.get_tools_for_llm()
+    if normalize_cache_safe_value(target_tools) != normalize_cache_safe_value(parent_tools):
+        return None
+
+    fork_context_messages = [
+        copy.deepcopy(message)
+        for message in parent_messages
+        if message.get("role") != "system"
+    ]
+    return fork_context_messages or None
+
+
 
 def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
@@ -376,6 +452,21 @@ class PantheonTeam(Team):
                 child_context_variables["_metadata"] = child_metadata
                 # P2: Set execution_context_id at top level for child agent
                 child_context_variables["execution_context_id"] = execution_context_id
+                child_run_overrides, child_context_variables = (
+                    _get_cache_safe_child_run_overrides(
+                        run_context,
+                        target_agent,
+                        child_context_variables,
+                    )
+                )
+                fork_context_messages = await _get_cache_safe_child_fork_context_messages(
+                    run_context,
+                    target_agent,
+                )
+                if fork_context_messages:
+                    child_context_variables["_cache_safe_fork_context_messages"] = (
+                        fork_context_messages
+                    )
 
                 # Build task message with optional history summary
                 task_message = await create_delegation_task_message(
@@ -431,6 +522,7 @@ class PantheonTeam(Team):
                     execution_context_id=execution_context_id,
                     context_variables=child_context_variables,
                     allow_transfer=False,
+                    **child_run_overrides,
                 )
 
                 # Submit sub_agent learning via plugin hooks

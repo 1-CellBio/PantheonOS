@@ -17,6 +17,22 @@ MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200_000
 TIME_BASED_MC_GAP_THRESHOLD_MINUTES = 60
 TIME_BASED_MC_KEEP_RECENT = 5
 STATE_KEY = "token_optimization"
+COMPACTABLE_TOOL_SUFFIXES = {
+    "read_file",
+    "view_file",
+    "write_file",
+    "update_file",
+    "apply_patch",
+    "glob",
+    "grep",
+    "grep_search",
+    "find_by_name",
+    "shell",
+    "bash",
+    "web_fetch",
+    "web_search",
+    "web_crawl",
+}
 
 
 @dataclass
@@ -32,8 +48,69 @@ class ToolMessageCandidate:
     size: int
 
 
+@dataclass(frozen=True)
+class TimeBasedMicrocompactConfig:
+    enabled: bool
+    gap_threshold_minutes: int
+    keep_recent: int
+
+
+@dataclass(frozen=True)
+class CacheSafeRuntimeParams:
+    model: str
+    model_params_raw: dict[str, Any]
+    model_params_normalized: Any
+    response_format_raw: Any | None
+    response_format_normalized: Any | None
+
+
 def create_content_replacement_state() -> ContentReplacementState:
     return ContentReplacementState(seen_ids=set(), replacements={})
+
+
+def get_time_based_microcompact_config() -> TimeBasedMicrocompactConfig:
+    return TimeBasedMicrocompactConfig(
+        enabled=True,
+        gap_threshold_minutes=TIME_BASED_MC_GAP_THRESHOLD_MINUTES,
+        keep_recent=TIME_BASED_MC_KEEP_RECENT,
+    )
+
+
+def normalize_cache_safe_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return {
+            str(key): normalize_cache_safe_value(value[key])
+            for key in sorted(value, key=str)
+        }
+    if isinstance(value, (list, tuple)):
+        return [normalize_cache_safe_value(item) for item in value]
+    if isinstance(value, set):
+        return sorted(normalize_cache_safe_value(item) for item in value)
+    if hasattr(value, "model_json_schema"):
+        try:
+            return normalize_cache_safe_value(value.model_json_schema())
+        except TypeError:
+            pass
+    if hasattr(value, "__qualname__") and hasattr(value, "__module__"):
+        return f"{value.__module__}.{value.__qualname__}"
+    return value
+
+
+def build_cache_safe_runtime_params(
+    model: str,
+    model_params: dict[str, Any] | None,
+    response_format: Any | None,
+) -> CacheSafeRuntimeParams:
+    raw_model_params = dict(model_params or {})
+    return CacheSafeRuntimeParams(
+        model=model,
+        model_params_raw=raw_model_params,
+        model_params_normalized=normalize_cache_safe_value(raw_model_params),
+        response_format_raw=response_format,
+        response_format_normalized=normalize_cache_safe_value(response_format),
+    )
 
 
 def _normalize_state_payload(data: Any) -> dict[str, Any]:
@@ -169,6 +246,31 @@ def build_tool_name_map(messages: list[dict]) -> dict[str, str]:
             if tool_call_id and tool_name:
                 result[str(tool_call_id)] = str(tool_name)
     return result
+
+
+def get_tool_name_for_message(message: dict, tool_name_map: dict[str, str]) -> str | None:
+    tool_use_id = message.get("tool_call_id")
+    if isinstance(tool_use_id, str) and tool_use_id:
+        mapped = tool_name_map.get(tool_use_id)
+        if mapped:
+            return mapped
+
+    tool_name = message.get("tool_name")
+    if isinstance(tool_name, str) and tool_name:
+        return tool_name
+    return None
+
+
+def normalize_tool_name(tool_name: str | None) -> str:
+    if not tool_name:
+        return ""
+    if "__" in tool_name:
+        return tool_name.rsplit("__", 1)[-1]
+    return tool_name
+
+
+def is_compactable_tool_name(tool_name: str | None) -> bool:
+    return normalize_tool_name(tool_name) in COMPACTABLE_TOOL_SUFFIXES
 
 
 def collect_candidates_from_message(message: dict) -> list[ToolMessageCandidate]:
@@ -354,6 +456,7 @@ def _parse_timestamp(timestamp: Any) -> float | None:
 
 
 def _collect_compactable_tool_message_ids(messages: list[dict]) -> list[str]:
+    tool_name_map = build_tool_name_map(messages)
     ids: list[str] = []
     for message in messages:
         if message.get("role") != "tool":
@@ -366,15 +469,23 @@ def _collect_compactable_tool_message_ids(messages: list[dict]) -> list[str]:
             continue
         if _is_already_externalized(content):
             continue
+        tool_name = get_tool_name_for_message(message, tool_name_map)
+        if not is_compactable_tool_name(tool_name):
+            continue
         ids.append(tool_use_id)
     return ids
 
 
-def microcompact_messages(
+def evaluate_time_based_trigger(
     messages: list[dict],
-    gap_threshold_minutes: int = TIME_BASED_MC_GAP_THRESHOLD_MINUTES,
-    keep_recent: int = TIME_BASED_MC_KEEP_RECENT,
-) -> list[dict]:
+    *,
+    is_main_thread: bool,
+    config: TimeBasedMicrocompactConfig | None = None,
+) -> tuple[float, TimeBasedMicrocompactConfig] | None:
+    resolved_config = config or get_time_based_microcompact_config()
+    if not resolved_config.enabled or not is_main_thread:
+        return None
+
     last_assistant_timestamp: float | None = None
     for message in reversed(messages):
         if message.get("role") != "assistant":
@@ -385,25 +496,43 @@ def microcompact_messages(
             break
 
     if last_assistant_timestamp is None:
-        return messages
+        return None
 
     import time
 
     gap_minutes = (time.time() - last_assistant_timestamp) / 60.0
-    if gap_minutes < gap_threshold_minutes:
+    if gap_minutes < resolved_config.gap_threshold_minutes:
+        return None
+    return gap_minutes, resolved_config
+
+
+def microcompact_messages(
+    messages: list[dict],
+    *,
+    is_main_thread: bool = True,
+    config: TimeBasedMicrocompactConfig | None = None,
+) -> list[dict]:
+    trigger = evaluate_time_based_trigger(
+        messages,
+        is_main_thread=is_main_thread,
+        config=config,
+    )
+    if trigger is None:
         return messages
+    gap_minutes, resolved_config = trigger
 
     compactable_ids = _collect_compactable_tool_message_ids(messages)
     if not compactable_ids:
         return messages
 
-    keep_count = max(1, keep_recent)
+    keep_count = max(1, resolved_config.keep_recent)
     keep_set = set(compactable_ids[-keep_count:])
     clear_set = {tool_use_id for tool_use_id in compactable_ids if tool_use_id not in keep_set}
     if not clear_set:
         return messages
 
     changed = False
+    tokens_saved = 0
     result: list[dict] = []
     for message in messages:
         if message.get("role") != "tool":
@@ -417,6 +546,7 @@ def microcompact_messages(
         if not isinstance(content, str) or _is_already_externalized(content):
             result.append(message)
             continue
+        tokens_saved += max(1, len(content) // BYTES_PER_TOKEN)
         new_message = dict(message)
         new_message["content"] = TIME_BASED_MC_CLEARED_MESSAGE
         result.append(new_message)
@@ -424,9 +554,11 @@ def microcompact_messages(
 
     if changed:
         logger.info(
-            "[token optimization] time-based microcompact cleared {} tool messages after {:.1f} minute gap",
+            "[token optimization] time-based microcompact cleared {} tool messages after {:.1f} minute gap (~{} tokens saved, kept last {})",
             len(clear_set),
             gap_minutes,
+            tokens_saved,
+            len(keep_set),
         )
     return result if changed else messages
 
@@ -435,13 +567,18 @@ def apply_token_optimizations(
     messages: list[dict],
     memory: Any | None = None,
     base_dir: Path | None = None,
+    *,
+    is_main_thread: bool = True,
 ) -> list[dict]:
     optimized = apply_tool_result_budget(
         messages,
         memory=memory,
         base_dir=base_dir,
     )
-    optimized = microcompact_messages(optimized)
+    optimized = microcompact_messages(
+        optimized,
+        is_main_thread=is_main_thread,
+    )
     return optimized
 
 
@@ -474,6 +611,8 @@ def build_llm_view(
     messages: list[dict],
     memory: Any | None = None,
     base_dir: Path | None = None,
+    *,
+    is_main_thread: bool = True,
 ) -> list[dict]:
     """Build the projected prompt view from raw history."""
     if not messages:
@@ -491,6 +630,7 @@ def build_llm_view(
         projected,
         memory=memory,
         base_dir=base_dir,
+        is_main_thread=is_main_thread,
     )
     if system_message is not None:
         return [system_message, *optimized]
@@ -572,7 +712,7 @@ def build_delegation_context_message(
     instruction: str,
     summary_text: str | None = None,
 ) -> str:
-    projected = build_llm_view(history)
+    projected = build_llm_view(history, is_main_thread=False)
     parts: list[str] = []
     if summary_text:
         parts.append(f"Context Summary:\n{summary_text}")

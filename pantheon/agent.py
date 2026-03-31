@@ -128,8 +128,12 @@ class AgentRunContext:
 
     agent: "Agent"
     memory: "Memory | None"
+    execution_context_id: str | None
     process_step_message: Callable | None
     process_chunk: Callable | None
+    cache_safe_runtime_params: Any | None = None
+    cache_safe_prompt_messages: list[dict] | None = None
+    cache_safe_tool_definitions: list[dict] | None = None
 
 
 _RUN_CONTEXT: ContextVar[AgentRunContext | None] = ContextVar(
@@ -1422,11 +1426,17 @@ class Agent:
 
             run_context = get_current_run_context()
             optimization_memory = run_context.memory if run_context else None
+            is_main_thread = (
+                run_context.execution_context_id is None if run_context else True
+            )
             messages = build_llm_view(
                 messages,
                 memory=optimization_memory,
+                is_main_thread=is_main_thread,
             )
             messages = process_messages_for_model(messages, model)
+            if run_context is not None:
+                run_context.cache_safe_prompt_messages = copy.deepcopy(messages)
 
         # Step 2: Detect provider and get configuration
         provider_config = detect_provider(model, self.force_litellm)
@@ -1462,6 +1472,8 @@ class Agent:
                 # Use get_tools_for_llm() for unified tool access
                 # This includes both base_functions and provider tools
                 tools = await self.get_tools_for_llm() or None
+                if run_context is not None and tools is not None:
+                    run_context.cache_safe_tool_definitions = copy.deepcopy(tools)
 
                 # For non-OpenAI providers or OpenAI-compatible providers, adjust tool format
                 # OpenAI-compatible providers (e.g. minimax) have api_key set in config
@@ -1504,6 +1516,15 @@ class Agent:
         if context_variables and "model_params" in context_variables:
             # Runtime overrides instance defaults
             model_params = {**self.model_params, **context_variables["model_params"]}
+
+        if run_context is not None:
+            from pantheon.utils.token_optimization import build_cache_safe_runtime_params
+
+            run_context.cache_safe_runtime_params = build_cache_safe_runtime_params(
+                model=model,
+                model_params=model_params,
+                response_format=response_format,
+            )
         
         # Step 8: Call LLM provider (unified interface)
         # logger.info(f"Raw messages: {messages}")
@@ -2113,6 +2134,11 @@ IMPORTANT: You are operating in a restricted workspace environment.
         # Determine whether to use memory
         should_use_memory = use_memory if use_memory is not None else self.use_memory
         memory_instance = memory or self.memory
+        working_context_variables = (context_variables or {}).copy()
+        fork_context_messages = working_context_variables.pop(
+            "_cache_safe_fork_context_messages",
+            None,
+        )
 
         input_messages = None  # Only set for normal user input, not AgentTransfer
 
@@ -2147,11 +2173,16 @@ IMPORTANT: You are operating in a restricted workspace environment.
                 if (should_use_memory and memory_instance)
                 else []
             )
+            if isinstance(fork_context_messages, list) and fork_context_messages:
+                conversation_history = [
+                    *copy.deepcopy(fork_context_messages),
+                    *conversation_history,
+                ]
             conversation_history += input_messages
             conversation_history = self._sanitize_messages(conversation_history)
 
         # preserve execution_context_id if tool need
-        context_variables = (context_variables or {}).copy()
+        context_variables = working_context_variables
 
         # Inject global context variables from settings
         from .settings import get_settings
@@ -2291,6 +2322,7 @@ IMPORTANT: You are operating in a restricted workspace environment.
             run_context = AgentRunContext(
                 agent=self,
                 memory=exec_context.memory_instance,
+                execution_context_id=exec_context.execution_context_id,
                 process_step_message=_process_step_message,
                 process_chunk=_process_chunk,
             )
