@@ -914,7 +914,7 @@ class Agent:
                 )
 
         # 3. Inject _background parameter into all eligible tool schemas
-        _BG_PARAM_SKIP = {"background_task"}
+        _BG_PARAM_SKIP = {"background_task", "think"}
         _BG_PARAM_SKIP_PREFIXES = ("transfer_to_", "call_agent_")
 
         all_tools = base_tools + provider_tools

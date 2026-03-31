@@ -286,6 +286,8 @@ async def get_detailed_token_stats(chatroom, chat_id, team, fallback: dict) -> d
         except Exception as e:
              logger.warning(f"Failed to get tools: {e}")
 
+    tool_names = [t["function"]["name"] for t in tools] if tools else []
+
     # Try to get messages from chatroom via memory_manager
     if chatroom and chat_id:
         try:
@@ -348,6 +350,7 @@ async def get_detailed_token_stats(chatroom, chat_id, team, fallback: dict) -> d
             info["total_cost"] = total_cost
             
             info["model"] = model
+            info["leader_tools"] = tool_names
             return info
         except Exception as e:
             logger.warning(f"Failed to count tokens: {e}")
@@ -368,7 +371,7 @@ async def get_detailed_token_stats(chatroom, chat_id, team, fallback: dict) -> d
         "by_role": {"user": fallback.get("total_input_tokens", 0), "assistant": fallback.get("total_output_tokens", 0)},
         "message_counts": {"user": fallback.get("message_count", 0), "assistant": fallback.get("message_count", 0)},
         "warning_90": False, "critical_95": False, "current_cost": 0, "model": model,
-        "system_prompt": 0, "tools_definition": 0, "error": None
+        "system_prompt": 0, "tools_definition": 0, "error": None, "leader_tools": tool_names
     }
 
 
