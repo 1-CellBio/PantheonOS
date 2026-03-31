@@ -773,16 +773,70 @@ def get_snip_config() -> SnipConfig:
     )
 
 
+# CC-identical token estimation constants (from microCompact.ts)
+IMAGE_MAX_TOKEN_SIZE = 2000  # CC: images/documents ≈ 2000 tokens
+_TOKEN_ESTIMATE_PAD_FACTOR = 4 / 3  # CC: pad estimate by 4/3 to be conservative
+
+
+def _rough_token_count(text: str) -> int:
+    """Rough token estimation matching CC's roughTokenCountEstimation."""
+    return max(1, len(text) // BYTES_PER_TOKEN)
+
+
+def _calculate_tool_result_tokens(block: dict) -> int:
+    """CC-identical per-block token calculation (microCompact.ts:137-160)."""
+    content = block.get("content")
+    if content is None:
+        return 0
+    if isinstance(content, str):
+        return _rough_token_count(content)
+    if isinstance(content, list):
+        total = 0
+        for item in content:
+            if isinstance(item, dict):
+                btype = item.get("type", "")
+                if btype == "text":
+                    total += _rough_token_count(item.get("text", ""))
+                elif btype in ("image", "document"):
+                    total += IMAGE_MAX_TOKEN_SIZE
+        return total
+    return 0
+
+
 def _estimate_message_tokens(message: dict) -> int:
+    """CC-identical message token estimation (microCompact.ts:164-205).
+
+    Handles all block types: text, tool_result, tool_use, image, document,
+    thinking, redacted_thinking. Pads estimate by 4/3 for conservatism.
+    """
     content = message.get("content")
     if isinstance(content, str):
         return max(1, len(content) // BYTES_PER_TOKEN)
     if isinstance(content, list):
         total = 0
         for block in content:
-            if isinstance(block, dict):
-                total += max(1, len(block.get("text", "") or block.get("content", "")) // BYTES_PER_TOKEN)
-        return max(1, total)
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type", "")
+            if btype == "text":
+                total += _rough_token_count(block.get("text", ""))
+            elif btype == "tool_result":
+                total += _calculate_tool_result_tokens(block)
+            elif btype in ("image", "document"):
+                total += IMAGE_MAX_TOKEN_SIZE
+            elif btype == "thinking":
+                total += _rough_token_count(block.get("thinking", ""))
+            elif btype == "redacted_thinking":
+                total += _rough_token_count(block.get("data", ""))
+            elif btype == "tool_use":
+                total += _rough_token_count(
+                    block.get("name", "") + json.dumps(block.get("input", {}))
+                )
+            else:
+                # Fallback for server_tool_use, web_search_tool_result, etc.
+                total += _rough_token_count(json.dumps(block))
+        # CC: pad estimate by 4/3 to be conservative
+        return max(1, int(total * _TOKEN_ESTIMATE_PAD_FACTOR))
     return 1
 
 
@@ -1017,86 +1071,284 @@ def collapse_read_search_groups(
 
 
 # ---------------------------------------------------------------------------
-# Opt4 extension: autocompact (last-resort full summarization)
-# Mirrors CC's autocompact — when context still over budget after all other
-# optimizations, summarize the older portion into a compact message.
+# Opt4 extension: autocompact (CC-identical LLM-based summarization)
+# Mirrors CC's autoCompactIfNeeded() + compactConversation() —
+# when context exceeds budget after all other optimizations, call an LLM
+# to generate a structured summary of the older conversation.
 # ---------------------------------------------------------------------------
 
 AUTOCOMPACT_TOKEN_BUDGET = 100_000  # trigger threshold
 AUTOCOMPACT_KEEP_RECENT = 8  # messages to preserve verbatim
+AUTOCOMPACT_MAX_OUTPUT_TOKENS = 20_000  # CC: MAX_OUTPUT_TOKENS_FOR_SUMMARY
+MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3  # CC circuit breaker
+
+# CC-identical compact prompt (from compact/prompt.ts)
+_AUTOCOMPACT_SYSTEM_PROMPT = (
+    "You are a helpful AI assistant tasked with summarizing conversations."
+)
+
+_AUTOCOMPACT_NO_TOOLS_PREAMBLE = """CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
+
+- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool.
+- You already have all the context you need in the conversation above.
+- Tool calls will be REJECTED and will waste your only turn — you will fail the task.
+- Your entire response must be plain text: an <analysis> block followed by a <summary> block.
+
+"""
+
+_AUTOCOMPACT_DETAILED_ANALYSIS = """Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:
+
+1. Chronologically analyze each message and section of the conversation. For each section thoroughly identify:
+   - The user's explicit requests and intents
+   - Your approach to addressing the user's requests
+   - Key decisions, technical concepts and code patterns
+   - Specific details like:
+     - file names
+     - full code snippets
+     - function signatures
+     - file edits
+   - Errors that you ran into and how you fixed them
+   - Pay special attention to specific user feedback that you received, especially if the user told you to do something differently.
+2. Double-check for technical accuracy and completeness, addressing each required element thoroughly."""
+
+_AUTOCOMPACT_USER_PROMPT = (
+    _AUTOCOMPACT_NO_TOOLS_PREAMBLE
+    + """Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
+This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.
+
+"""
+    + _AUTOCOMPACT_DETAILED_ANALYSIS
+    + """
+
+Your summary should include the following sections:
+
+1. Primary Request and Intent: Capture all of the user's explicit requests and intents in detail
+2. Key Technical Concepts: List all important technical concepts, technologies, and frameworks discussed.
+3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or created. Pay special attention to the most recent messages and include full code snippets where applicable and include a summary of why this file read or edit is important.
+4. Errors and fixes: List all errors that you ran into, and how you fixed them. Pay special attention to specific user feedback that you received, especially if the user told you to do something differently.
+5. Problem Solving: Document problems solved and any ongoing troubleshooting efforts.
+6. All user messages: List ALL user messages that are not tool results. These are critical for understanding the users' feedback and changing intent.
+7. Pending Tasks: Outline any pending tasks that you have explicitly been asked to work on.
+8. Current Work: Describe in detail precisely what was being worked on immediately before this summary request, paying special attention to the most recent messages from both user and assistant. Include file names and code snippets where applicable.
+9. Optional Next Step: List the next step that you will take that is related to the most recent work you were doing. IMPORTANT: ensure that this step is DIRECTLY in line with the user's most recent explicit requests, and the task you were working on immediately before this summary request. If your last task was concluded, then only list next steps if they are explicitly in line with the users request. Do not start on tangential requests or really old requests that were already completed without confirming with the user first.
+                       If there is a next step, include direct quotes from the most recent conversation showing exactly what task you were working on and where you left off. This should be verbatim to ensure there's no drift in task interpretation.
+
+Please provide your summary based on the conversation so far, following this structure and ensuring precision and thoroughness in your response.
+
+REMINDER: Do NOT call any tools. Respond with plain text only — an <analysis> block followed by a <summary> block. Tool calls will be rejected and you will fail the task."""
+)
+
+# CC-identical post-compact user message wrapper (from compact/prompt.ts)
+_AUTOCOMPACT_SUMMARY_WRAPPER = """This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+{summary}
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened."""
 
 
-def autocompact_messages(
+@dataclass
+class AutocompactTrackingState:
+    """CC-identical tracking state for autocompact circuit breaker."""
+    compacted: bool = False
+    consecutive_failures: int = 0
+
+
+def _format_summary(raw_response: str) -> str:
+    """Extract <summary> block from LLM response, or use full text."""
+    import re
+    match = re.search(r"<summary>(.*?)</summary>", raw_response, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return raw_response.strip()
+
+
+def should_autocompact(
     messages: list[dict],
     *,
     token_budget: int = AUTOCOMPACT_TOKEN_BUDGET,
-    keep_recent: int = AUTOCOMPACT_KEEP_RECENT,
-) -> tuple[list[dict], int]:
-    """Summarize oldest messages when total tokens exceed *token_budget*.
+    query_source: str | None = None,
+) -> bool:
+    """CC-identical predicate: should autocompact fire?
 
-    Unlike snip (which drops messages), autocompact replaces older messages
-    with a compact textual summary, preserving the gist of the conversation.
-    This is a synchronous heuristic-based summary (no LLM call) that captures
-    the key information from each message.
-
-    Returns (new_messages, tokens_freed).
+    Guards:
+    - Recursion: ``compact`` and ``session_memory`` sources are rejected
+    - Budget: total tokens must exceed ``token_budget``
     """
+    # Recursion guard (CC: querySource === 'session_memory' || 'compact')
+    if query_source in ("compact", "session_memory", "agent_summary"):
+        return False
     total = sum(_estimate_message_tokens(m) for m in messages)
-    if total <= token_budget:
-        return messages, 0
+    return total > token_budget
+
+
+async def autocompact_messages(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    token_budget: int = AUTOCOMPACT_TOKEN_BUDGET,
+    keep_recent: int = AUTOCOMPACT_KEEP_RECENT,
+    tracking: AutocompactTrackingState | None = None,
+    query_source: str | None = None,
+    transcript_path: str | None = None,
+) -> tuple[list[dict], int, AutocompactTrackingState]:
+    """CC-identical LLM-based autocompact.
+
+    Mirrors CC's ``autoCompactIfNeeded()`` + ``compactConversation()``:
+    1. Check budget threshold
+    2. Circuit-breaker check (consecutive failures)
+    3. Strip images, build compact prompt
+    4. Call LLM with CC's exact prompt template
+    5. Wrap summary in CC's post-compact user message format
+    6. Return [system, summary_msg, ...preserved_tail], tokens_freed, tracking
+
+    Falls back to heuristic summary if no model/LLM available.
+    """
+    tracking = tracking or AutocompactTrackingState()
+
+    # Budget check
+    if not should_autocompact(messages, token_budget=token_budget, query_source=query_source):
+        return messages, 0, tracking
+
+    # Circuit breaker (CC: MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3)
+    if tracking.consecutive_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES:
+        logger.warning(
+            "[token optimization] autocompact circuit breaker tripped after {} consecutive failures",
+            tracking.consecutive_failures,
+        )
+        return messages, 0, tracking
 
     system_msgs = [m for m in messages if m.get("role") == "system"]
     non_system = [m for m in messages if m.get("role") != "system"]
 
     if len(non_system) <= keep_recent:
-        return messages, 0
+        return messages, 0, tracking
 
     tail = non_system[-keep_recent:]
     to_summarize = non_system[:-keep_recent]
 
     if not to_summarize:
-        return messages, 0
+        return messages, 0, tracking
 
-    # Build a compact summary of the older messages
-    summary_parts: list[str] = []
-    for msg in to_summarize:
-        role = msg.get("role", "unknown")
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            content = " ".join(
-                b.get("text", "") for b in content if isinstance(b, dict)
+    tokens_before = sum(_estimate_message_tokens(m) for m in to_summarize)
+
+    # ---- LLM-based summarization (CC path) ----
+    summary_text: str | None = None
+    if model:
+        try:
+            # Build messages for compact LLM call (CC: streamCompactSummary)
+            # Strip images from messages to compress
+            compact_messages: list[dict] = []
+            for msg in to_summarize:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    # Strip image/document blocks → replace with [image]/[document]
+                    text_parts = []
+                    for block in content:
+                        if isinstance(block, dict):
+                            btype = block.get("type", "")
+                            if btype == "text":
+                                text_parts.append(block.get("text", ""))
+                            elif btype in ("image", "document"):
+                                text_parts.append(f"[{btype}]")
+                            else:
+                                text_parts.append(block.get("text", "") or block.get("content", ""))
+                    content = "\n".join(text_parts)
+                if not isinstance(content, str):
+                    content = str(content)
+                if role == "tool":
+                    # Embed tool results as assistant message for compact LLM
+                    tool_name = msg.get("tool_name", "tool")
+                    compact_messages.append({
+                        "role": "assistant",
+                        "content": f"[Tool result ({tool_name})]\n{content[:10_000]}",
+                    })
+                elif role in ("user", "assistant"):
+                    compact_messages.append({"role": role, "content": content})
+                elif role == "compression":
+                    compact_messages.append({"role": "user", "content": content})
+
+            # Add the compact request as final user message
+            compact_messages.append({
+                "role": "user",
+                "content": _AUTOCOMPACT_USER_PROMPT,
+            })
+
+            # Call LLM (CC: queryModelWithStreaming with querySource='compact')
+            from pantheon.utils.llm import acompletion_litellm
+            response = await acompletion_litellm(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _AUTOCOMPACT_SYSTEM_PROMPT},
+                    *compact_messages,
+                ],
+                max_tokens=min(AUTOCOMPACT_MAX_OUTPUT_TOKENS, 20_000),
+                temperature=0,
+                stream=False,
             )
-        if not isinstance(content, str):
-            content = str(content)
-        trimmed = content[:300].strip()
-        if trimmed:
-            summary_parts.append(f"[{role}] {trimmed}")
+            raw_summary = ""
+            if isinstance(response, dict):
+                raw_summary = response.get("content", "")
+            elif hasattr(response, "choices") and response.choices:
+                raw_summary = response.choices[0].message.content or ""
+            else:
+                raw_summary = str(response)
+            summary_text = _format_summary(raw_summary)
 
-    summary_text = "\n".join(summary_parts[:30])
-    if len(summary_parts) > 30:
-        summary_text += f"\n... (+{len(summary_parts) - 30} more messages)"
+        except Exception as e:
+            logger.error("[token optimization] autocompact LLM call failed: {}", e)
+            tracking.consecutive_failures += 1
+            # Fall through to heuristic fallback
+
+    # ---- Heuristic fallback (when no model or LLM failed) ----
+    if not summary_text:
+        summary_parts: list[str] = []
+        for msg in to_summarize:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "") for b in content if isinstance(b, dict)
+                )
+            if not isinstance(content, str):
+                content = str(content)
+            trimmed = content[:300].strip()
+            if trimmed:
+                summary_parts.append(f"[{role}] {trimmed}")
+        summary_text = "\n".join(summary_parts[:30])
+        if len(summary_parts) > 30:
+            summary_text += f"\n... (+{len(summary_parts) - 30} more messages)"
+
+    # ---- Build post-compact messages (CC: buildPostCompactMessages) ----
+    wrapper = _AUTOCOMPACT_SUMMARY_WRAPPER.format(summary=summary_text)
+    if transcript_path:
+        wrapper += (
+            f"\n\nIf you need specific details from before compaction "
+            f"(like exact code snippets, error messages, or content you "
+            f"generated), read the full transcript at: {transcript_path}"
+        )
 
     compact_msg = {
         "role": "user",
-        "content": (
-            "[Autocompact summary of earlier conversation]\n" + summary_text
-        ),
+        "content": wrapper,
         "_autocompacted": True,
     }
 
-    tokens_before = sum(_estimate_message_tokens(m) for m in to_summarize)
     tokens_after = _estimate_message_tokens(compact_msg)
     tokens_freed = tokens_before - tokens_after
 
     result = system_msgs + [compact_msg] + tail
 
-    if tokens_freed > 0:
-        logger.info(
-            "[token optimization] autocompact summarized {} messages, ~{} tokens freed",
-            len(to_summarize),
-            tokens_freed,
-        )
-    return result, tokens_freed
+    # Reset failure count on success (CC: consecutiveFailures: 0)
+    tracking.consecutive_failures = 0
+    tracking.compacted = True
+
+    logger.info(
+        "[token optimization] autocompact summarized {} messages via {} (~{} tokens freed)",
+        len(to_summarize),
+        "LLM" if model else "heuristic",
+        tokens_freed,
+    )
+    return result, tokens_freed, tracking
 
 
 def apply_token_optimizations(
@@ -1110,6 +1362,11 @@ def apply_token_optimizations(
     enable_autocompact: bool = True,
     query_source: str | None = None,
 ) -> list[dict]:
+    """Synchronous 4-stage optimization pipeline.
+
+    For the full 5-stage pipeline including LLM-based autocompact,
+    use :func:`apply_token_optimizations_async`.
+    """
     # 1. Externalize large tool outputs (session-level budget)
     optimized = apply_tool_result_budget(
         messages,
@@ -1127,10 +1384,57 @@ def apply_token_optimizations(
     # 4. Context Collapse: fold consecutive read/search groups (CC-style)
     if enable_context_collapse:
         optimized, _ = collapse_read_search_groups(optimized)
-    # 5. Autocompact: last-resort summarization when still over budget
-    if enable_autocompact:
-        optimized, _ = autocompact_messages(optimized)
+    # Note: autocompact (stage 5) is async — use apply_token_optimizations_async
     return optimized
+
+
+async def apply_token_optimizations_async(
+    messages: list[dict],
+    memory: Any | None = None,
+    base_dir: Path | None = None,
+    *,
+    is_main_thread: bool = True,
+    snip_config: SnipConfig | None = None,
+    enable_context_collapse: bool = True,
+    enable_autocompact: bool = True,
+    query_source: str | None = None,
+    autocompact_model: str | None = None,
+    autocompact_tracking: AutocompactTrackingState | None = None,
+    transcript_path: str | None = None,
+) -> tuple[list[dict], AutocompactTrackingState | None]:
+    """Full 5-stage CC-identical optimization pipeline (async).
+
+    Stages:
+    1. Tool result budget (externalize large outputs)
+    2. HISTORY_SNIP (token-budget truncation)
+    3. Microcompact (time-based clearing)
+    4. contextCollapse (read/search folding)
+    5. Autocompact (LLM-based summarization — CC-identical)
+
+    Returns (optimized_messages, tracking_state).
+    """
+    # Stages 1-4 (sync)
+    optimized = apply_token_optimizations(
+        messages,
+        memory=memory,
+        base_dir=base_dir,
+        is_main_thread=is_main_thread,
+        snip_config=snip_config,
+        enable_context_collapse=enable_context_collapse,
+        enable_autocompact=False,  # handled below
+        query_source=query_source,
+    )
+    # Stage 5: Autocompact (async, LLM-based)
+    tracking = autocompact_tracking
+    if enable_autocompact:
+        optimized, _, tracking = await autocompact_messages(
+            optimized,
+            model=autocompact_model,
+            query_source=query_source,
+            tracking=tracking,
+            transcript_path=transcript_path,
+        )
+    return optimized, tracking
 
 
 def project_memory_messages_for_llm(messages: list[dict]) -> list[dict]:

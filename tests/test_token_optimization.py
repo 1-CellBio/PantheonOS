@@ -1087,27 +1087,67 @@ def test_collapse_breaks_on_assistant_text_output():
 # ---------------------------------------------------------------------------
 
 def test_autocompact_summarizes_when_over_budget():
+    import asyncio
     from pantheon.utils.token_optimization import autocompact_messages
-    # 20 big messages → way over 1000 token budget
+    # 20 big messages → way over 1000 token budget, no model → heuristic fallback
     messages = [{"role": "user", "content": f"msg {i}: " + "x" * 4000} for i in range(20)]
-    result, freed = autocompact_messages(messages, token_budget=1000, keep_recent=4)
+    result, freed, tracking = asyncio.run(
+        autocompact_messages(messages, token_budget=1000, keep_recent=4)
+    )
     assert freed > 0
+    assert tracking.compacted is True
+    assert tracking.consecutive_failures == 0
     # Last 4 preserved
     assert result[-1]["content"] == messages[-1]["content"]
     assert result[-4]["content"] == messages[-4]["content"]
-    # First message is the autocompact summary
-    assert "[Autocompact summary" in result[0]["content"]
+    # First message is the autocompact summary wrapper
+    assert "continued from a previous conversation" in result[0]["content"]
 
 
 def test_autocompact_noop_when_under_budget():
+    import asyncio
     from pantheon.utils.token_optimization import autocompact_messages
     messages = [
         {"role": "user", "content": "short"},
         {"role": "assistant", "content": "reply"},
     ]
-    result, freed = autocompact_messages(messages, token_budget=100_000, keep_recent=4)
+    result, freed, tracking = asyncio.run(
+        autocompact_messages(messages, token_budget=100_000, keep_recent=4)
+    )
     assert result is messages
     assert freed == 0
+
+
+def test_autocompact_circuit_breaker():
+    """After MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES, autocompact stops trying."""
+    import asyncio
+    from pantheon.utils.token_optimization import (
+        AutocompactTrackingState,
+        MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES,
+        autocompact_messages,
+    )
+    messages = [{"role": "user", "content": "x" * 40_000} for _ in range(10)]
+    tracking = AutocompactTrackingState(
+        consecutive_failures=MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES
+    )
+    result, freed, new_tracking = asyncio.run(
+        autocompact_messages(messages, token_budget=1000, tracking=tracking)
+    )
+    # Circuit breaker tripped — no compaction despite being over budget
+    assert result is messages
+    assert freed == 0
+
+
+def test_autocompact_recursion_guard():
+    """Autocompact must not fire for compact/session_memory query sources."""
+    import asyncio
+    from pantheon.utils.token_optimization import autocompact_messages
+    messages = [{"role": "user", "content": "x" * 40_000} for _ in range(10)]
+    for src in ("compact", "session_memory", "agent_summary"):
+        result, freed, _ = asyncio.run(
+            autocompact_messages(messages, token_budget=1000, query_source=src)
+        )
+        assert result is messages, f"Should skip for query_source={src}"
 
 
 # ---------------------------------------------------------------------------
@@ -1175,6 +1215,40 @@ def test_reconstruct_state_from_existing_messages():
     assert "r3" not in state.seen_ids  # normal → not tracked
 
 
+# ---------------------------------------------------------------------------
+# New: CC-identical token estimation tests
+# ---------------------------------------------------------------------------
+
+def test_estimate_tokens_image_block():
+    from pantheon.utils.token_optimization import _estimate_message_tokens, IMAGE_MAX_TOKEN_SIZE
+    msg = {"role": "user", "content": [
+        {"type": "text", "text": "Look at this:"},
+        {"type": "image", "source": {"data": "base64data"}},
+    ]}
+    tokens = _estimate_message_tokens(msg)
+    # Text (~4 tokens) + IMAGE_MAX_TOKEN_SIZE (2000) + padding
+    assert tokens >= IMAGE_MAX_TOKEN_SIZE
+
+
+def test_estimate_tokens_tool_result_block():
+    from pantheon.utils.token_optimization import _estimate_message_tokens
+    msg = {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "x" * 4000},
+    ]}
+    tokens = _estimate_message_tokens(msg)
+    # 4000 chars / 4 bytes = 1000 tokens * 4/3 padding = ~1333
+    assert tokens >= 1000
+
+
+def test_estimate_tokens_tool_use_block():
+    from pantheon.utils.token_optimization import _estimate_message_tokens
+    msg = {"role": "assistant", "content": [
+        {"type": "tool_use", "name": "grep", "input": {"query": "test"}},
+    ]}
+    tokens = _estimate_message_tokens(msg)
+    assert tokens > 0
+
+
 def test_inject_cache_control_skip_cache_write_marks_second_to_last():
     messages = [
         {"role": "system", "content": "sys"},
@@ -1212,8 +1286,8 @@ def test_inject_cache_control_normal_marks_last():
 # New: full pipeline integration test with all 5 stages
 # ---------------------------------------------------------------------------
 
-def test_apply_token_optimizations_runs_all_5_stages(tmp_path):
-    """Integration: budget → snip → microcompact → collapse → autocompact."""
+def test_apply_token_optimizations_runs_all_stages(tmp_path):
+    """Integration: budget → snip → microcompact → collapse (sync 4-stage)."""
     import time
     from pantheon.utils.token_optimization import SnipConfig
     from pantheon.internal.memory import Memory
@@ -1253,7 +1327,48 @@ def test_apply_token_optimizations_runs_all_5_stages(tmp_path):
     )
     after = estimate_total_tokens_from_chars(result)
 
-    # Massive reduction from all 5 stages combined
+    # Massive reduction from stages 1-4 combined
     assert after < before
     savings_pct = (1 - after / before) * 100
     assert savings_pct > 50, f"Expected >50% savings, got {savings_pct:.1f}%"
+
+
+def test_apply_token_optimizations_async_runs_full_pipeline(tmp_path):
+    """Integration: full 5-stage async pipeline with heuristic autocompact."""
+    import asyncio
+    import time
+    from pantheon.utils.token_optimization import (
+        SnipConfig,
+        apply_token_optimizations_async,
+    )
+    from pantheon.internal.memory import Memory
+
+    memory = Memory("async-pipeline-test")
+    old_ts = time.time() - 7200
+
+    messages = []
+    for i in range(20):
+        messages.append({
+            "role": "assistant",
+            "tool_calls": [{"id": f"d{i}", "function": {"name": "shell"}}],
+            "timestamp": old_ts + i,
+        })
+        messages.append({
+            "role": "tool", "tool_call_id": f"d{i}",
+            "tool_name": "shell", "content": "output " * 5000,
+        })
+    messages.append({"role": "user", "content": "done?"})
+
+    before = estimate_total_tokens_from_chars(messages)
+    result, tracking = asyncio.run(
+        apply_token_optimizations_async(
+            messages,
+            memory=memory,
+            base_dir=tmp_path,
+            is_main_thread=True,
+            snip_config=SnipConfig(enabled=True, token_budget=5_000, keep_recent=4),
+            autocompact_model=None,  # heuristic fallback
+        )
+    )
+    after = estimate_total_tokens_from_chars(result)
+    assert after < before

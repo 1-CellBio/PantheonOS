@@ -37,6 +37,7 @@ from pantheon.utils.token_optimization import (
     build_llm_view,
     collapse_read_search_groups,
     microcompact_messages,
+    should_autocompact,
     snip_messages_to_budget,
     stabilize_tool_definitions,
 )
@@ -246,12 +247,13 @@ def bench_opt4_collapse(msgs: list[dict], collapse_msgs: list[dict] | None = Non
 
 
 def bench_opt4_autocompact(msgs: list[dict]) -> Result:
-    """Opt4c: autocompact — last-resort summarization of old messages."""
+    """Opt4c: autocompact — last-resort LLM-based summarization (heuristic fallback)."""
     before = est_tokens(msgs)
-    out, freed = autocompact_messages(
+    out, freed, _ = asyncio.run(autocompact_messages(
         copy.deepcopy(msgs), token_budget=20_000, keep_recent=4,
-    )
-    return Result("4c. Autocompact", before, est_tokens(out))
+        model=None,  # heuristic fallback for benchmark (no API cost)
+    ))
+    return Result("4c. Autocompact (heuristic)", before, est_tokens(out))
 
 
 def bench_opt4(msgs: list[dict], tmp: Path) -> Result:
