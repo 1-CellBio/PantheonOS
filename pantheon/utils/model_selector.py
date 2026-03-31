@@ -60,7 +60,7 @@ _NOT_FOUND = object()
 # Built-in defaults based on February 2026 flagship models
 # Users can override in settings.json
 
-DEFAULT_PROVIDER_PRIORITY = ["openai", "anthropic", "gemini", "zai", "deepseek", "minimax", "moonshot", "qwen", "groq", "mistral", "together_ai", "openrouter"]
+DEFAULT_PROVIDER_PRIORITY = ["openai", "anthropic", "gemini", "zai", "deepseek", "minimax", "moonshot", "qwen", "groq", "mistral", "together_ai", "openrouter", "codex"]
 
 # Quality levels map to MODEL LISTS (not single models) for fallback chains
 # Models within each level are ordered by preference
@@ -165,6 +165,12 @@ DEFAULT_PROVIDER_MODELS = {
         "normal": ["together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo"],
         "low": ["together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo"],
     },
+    # Codex: OpenAI via ChatGPT OAuth (free with ChatGPT Plus)
+    "codex": {
+        "high": ["codex/gpt-5.4", "codex/gpt-5.2-codex"],
+        "normal": ["codex/gpt-5.4-mini", "codex/gpt-5"],
+        "low": ["codex/gpt-5.4-mini", "codex/o4-mini"],
+    },
     # OpenRouter: Multi-provider aggregator
     # https://openrouter.ai/models
     "openrouter": {
@@ -216,6 +222,7 @@ PROVIDER_API_KEYS = {
     "zai": "ZAI_API_KEY",
     "moonshot": "MOONSHOT_API_KEY",
     "qwen": "DASHSCOPE_API_KEY",
+    "codex": "",  # OAuth-based, no env var key
 }
 
 # ============ Image Generation Model Defaults ============
@@ -270,6 +277,14 @@ class ModelSelector:
         for provider_key, config in CUSTOM_ENDPOINT_ENVS.items():
             if os.environ.get(config.api_key_env, ""):
                 self._available_providers.add(provider_key)
+
+        # Check OAuth providers (e.g., Codex)
+        try:
+            from pantheon.utils.oauth import CodexOAuthManager
+            if CodexOAuthManager().is_authenticated():
+                self._available_providers.add("codex")
+        except Exception:
+            pass
 
         # Universal proxy: LLM_API_KEY makes openai provider available
         # (most third-party proxies are OpenAI-compatible)

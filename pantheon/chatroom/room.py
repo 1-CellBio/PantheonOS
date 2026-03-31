@@ -2289,3 +2289,107 @@ class ChatRoom(ToolSet):
 
         has_any_key = any(v["configured"] for v in keys.values())
         return {"keys": keys, "has_any_key": has_any_key}
+
+    # ============ OAuth Management ============
+
+    @tool
+    async def oauth_status(self) -> dict:
+        """Get OAuth authentication status for all supported providers.
+
+        Returns:
+            Dict with provider statuses including authentication state and account info.
+        """
+        from pantheon.utils.oauth import CodexOAuthManager
+
+        codex = CodexOAuthManager()
+        codex_authenticated = codex.is_authenticated()
+        codex_account_id = codex.get_account_id() if codex_authenticated else None
+
+        return {
+            "providers": {
+                "codex": {
+                    "authenticated": codex_authenticated,
+                    "account_id": codex_account_id,
+                    "description": "OpenAI Codex (ChatGPT backend-api, free with ChatGPT Plus)",
+                    "supports_browser_login": True,
+                    "supports_import": True,
+                },
+            },
+        }
+
+    @tool
+    async def oauth_login(self, provider: str = "codex") -> dict:
+        """Start browser-based OAuth login flow.
+
+        Opens the system browser for the user to authenticate.
+        Token is saved automatically after successful login.
+
+        Args:
+            provider: OAuth provider name (currently only 'codex' supported)
+
+        Returns:
+            Dict with success status and account info.
+        """
+        if provider != "codex":
+            return {"success": False, "error": f"Unsupported OAuth provider: {provider}"}
+
+        from pantheon.utils.oauth import CodexOAuthManager, CodexOAuthError
+
+        try:
+            mgr = CodexOAuthManager()
+            mgr.login(open_browser=True, timeout_seconds=300)
+
+            # Reload settings so model selector detects new provider
+            from pantheon.utils.model_selector import reset_model_selector
+            reset_model_selector()
+
+            return {
+                "success": True,
+                "provider": "codex",
+                "account_id": mgr.get_account_id(),
+                "message": "Codex OAuth login successful. You can now use codex/ models.",
+            }
+        except CodexOAuthError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"OAuth login failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    @tool
+    async def oauth_import(self, provider: str = "codex") -> dict:
+        """Import OAuth tokens from native CLI tools.
+
+        For Codex: imports from ~/.codex/auth.json (Codex CLI).
+
+        Args:
+            provider: OAuth provider name (currently only 'codex' supported)
+
+        Returns:
+            Dict with success status.
+        """
+        if provider != "codex":
+            return {"success": False, "error": f"Unsupported OAuth provider: {provider}"}
+
+        from pantheon.utils.oauth import CodexOAuthManager
+
+        try:
+            mgr = CodexOAuthManager()
+            result = mgr.import_from_codex_cli()
+
+            if result:
+                from pantheon.utils.model_selector import reset_model_selector
+                reset_model_selector()
+                return {
+                    "success": True,
+                    "provider": "codex",
+                    "account_id": mgr.get_account_id(),
+                    "message": "Imported Codex CLI tokens successfully.",
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "No Codex CLI auth found (~/.codex/auth.json). Install Codex CLI or use browser login.",
+                }
+        except Exception as e:
+            logger.error(f"OAuth import failed: {e}")
+            return {"success": False, "error": str(e)}
