@@ -2319,7 +2319,9 @@ class ChatRoom(ToolSet):
         from pantheon.utils.oauth.codex import CODEX_CLI_AUTH
 
         codex = CodexOAuthManager()
-        codex_authenticated = codex.is_authenticated()
+        # Actually verify the token works (auto_refresh=True will try to refresh if expired)
+        access_token = codex.get_access_token(auto_refresh=True)
+        codex_authenticated = access_token is not None
         codex_account_id = codex.get_account_id() if codex_authenticated else None
         cli_available = CODEX_CLI_AUTH.exists()
 
