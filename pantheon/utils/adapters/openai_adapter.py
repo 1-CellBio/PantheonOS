@@ -43,6 +43,37 @@ def _wrap_openai_error(e: Exception) -> Exception:
     return e
 
 
+def _normalize_response_format(response_format: Any) -> Any:
+    """Convert Pydantic BaseModel classes to OpenAI JSON-schema dicts.
+
+    The OpenAI SDK (>=1.40) rejects raw BaseModel classes passed to
+    ``chat.completions.create()`` and requires the JSON-schema dict
+    format instead.  Plain dicts (e.g. ``{"type": "json_object"}``)
+    and primitives like ``bool`` are passed through unchanged.
+    """
+    try:
+        from pydantic import BaseModel
+
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            # Use the OpenAI SDK's built-in converter which properly adds
+            # ``additionalProperties: false`` to all object nodes as
+            # required by OpenAI's strict structured-output mode.
+            from openai.lib._pydantic import to_strict_json_schema
+
+            schema = to_strict_json_schema(response_format)
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_format.__name__,
+                    "schema": schema,
+                    "strict": True,
+                },
+            }
+    except Exception:
+        pass
+    return response_format
+
+
 class OpenAIAdapter(BaseAdapter):
     """Adapter for OpenAI and OpenAI-compatible APIs."""
 
@@ -93,7 +124,7 @@ class OpenAIAdapter(BaseAdapter):
         }
 
         if response_format:
-            call_kwargs["response_format"] = response_format
+            call_kwargs["response_format"] = _normalize_response_format(response_format)
 
         # reasoning models (o1, o3, o4 series) don't support parallel_tool_calls
         if not model.startswith("o"):
