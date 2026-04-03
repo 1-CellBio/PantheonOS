@@ -692,17 +692,11 @@ class TestAgentBackgroundIntegration:
                 props = t["function"].get("parameters", {}).get("properties", {})
                 assert "_background" not in props, f"{name} should not have _background"
 
-    def test_background_in_required_strict_mode(self):
-        agent = self._make_agent_with_tool(force_litellm=False)
+    def test_background_in_required(self):
+        agent = self._make_agent_with_tool()
         tools = self._get_tools_sync(agent)
         schema = next(t for t in tools if t["function"]["name"] == "my_tool")
         assert "_background" in schema["function"]["parameters"]["required"]
-
-    def test_background_not_in_required_litellm_mode(self):
-        agent = self._make_agent_with_tool(force_litellm=True)
-        tools = self._get_tools_sync(agent)
-        schema = next(t for t in tools if t["function"]["name"] == "my_tool")
-        assert "_background" not in schema["function"]["parameters"].get("required", [])
 
     def test_injection_does_not_mutate_cached_schemas(self):
         agent = self._make_agent_with_tool()

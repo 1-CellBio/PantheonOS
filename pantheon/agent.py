@@ -941,9 +941,8 @@ class Agent:
                     "You'll get a task_id to track progress via background_task()."
                 ),
             }
-            # In strict mode (non-litellm), all params must be in required
-            if not self.force_litellm:
-                func["parameters"].setdefault("required", []).append("_background")
+            # All params must be in required for strict mode
+            func["parameters"].setdefault("required", []).append("_background")
 
         return all_tools
 
