@@ -810,56 +810,42 @@ class FileManagerToolSet(FileManagerToolSetBase):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # Configurable size guards (defense-in-depth).
-    # With max_tokens properly set at the LLM call layer, these are safety
-    # nets — not the primary truncation fix.  Defaults are generous enough
-    # for most single-section writes; the Two-Phase Protocol is recommended
-    # only for truly huge documents.
-    WRITE_FILE_MAX_CHARS = 40_000
-    APPEND_FILE_MAX_CHARS = 20_000
-    UPDATE_FILE_MAX_CHARS = 30_000
-
     @tool
     async def write_file(
         self,
         file_path: str,
         content: str = "",
         overwrite: bool = True,
+        append: bool = False,
     ) -> dict:
-        """Create or overwrite a file.
-
-        For very large documents (papers, reports), prefer the Two-Phase
-        Write Protocol:
-          1. write_file(path, skeleton)
-          2. update_file(path, stub, full_section)  — per section
-          3. append_file(path, batch)  — for BibTeX / lists
+        """Create, overwrite, or append to a file.
 
         Args:
             file_path: The path to the file to write.
             content: The content to write to the file.
-            overwrite: When False, abort if the target file already exists.
+            overwrite: When False, abort if the target file already exists (ignored when append=True).
+            append: When True, append content to the end of an existing file instead of overwriting.
 
         Returns:
             dict: Success status or error message.
         """
-        _WRITE_FILE_MAX_CHARS = self.WRITE_FILE_MAX_CHARS
-        if len(content) > _WRITE_FILE_MAX_CHARS:
-            return {
-                "success": False,
-                "reason": "content_too_large",
-                "error": (
-                    f"Content is {len(content):,} chars, exceeding the "
-                    f"{_WRITE_FILE_MAX_CHARS:,}-char limit per write_file call. "
-                    f"Use the Two-Phase Write Protocol:\n"
-                    f"  1. write_file('{file_path}', content=<skeleton with empty section stubs>)\n"
-                    f"  2. update_file('{file_path}', old_string=<stub>, new_string=<section>)  "
-                    f"← one call per section\n"
-                    f"  3. append_file('{file_path}', content=<batch>)  "
-                    f"← for BibTeX / lists (<=10 items per call)\n"
-                    f"Do NOT retry write_file with the same large content."
-                ),
-            }
         target_path = self._resolve_path(file_path)
+
+        if append:
+            if not target_path.exists():
+                return {
+                    "success": False,
+                    "error": f"File '{file_path}' does not exist. Use write_file without append=True to create it first.",
+                    "reason": "file_not_found",
+                }
+            try:
+                with open(target_path, "a", encoding="utf-8") as f:
+                    f.write(content)
+                return {"success": True, "appended_chars": len(content)}
+            except Exception as exc:
+                logger.error(f"write_file(append) failed for {file_path}: {exc}")
+                return {"success": False, "error": str(exc)}
+
         if not overwrite and target_path.exists():
             return {
                 "success": False,
@@ -874,49 +860,6 @@ class FileManagerToolSet(FileManagerToolSetBase):
             return {"success": True, "overwritten": overwrite}
         except Exception as exc:
             logger.error(f"write_file failed for {file_path}: {exc}")
-            return {"success": False, "error": str(exc)}
-
-    @tool
-    async def append_file(
-        self,
-        file_path: str,
-        content: str,
-    ) -> dict:
-        """Append content to the end of an existing file.
-
-        File must already exist (use write_file to create it first).
-
-        Args:
-            file_path: Path to the file to append to.
-            content: Text to append.
-
-        Returns:
-            dict: {success: true, appended_chars: int} or {success: false, error: str}
-        """
-        _APPEND_FILE_MAX_CHARS = self.APPEND_FILE_MAX_CHARS
-        if len(content) > _APPEND_FILE_MAX_CHARS:
-            return {
-                "success": False,
-                "reason": "content_too_large",
-                "error": (
-                    f"Content is {len(content):,} chars, exceeding the "
-                    f"{_APPEND_FILE_MAX_CHARS:,}-char limit per append_file call. "
-                    f"Split into smaller batches (<=10 BibTeX entries or one section at a time)."
-                ),
-            }
-        target_path = self._resolve_path(file_path)
-        if not target_path.exists():
-            return {
-                "success": False,
-                "error": f"File '{file_path}' does not exist. Use write_file to create it first.",
-                "reason": "file_not_found",
-            }
-        try:
-            with open(target_path, "a", encoding="utf-8") as f:
-                f.write(content)
-            return {"success": True, "appended_chars": len(content)}
-        except Exception as exc:
-            logger.error(f"append_file failed for {file_path}: {exc}")
             return {"success": False, "error": str(exc)}
 
     @tool
@@ -951,18 +894,6 @@ class FileManagerToolSet(FileManagerToolSetBase):
         Returns:
             dict: {success: bool, replacements: int} or {success: False, error: str}
         """
-        _UPDATE_FILE_MAX_CHARS = self.UPDATE_FILE_MAX_CHARS
-        if len(new_string) > _UPDATE_FILE_MAX_CHARS:
-            return {
-                "success": False,
-                "reason": "content_too_large",
-                "error": (
-                    f"new_string is {len(new_string):,} chars, exceeding the "
-                    f"{_UPDATE_FILE_MAX_CHARS:,}-char limit per update_file call. "
-                    f"Split this section into smaller semantic units and call "
-                    f"update_file once per unit (e.g. one paragraph or subsection at a time)."
-                ),
-            }
         target_path = self._resolve_path(file_path)
         if not target_path.exists():
             return {"success": False, "error": "File does not exist"}
