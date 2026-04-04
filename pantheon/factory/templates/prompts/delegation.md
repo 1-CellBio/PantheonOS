@@ -98,9 +98,9 @@ Tool failures and sub-agent errors are expected — **never terminate without pr
 
 When a tool call fails, apply the following recovery ladder in order:
 
-**File write failures** (e.g. content too large, output truncation):
-1. **Use Two-Phase Write Protocol**: `write_file` (skeleton only) → `update_file` (one section at a time) → `append_file` (BibTeX / list batches). Never retry `write_file` with the same large content.
-2. **Downgrade format**: If `.tex` fails after protocol, write `.md`; if `.md` fails, write `.txt`
+**File write failures** (e.g. output truncation, encoding errors):
+1. **Retry once**: Transient errors may resolve on retry
+2. **Downgrade format**: If `.tex` fails, write `.md`; if `.md` fails, write `.txt`
 3. **Inline output**: If all file writes fail, output the full content as a code block in the chat
 
 **Sub-agent failures** (researcher or illustrator returns error or empty result):
