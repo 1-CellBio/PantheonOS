@@ -308,6 +308,7 @@ async def acompletion_responses(
 
     # ========== Build client ==========
     proxy_kwargs = get_proxy_kwargs()
+    oauth_client_kwargs = None
     if proxy_kwargs:
         client = AsyncOpenAI(
             base_url=proxy_kwargs["base_url"],
@@ -663,6 +664,7 @@ async def acompletion(
 
     # ========== Mode Detection & Configuration ==========
     proxy_kwargs = get_proxy_kwargs()
+    oauth_client_kwargs = None
     if proxy_kwargs:
         # Proxy mode: all calls go through OpenAI-compatible proxy
         effective_base_url = proxy_kwargs.get("base_url")
@@ -681,6 +683,39 @@ async def acompletion(
             )
         effective_base_url = provider_config.get("base_url")
         effective_model = model_name
+    elif provider_key == "gemini-cli":
+        sdk_type = "gemini-cli"
+        effective_base_url = base_url or "https://cloudcode-pa.googleapis.com"
+        try:
+            from .oauth import GeminiCliOAuthError, GeminiCliOAuthManager
+
+            gemini_oauth = GeminiCliOAuthManager()
+            effective_api_key = gemini_oauth.build_api_key_payload(
+                refresh_if_needed=True,
+                import_if_missing=True,
+            )
+            if not effective_api_key:
+                raise GeminiCliOAuthError(
+                    "Gemini CLI OAuth session expired or not configured. "
+                    "Please re-login in Settings → API Keys → OAuth."
+                )
+        except GeminiCliOAuthError as e:
+            raise RuntimeError(f"[OAUTH_PROJECT_REQUIRED] {e}") from e
+        except Exception as e:
+            raise RuntimeError(
+                "[OAUTH_REQUIRED] Gemini CLI OAuth session expired or not configured. "
+                "Please re-login in Settings → API Keys → OAuth."
+            ) from e
+        effective_model = model_name
+    elif provider_key == "gemini" or sdk_type == "google-genai":
+        effective_base_url = base_url or provider_config.get("base_url")
+        effective_api_key = api_key
+        if not effective_api_key:
+            import os
+            api_key_env = provider_config.get("api_key_env", "")
+            if api_key_env:
+                effective_api_key = os.environ.get(api_key_env, "")
+        effective_model = model_name
     else:
         effective_base_url = base_url or provider_config.get("base_url")
         effective_api_key = api_key
@@ -698,6 +733,8 @@ async def acompletion(
 
     # ========== Prepare adapter kwargs ==========
     adapter_kwargs = dict(model_params or {})
+    if oauth_client_kwargs:
+        adapter_kwargs["oauth_client_kwargs"] = oauth_client_kwargs
 
     # Codex OAuth: pass account_id for chatgpt-account-id header
     if sdk_type == "codex":

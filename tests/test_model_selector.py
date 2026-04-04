@@ -281,6 +281,79 @@ class TestProviderInfo:
             assert isinstance(info["available_providers"], list)
 
 
+class TestModelListingDisplayKeys:
+    """Test distinct model listing providers for Gemini API vs Gemini CLI."""
+
+    def test_list_available_models_exposes_gemini_cli_when_oauth_available(
+        self, mock_settings
+    ):
+        selector = ModelSelector(mock_settings)
+
+        with (
+            patch.object(
+                selector,
+                "_get_available_providers",
+                return_value={"gemini-cli"},
+            ),
+            patch.object(
+                selector,
+                "detect_available_provider",
+                return_value="gemini-cli",
+            ),
+        ):
+            result = selector.list_available_models()
+
+        assert result["available_providers"] == ["gemini-cli"]
+        assert result["current_provider"] == "gemini-cli"
+        assert "gemini-cli" in result["models_by_provider"]
+        assert "gemini" not in result["models_by_provider"]
+
+    def test_list_available_models_keeps_gemini_when_api_key_available(
+        self, mock_settings
+    ):
+        selector = ModelSelector(mock_settings)
+
+        with (
+            patch.object(
+                selector,
+                "_get_available_providers",
+                return_value={"gemini"},
+            ),
+            patch.object(
+                selector,
+                "detect_available_provider",
+                return_value="gemini",
+            ),
+        ):
+            result = selector.list_available_models()
+
+        assert result["available_providers"] == ["gemini"]
+        assert result["current_provider"] == "gemini"
+        assert "gemini" in result["models_by_provider"]
+
+    def test_list_available_models_can_show_gemini_and_gemini_cli_together(
+        self, mock_settings
+    ):
+        selector = ModelSelector(mock_settings)
+
+        with (
+            patch.object(
+                selector,
+                "_get_available_providers",
+                return_value={"gemini", "gemini-cli"},
+            ),
+            patch.object(
+                selector,
+                "detect_available_provider",
+                return_value="gemini",
+            ),
+        ):
+            result = selector.list_available_models()
+
+        assert "gemini" in result["models_by_provider"]
+        assert "gemini-cli" in result["models_by_provider"]
+
+
 class TestAutoGeneration:
     """Test auto-generation of provider config."""
 

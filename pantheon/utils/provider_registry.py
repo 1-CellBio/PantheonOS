@@ -34,6 +34,10 @@ _DEFAULT_MODEL_INFO = {
     "supports_assistant_prefill": False,
 }
 
+_PROVIDER_ALIASES = {
+    "gemini-cli": "gemini",
+}
+
 @lru_cache(maxsize=1)
 def load_catalog() -> dict:
     """Load and cache the provider catalog from llm_catalog.json."""
@@ -81,6 +85,10 @@ def find_provider_for_model(model: str) -> tuple[str, str, dict]:
     prefix, model_name = _parse_model_string(model)
     if prefix and prefix in providers:
         return prefix, model_name, providers[prefix]
+    if prefix and prefix in _PROVIDER_ALIASES:
+        aliased = _PROVIDER_ALIASES[prefix]
+        if aliased in providers:
+            return prefix, model_name, providers[aliased]
 
     # 2. Search all providers for bare model name
     for pkey, pconfig in providers.items():
@@ -94,7 +102,13 @@ def find_provider_for_model(model: str) -> tuple[str, str, dict]:
 def get_provider_config(provider: str) -> dict:
     """Get provider configuration from catalog."""
     catalog = load_catalog()
-    return catalog.get("providers", {}).get(provider, {})
+    providers = catalog.get("providers", {})
+    if provider in providers:
+        return providers[provider]
+    aliased = _PROVIDER_ALIASES.get(provider)
+    if aliased:
+        return providers.get(aliased, {})
+    return {}
 
 
 def get_output_token_param(model: str, api_mode: str = "chat") -> str | None:
@@ -190,7 +204,7 @@ def models_by_provider(provider: str) -> list[str]:
     Lists all model names for a given provider from the catalog.
     """
     catalog = load_catalog()
-    provider_config = catalog.get("providers", {}).get(provider, {})
+    provider_config = get_provider_config(provider)
     models = provider_config.get("models", {})
 
     # Return as 'provider/model_name' format

@@ -176,9 +176,16 @@ def _sanitize_schema_for_gemini(value: Any) -> Any:
 class GeminiAdapter(BaseAdapter):
     """Adapter for Google Gemini API via google-genai SDK."""
 
-    def _make_client(self, api_key: str | None = None):
+    def _make_client(
+        self,
+        api_key: str | None = None,
+        oauth_client_kwargs: dict[str, Any] | None = None,
+    ):
         """Create a google-genai client."""
         from google import genai
+
+        if oauth_client_kwargs:
+            return genai.Client(**oauth_client_kwargs)
 
         import os
         key = api_key or os.environ.get("GEMINI_API_KEY", "")
@@ -204,7 +211,8 @@ class GeminiAdapter(BaseAdapter):
         """
         from google.genai import types
 
-        client = self._make_client(api_key)
+        oauth_client_kwargs = kwargs.pop("oauth_client_kwargs", None)
+        client = self._make_client(api_key, oauth_client_kwargs=oauth_client_kwargs)
 
         # Convert messages and tools
         system_instruction, gemini_contents = _convert_messages_to_gemini(messages)

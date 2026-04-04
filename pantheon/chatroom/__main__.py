@@ -30,56 +30,100 @@ def oauth(action: str = "status", provider: str = "codex"):
         pantheon-chatroom oauth status         # Check auth status
         pantheon-chatroom oauth logout         # Remove stored tokens
     """
-    if provider != "codex":
+    if provider not in {"codex", "gemini"}:
         print(f"Unsupported OAuth provider: {provider}")
-        print("Supported providers: codex")
+        print("Supported providers: codex, gemini")
         return
 
-    from pantheon.utils.oauth import CodexOAuthManager, CodexOAuthError
-    mgr = CodexOAuthManager()
+    if provider == "codex":
+        from pantheon.utils.oauth import CodexOAuthError, CodexOAuthManager
+
+        mgr = CodexOAuthManager()
+        label = "Codex OAuth"
+        success_lines = [
+            f"  Account ID: {mgr.get_account_id()}",
+            "  You can now use codex/ models (e.g., codex/gpt-5.4-mini)",
+        ]
+        import_prompt = "Importing from Codex CLI (~/.codex/auth.json)..."
+        import_fail_lines = [
+            "Import failed. Make sure Codex CLI is installed and authenticated.",
+            "  Install: npx @anthropic-ai/codex",
+            "  Or use: pantheon-chatroom oauth login",
+        ]
+    else:
+        from pantheon.utils.oauth import GeminiCliOAuthError as CodexOAuthError
+        from pantheon.utils.oauth import GeminiCliOAuthManager as CodexOAuthManager
+
+        mgr = CodexOAuthManager()
+        label = "Gemini OAuth"
+        success_lines = [
+            f"  Email: {mgr.get_email()}",
+            f"  Project ID: {mgr.get_project_id()}",
+            "  You can now use gemini-cli/ models (e.g., gemini-cli/gemini-2.5-flash)",
+        ]
+        import_prompt = "Importing from Gemini CLI (~/.gemini/oauth_creds.json)..."
+        import_fail_lines = [
+            "Import failed. Make sure Gemini CLI is installed and authenticated.",
+            "  Or use: pantheon-chatroom oauth login --provider gemini",
+        ]
 
     if action == "status":
         if mgr.is_authenticated():
-            account_id = mgr.get_account_id()
-            print(f"Codex OAuth: authenticated")
-            print(f"  Account ID: {account_id}")
+            print(f"{label}: authenticated")
+            if provider == "codex":
+                print(f"  Account ID: {mgr.get_account_id()}")
+            else:
+                print(f"  Email: {mgr.get_email()}")
+                print(f"  Project ID: {mgr.get_project_id()}")
+                if not mgr.get_project_id():
+                    print("  Runtime ready: no")
+                    print("  Gemini CLI auth is present, but no Code Assist project has been resolved yet.")
+                    print("  Pantheon will try to resolve one automatically on first use.")
+                else:
+                    print("  Runtime ready: yes")
             print(f"  Auth file: {mgr.auth_file}")
-            print(f"  Use model prefix: codex/gpt-5.4-mini, codex/gpt-5, etc.")
+            if provider == "codex":
+                print("  Use model prefix: codex/gpt-5.4-mini, codex/gpt-5, etc.")
+            else:
+                print("  Use model prefix: gemini-cli/gemini-2.5-flash, gemini-cli/gemini-2.5-pro, etc.")
         else:
-            print(f"Codex OAuth: not authenticated")
-            print(f"  Run: pantheon-chatroom oauth login")
-            print(f"  Or:  pantheon-chatroom oauth import  (if Codex CLI is installed)")
+            print(f"{label}: not authenticated")
+            print(f"  Run: pantheon-chatroom oauth login --provider {provider}")
+            print(f"  Or:  pantheon-chatroom oauth import --provider {provider}")
 
     elif action == "login":
-        print("Starting Codex OAuth login...")
-        print("A browser window will open. Please log in with your OpenAI account.")
+        print(f"Starting {label} login...")
+        if provider == "codex":
+            print("A browser window will open. Please log in with your OpenAI account.")
+        else:
+            print("A browser window will open. Please log in with your Google account.")
         try:
             mgr.login(open_browser=True, timeout_seconds=300)
             print(f"\nLogin successful!")
-            print(f"  Account ID: {mgr.get_account_id()}")
-            print(f"  You can now use codex/ models (e.g., codex/gpt-5.4-mini)")
+            for line in success_lines:
+                print(line)
         except CodexOAuthError as e:
             print(f"\nLogin failed: {e}")
         except KeyboardInterrupt:
             print("\nLogin cancelled.")
 
     elif action == "import":
-        print("Importing from Codex CLI (~/.codex/auth.json)...")
-        result = mgr.import_from_codex_cli()
+        print(import_prompt)
+        result = mgr.import_from_codex_cli() if provider == "codex" else mgr.import_from_gemini_cli()
         if result:
             print(f"Import successful!")
-            print(f"  Account ID: {mgr.get_account_id()}")
+            for line in success_lines[:-1]:
+                print(line)
         else:
-            print(f"Import failed. Make sure Codex CLI is installed and authenticated.")
-            print(f"  Install: npx @anthropic-ai/codex")
-            print(f"  Or use: pantheon-chatroom oauth login")
+            for line in import_fail_lines:
+                print(line)
 
     elif action == "logout":
         if mgr.auth_file.exists():
             mgr.auth_file.unlink()
-            print("Codex OAuth tokens removed.")
+            print(f"{label} tokens removed.")
         else:
-            print("No Codex OAuth tokens found.")
+            print(f"No {label} tokens found.")
 
     else:
         print(f"Unknown action: {action}")

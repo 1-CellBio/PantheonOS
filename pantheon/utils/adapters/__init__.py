@@ -22,7 +22,7 @@ def get_adapter(sdk_type: str) -> BaseAdapter:
     """Get an adapter singleton for the given SDK type.
 
     Args:
-        sdk_type: One of 'openai', 'anthropic', 'google-genai'
+        sdk_type: One of 'openai', 'anthropic', 'google-genai', 'gemini-cli'
 
     Returns:
         BaseAdapter instance
@@ -36,6 +36,9 @@ def get_adapter(sdk_type: str) -> BaseAdapter:
     elif sdk_type == "google-genai":
         from .gemini_adapter import GeminiAdapter
         return GeminiAdapter()
+    elif sdk_type == "gemini-cli":
+        from .gemini_cli_adapter import GeminiCliAdapter
+        return GeminiCliAdapter()
     elif sdk_type == "codex":
         from .codex_adapter import CodexAdapter
         return CodexAdapter()
