@@ -1655,10 +1655,15 @@ class Agent:
         total_tokens = meta.get("total_tokens", 0)
         max_tokens = meta.get("max_tokens", 200000)
         current_cost = meta.get("current_cost", 0)
-        
+
         # Calculate usage percentage
         usage_pct = (total_tokens / max_tokens * 100) if max_tokens > 0 else 0
-        
+
+        # Determine if this is a free OAuth channel (shadow cost)
+        _oauth_prefixes = ("codex/", "gemini-cli/")
+        _is_shadow = isinstance(model, str) and any(model.startswith(p) for p in _oauth_prefixes)
+        _cost_label = f"~${current_cost:.4f} (shadow)" if _is_shadow else f"${current_cost:.4f}"
+
         # Format log message
         timing_log = (
             f"📊 [Agent:{self.name}] "
@@ -1669,7 +1674,7 @@ class Agent:
             f"Tool: {timings.get('tools_conversion', 0):.3f}s for {len(tools or [])} tools "
             f"💬 Tokens: {total_tokens:,} | "
             f"Usage: {usage_pct:.1f}% | "
-            f"Cost: ${current_cost:.4f}"
+            f"Cost: {_cost_label}"
         )
         
         # Add warning if usage is high

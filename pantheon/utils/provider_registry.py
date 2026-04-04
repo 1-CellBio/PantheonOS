@@ -35,7 +35,7 @@ _DEFAULT_MODEL_INFO = {
 }
 
 _PROVIDER_ALIASES = {
-    "gemini-cli": "gemini",
+    # gemini-cli is now a first-class provider in the catalog
 }
 
 @lru_cache(maxsize=1)

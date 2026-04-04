@@ -418,8 +418,11 @@ class GeminiCliAdapter(BaseAdapter):
         total_tokens = int(usage_data.get("totalTokenCount") or (prompt_tokens + completion_tokens))
 
         collected_chunks = []
+        # Include model so stream_chunk_builder / completion_cost can look up catalog pricing
+        wire_model = f"gemini-cli/{model}"
         if content_text:
             collected_chunks.append({
+                "model": wire_model,
                 "choices": [{
                     "index": 0,
                     "delta": {"role": "assistant", "content": content_text},
