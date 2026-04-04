@@ -266,7 +266,7 @@ async def acompletion_responses(
         try:
             max_out = get_model_info(model).get("max_output_tokens")
             token_param = get_output_token_param(model, api_mode="responses")
-            if max_out and max_out > 0:
+            if token_param and max_out and max_out > 0:
                 response_model_params[token_param] = max_out
         except Exception:
             pass
@@ -593,7 +593,7 @@ async def acompletion(
         try:
             max_out = get_model_info(model).get("max_output_tokens")
             token_param = get_output_token_param(model, api_mode="chat")
-            if max_out and max_out > 0:
+            if token_param and max_out and max_out > 0:
                 model_params[token_param] = max_out
         except Exception:
             pass  # Fall through to provider default
