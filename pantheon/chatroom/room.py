@@ -2128,7 +2128,7 @@ class ChatRoom(ToolSet):
 
 
     @tool
-    async def get_token_stats(self, chat_id: str) -> dict:
+    async def get_token_stats(self, chat_id: str, model: str | None = None) -> dict:
         """Get detailed token usage statistics for a chat.
 
         Returns token breakdown by role (system/user/assistant/tool),
@@ -2136,6 +2136,8 @@ class ChatRoom(ToolSet):
 
         Args:
             chat_id: The chat to get token stats for
+            model: Optional model override (e.g. the model currently selected in the UI).
+                   When provided, used for catalog lookup instead of agent.models[0].
 
         Returns:
             dict with success status and token statistics
@@ -2149,6 +2151,7 @@ class ChatRoom(ToolSet):
                 chat_id=chat_id,
                 team=team,
                 fallback={},
+                model_override=model,
             )
             return {"success": True, **token_info}
         except Exception as e:
@@ -2215,7 +2218,7 @@ class ChatRoom(ToolSet):
             provider = provider_aliases.get(provider, provider)
 
             if provider not in available:
-                return False, f"Provider '{provider}' not available (missing API key)"
+                return False, f"Provider '{provider}' not available (missing credentials)"
 
         return True, ""
 
@@ -2384,8 +2387,9 @@ class ChatRoom(ToolSet):
         Returns:
             Dict with provider statuses including authentication state and account info.
         """
-        from pantheon.utils.oauth import CodexOAuthManager
+        from pantheon.utils.oauth import CodexOAuthManager, GeminiCliOAuthManager
         from pantheon.utils.oauth.codex import CODEX_CLI_AUTH
+        from pantheon.utils.oauth.gemini import GEMINI_CLI_AUTH
 
         codex = CodexOAuthManager()
         # Actually verify the token works (auto_refresh=True will try to refresh if expired)
@@ -2393,6 +2397,19 @@ class ChatRoom(ToolSet):
         codex_authenticated = access_token is not None
         codex_account_id = codex.get_account_id() if codex_authenticated else None
         cli_available = CODEX_CLI_AUTH.exists()
+        gemini = GeminiCliOAuthManager()
+        gemini_access = gemini.get_access_token(refresh_if_needed=True)
+        gemini_authenticated = gemini_access is not None
+        gemini_cli_available = GEMINI_CLI_AUTH.exists()
+        gemini_project_id = gemini.get_project_id()
+        gemini_runtime_ready = gemini_authenticated and bool(gemini_project_id)
+        gemini_runtime_error = None
+        if gemini_authenticated and not gemini_runtime_ready:
+            gemini_runtime_error = (
+                "Gemini CLI OAuth is signed in, but no Code Assist project is available yet. "
+                "Pantheon will try to resolve one automatically at runtime; if it still fails, "
+                "set GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_PROJECT_ID."
+            )
 
         return {
             "providers": {
@@ -2402,6 +2419,16 @@ class ChatRoom(ToolSet):
                     "description": "OpenAI Codex (ChatGPT backend-api, free with ChatGPT Plus)",
                     "supports_browser_login": True,
                     "supports_import": cli_available,
+                },
+                "gemini": {
+                    "authenticated": gemini_authenticated,
+                    "email": gemini.get_email() if gemini_authenticated else None,
+                    "project_id": gemini_project_id if gemini_authenticated else None,
+                    "runtime_ready": gemini_runtime_ready,
+                    "runtime_error": gemini_runtime_error,
+                    "description": "Gemini CLI OAuth (Gemini CLI auth with Code Assist project resolution)",
+                    "supports_browser_login": True,
+                    "supports_import": gemini_cli_available,
                 },
             },
         }
@@ -2414,71 +2441,114 @@ class ChatRoom(ToolSet):
         Token is saved automatically after successful login.
 
         Args:
-            provider: OAuth provider name (currently only 'codex' supported)
+            provider: OAuth provider name ('codex' or 'gemini')
 
         Returns:
             Dict with success status and account info.
         """
-        if provider != "codex":
-            return {"success": False, "error": f"Unsupported OAuth provider: {provider}"}
+        if provider == "codex":
+            from pantheon.utils.oauth import CodexOAuthError, CodexOAuthManager
 
-        from pantheon.utils.oauth import CodexOAuthManager, CodexOAuthError
+            try:
+                mgr = CodexOAuthManager()
+                mgr.login(open_browser=True, timeout_seconds=300)
 
-        try:
-            mgr = CodexOAuthManager()
-            mgr.login(open_browser=True, timeout_seconds=300)
+                from pantheon.utils.model_selector import reset_model_selector
 
-            # Reload settings so model selector detects new provider
-            from pantheon.utils.model_selector import reset_model_selector
-            reset_model_selector()
+                reset_model_selector()
+                return {
+                    "success": True,
+                    "provider": "codex",
+                    "account_id": mgr.get_account_id(),
+                    "message": "Codex OAuth login successful. You can now use codex/ models.",
+                }
+            except CodexOAuthError as e:
+                return {"success": False, "error": str(e)}
+            except Exception as e:
+                logger.error(f"OAuth login failed: {e}")
+                return {"success": False, "error": str(e)}
 
-            return {
-                "success": True,
-                "provider": "codex",
-                "account_id": mgr.get_account_id(),
-                "message": "Codex OAuth login successful. You can now use codex/ models.",
-            }
-        except CodexOAuthError as e:
-            return {"success": False, "error": str(e)}
-        except Exception as e:
-            logger.error(f"OAuth login failed: {e}")
-            return {"success": False, "error": str(e)}
+        if provider == "gemini":
+            from pantheon.utils.oauth import GeminiCliOAuthError, GeminiCliOAuthManager
+
+            try:
+                mgr = GeminiCliOAuthManager()
+                mgr.login(open_browser=True, timeout_seconds=300)
+
+                from pantheon.utils.model_selector import reset_model_selector
+
+                reset_model_selector()
+                return {
+                    "success": True,
+                    "provider": "gemini",
+                    "email": mgr.get_email(),
+                    "project_id": mgr.get_project_id(),
+                    "runtime_ready": bool(mgr.get_project_id()),
+                    "message": "Gemini OAuth login successful. You can now use gemini-cli/ models.",
+                }
+            except GeminiCliOAuthError as e:
+                return {"success": False, "error": str(e)}
+            except Exception as e:
+                logger.error(f"OAuth login failed: {e}")
+                return {"success": False, "error": str(e)}
+
+        return {"success": False, "error": f"Unsupported OAuth provider: {provider}"}
 
     @tool
     async def oauth_import(self, provider: str = "codex") -> dict:
         """Import OAuth tokens from native CLI tools.
 
         For Codex: imports from ~/.codex/auth.json (Codex CLI).
+        For Gemini: imports from ~/.gemini/oauth_creds.json (Gemini CLI).
 
         Args:
-            provider: OAuth provider name (currently only 'codex' supported)
+            provider: OAuth provider name ('codex' or 'gemini')
 
         Returns:
             Dict with success status.
         """
-        if provider != "codex":
-            return {"success": False, "error": f"Unsupported OAuth provider: {provider}"}
-
-        from pantheon.utils.oauth import CodexOAuthManager
-
         try:
-            mgr = CodexOAuthManager()
-            result = mgr.import_from_codex_cli()
+            if provider == "codex":
+                from pantheon.utils.oauth import CodexOAuthManager
 
-            if result:
-                from pantheon.utils.model_selector import reset_model_selector
-                reset_model_selector()
-                return {
+                mgr = CodexOAuthManager()
+                result = mgr.import_from_codex_cli()
+                success_payload = {
                     "success": True,
                     "provider": "codex",
                     "account_id": mgr.get_account_id(),
                     "message": "Imported Codex CLI tokens successfully.",
                 }
-            else:
-                return {
+                error_payload = {
                     "success": False,
                     "error": "No Codex CLI auth found (~/.codex/auth.json). Install Codex CLI or use browser login.",
                 }
+            elif provider == "gemini":
+                from pantheon.utils.oauth import GeminiCliOAuthManager
+
+                mgr = GeminiCliOAuthManager()
+                result = mgr.import_from_gemini_cli()
+                success_payload = {
+                    "success": True,
+                    "provider": "gemini",
+                    "email": mgr.get_email(),
+                    "project_id": mgr.get_project_id(),
+                    "runtime_ready": bool(mgr.get_project_id()),
+                    "message": "Imported Gemini CLI auth successfully.",
+                }
+                error_payload = {
+                    "success": False,
+                    "error": "No Gemini CLI auth found (~/.gemini/oauth_creds.json). Install Gemini CLI or use browser login.",
+                }
+            else:
+                return {"success": False, "error": f"Unsupported OAuth provider: {provider}"}
+
+            if result:
+                from pantheon.utils.model_selector import reset_model_selector
+                reset_model_selector()
+                return success_payload
+            else:
+                return error_payload
         except Exception as e:
             logger.error(f"OAuth import failed: {e}")
             return {"success": False, "error": str(e)}

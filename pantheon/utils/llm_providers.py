@@ -309,9 +309,14 @@ def _extract_cost_and_usage(complete_resp: Any) -> tuple[float, dict]:
             usage_dict = usage.to_dict()
         else:
             try:
-                usage_dict = dict(usage)
+                # vars() works on SimpleNamespace (from stream_chunk_builder)
+                # while dict() does not
+                usage_dict = vars(usage)
             except Exception:
-                pass
+                try:
+                    usage_dict = dict(usage)
+                except Exception:
+                    pass
 
     # Calculate cost from catalog pricing
     try:

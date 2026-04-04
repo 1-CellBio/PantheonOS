@@ -95,7 +95,7 @@ def _list_ollama_models(base_url: str = "http://localhost:11434") -> list[str]:
 # Built-in defaults based on February 2026 flagship models
 # Users can override in settings.json
 
-DEFAULT_PROVIDER_PRIORITY = ["openai", "anthropic", "gemini", "zai", "deepseek", "minimax", "moonshot", "qwen", "groq", "mistral", "together_ai", "openrouter", "codex", "ollama"]
+DEFAULT_PROVIDER_PRIORITY = ["openai", "anthropic", "gemini", "gemini-cli", "zai", "deepseek", "minimax", "moonshot", "qwen", "groq", "mistral", "together_ai", "openrouter", "codex", "ollama"]
 
 # Quality levels map to MODEL LISTS (not single models) for fallback chains
 # Models within each level are ordered by preference
@@ -130,6 +130,11 @@ DEFAULT_PROVIDER_MODELS = {
         "high": ["gemini/gemini-3.1-pro-preview", "gemini/gemini-3-pro-preview", "gemini/gemini-2.5-pro"],
         "normal": ["gemini/gemini-3-flash-preview", "gemini/gemini-2.5-flash"],
         "low": ["gemini/gemini-3-flash-preview", "gemini/gemini-2.5-flash-lite"],
+    },
+    "gemini-cli": {
+        "high": ["gemini-cli/gemini-3.1-pro-preview", "gemini-cli/gemini-3-pro-preview", "gemini-cli/gemini-2.5-pro"],
+        "normal": ["gemini-cli/gemini-3-flash-preview", "gemini-cli/gemini-2.5-flash"],
+        "low": ["gemini-cli/gemini-3-flash-preview", "gemini-cli/gemini-2.5-flash-lite"],
     },
     # Z.ai (Zhipu): GLM-4.6/4.5 series
     # https://open.bigmodel.cn/
@@ -258,6 +263,7 @@ PROVIDER_API_KEYS = {
     "moonshot": "MOONSHOT_API_KEY",
     "qwen": "DASHSCOPE_API_KEY",
     "codex": "",  # OAuth-based, no env var key
+    "gemini-cli": "",  # OAuth-based, no env var key
     "ollama": "",  # Local, no env var key — detected by _detect_ollama()
 }
 
@@ -314,11 +320,13 @@ class ModelSelector:
             if os.environ.get(config.api_key_env, ""):
                 self._available_providers.add(provider_key)
 
-        # Check OAuth providers (e.g., Codex)
+        # Check OAuth providers (e.g., Codex, Gemini CLI)
         try:
-            from pantheon.utils.oauth import CodexOAuthManager
+            from pantheon.utils.oauth import CodexOAuthManager, GeminiCliOAuthManager
             if CodexOAuthManager().is_authenticated():
                 self._available_providers.add("codex")
+            if GeminiCliOAuthManager().is_authenticated():
+                self._available_providers.add("gemini-cli")
         except Exception:
             pass
 
