@@ -24,6 +24,7 @@ from pantheon.utils.provider_registry import (
     load_catalog,
     find_provider_for_model,
     get_model_info,
+    get_output_token_param,
     completion_cost,
     models_by_provider,
     token_counter,
@@ -70,6 +71,11 @@ class TestProviderRegistry:
         assert info["max_input_tokens"] == 1_000_000
         assert info["supports_vision"] is True
 
+    def test_get_model_info_openai_gpt_4o_mini(self):
+        info = get_model_info("gpt-4o-mini")
+        assert info["max_input_tokens"] == 128_000
+        assert info["max_output_tokens"] == 16_384
+
     def test_get_model_info_unknown_returns_defaults(self):
         info = get_model_info("fake/nonexistent-model")
         assert info["max_input_tokens"] == 200_000
@@ -85,6 +91,15 @@ class TestProviderRegistry:
     def test_models_by_provider_qwen(self):
         models = models_by_provider("qwen")
         assert len(models) == 9
+
+    def test_output_token_param_catalog(self):
+        assert get_output_token_param("openai/gpt-5.4") == "max_completion_tokens"
+        assert get_output_token_param("anthropic/claude-sonnet-4-6") == "max_tokens"
+        assert get_output_token_param("gemini/gemini-2.5-flash") == "max_output_tokens"
+        assert get_output_token_param("deepseek/deepseek-chat") == "max_tokens"
+        assert get_output_token_param("minimax/MiniMax-M2.5") == "max_tokens"
+        assert get_output_token_param("groq/llama-3.3-70b-versatile") == "max_completion_tokens"
+        assert get_output_token_param("codex/gpt-5.4", api_mode="responses") == "max_output_tokens"
 
     def test_token_counter_basic(self):
         count = token_counter(model="gpt-4", messages=[{"role": "user", "content": "Hello"}])
@@ -105,6 +120,50 @@ class TestProviderRegistry:
                     if model not in all_catalog_models:
                         missing.append(model)
         assert missing == [], f"Models in selector but not in catalog: {missing}"
+
+
+@pytest.mark.asyncio
+async def test_llm_uses_catalog_output_param_for_openai(monkeypatch):
+    from pantheon.utils import llm as llm_module
+    from pantheon.utils import adapters as adapters_module
+
+    captured = {}
+
+    class DummyAdapter:
+        async def acompletion(self, **kwargs):
+            captured.update(kwargs)
+            return [
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "model": kwargs["model"],
+                },
+                {
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                    "choices": [],
+                },
+            ]
+
+    monkeypatch.setattr(adapters_module, "get_adapter", lambda _sdk: DummyAdapter())
+
+    resp = await llm_module.acompletion(
+        messages=[{"role": "user", "content": "hello"}],
+        model="openai/gpt-5.4",
+        model_params={},
+    )
+
+    assert resp.choices[0].message.content == "ok"
+    assert captured["max_completion_tokens"] == 64000
+    assert "max_tokens" not in captured
 
 
 # ============ stream_chunk_builder unit tests ============

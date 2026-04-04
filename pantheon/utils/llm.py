@@ -241,6 +241,7 @@ async def acompletion_responses(
     """
     from openai import AsyncOpenAI
     from .llm_providers import get_proxy_kwargs
+    from .provider_registry import get_model_info, get_output_token_param
 
     # ========== Build client ==========
     proxy_kwargs = get_proxy_kwargs()
@@ -257,7 +258,19 @@ async def acompletion_responses(
     # ========== Convert inputs ==========
     instructions, input_items = _convert_messages_to_responses_input(messages)
     converted_tools = _convert_tools_for_responses(tools)
-    extra_params = _convert_model_params_for_responses(model_params)
+    response_model_params = dict(model_params or {})
+    if not any(
+        key in response_model_params
+        for key in ("max_tokens", "max_completion_tokens", "max_output_tokens")
+    ):
+        try:
+            max_out = get_model_info(model).get("max_output_tokens")
+            token_param = get_output_token_param(model, api_mode="responses")
+            if token_param and max_out and max_out > 0:
+                response_model_params[token_param] = max_out
+        except Exception:
+            pass
+    extra_params = _convert_model_params_for_responses(response_model_params)
 
     # ========== Build kwargs ==========
     kwargs: dict[str, Any] = {
@@ -553,7 +566,13 @@ async def acompletion(
        - Uses native SDK adapters (openai, anthropic, google-genai)
     """
     from .llm_providers import get_proxy_kwargs
-    from .provider_registry import find_provider_for_model, get_provider_config, completion_cost
+    from .provider_registry import (
+        find_provider_for_model,
+        get_provider_config,
+        completion_cost,
+        get_model_info,
+        get_output_token_param,
+    )
     from .adapters import get_adapter
 
     logger.debug(f"[ACOMPLETION] Starting LLM call | Model={model}")
@@ -561,6 +580,23 @@ async def acompletion(
     # ========== Resolve provider and adapter ==========
     provider_key, model_name, provider_config = find_provider_for_model(model)
     sdk_type = provider_config.get("sdk", "openai")
+
+    # ========== Ensure output token limit is set from the catalog ==========
+    # Different vendors use different parameter names for the same concept.
+    # The catalog records the preferred parameter name; we use it here so the
+    # first request is correct for known providers/models.
+    model_params = dict(model_params or {})
+    if not any(
+        key in model_params
+        for key in ("max_tokens", "max_completion_tokens", "max_output_tokens")
+    ):
+        try:
+            max_out = get_model_info(model).get("max_output_tokens")
+            token_param = get_output_token_param(model, api_mode="chat")
+            if token_param and max_out and max_out > 0:
+                model_params[token_param] = max_out
+        except Exception:
+            pass  # Fall through to provider default
 
     # ========== Mode Detection & Configuration ==========
     proxy_kwargs = get_proxy_kwargs()

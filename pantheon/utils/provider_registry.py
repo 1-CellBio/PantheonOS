@@ -34,7 +34,6 @@ _DEFAULT_MODEL_INFO = {
     "supports_assistant_prefill": False,
 }
 
-
 @lru_cache(maxsize=1)
 def load_catalog() -> dict:
     """Load and cache the provider catalog from llm_catalog.json."""
@@ -96,6 +95,21 @@ def get_provider_config(provider: str) -> dict:
     """Get provider configuration from catalog."""
     catalog = load_catalog()
     return catalog.get("providers", {}).get(provider, {})
+
+
+def get_output_token_param(model: str, api_mode: str = "chat") -> str | None:
+    """Return the provider/model-specific output token parameter name.
+
+    Args:
+        model: Model string, e.g. ``openai/gpt-5.4`` or ``gpt-4o-mini``.
+        api_mode: ``chat`` for chat/completions style APIs, ``responses`` for
+            OpenAI Responses-style APIs.
+    """
+    _provider_key, _model_name, provider_config = find_provider_for_model(model)
+    if api_mode == "responses":
+        return provider_config.get("responses_output_token_param")
+
+    return provider_config.get("chat_output_token_param")
 
 
 # ============ Model Metadata ============

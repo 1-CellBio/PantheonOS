@@ -1,4 +1,5 @@
 import asyncio
+import json
 import random
 from pathlib import Path
 from typing import List
@@ -187,8 +188,19 @@ async def test_tool_timeout():
         """Get the weather of a city."""
         return {"weather": "sunny", "temperature": 20}
 
-    resp = await agent.run("What is the weather in Palo Alto?")
-    print(resp.content)
+    sync_tool_messages = await agent._handle_tool_calls(
+        tool_calls=[{
+            "id": "call_sync_weather",
+            "function": {
+                "name": "get_weather",
+                "arguments": json.dumps({"city": "Palo Alto", "unit": "celsius"}),
+            },
+        }],
+        context_variables={},
+        timeout=agent.tool_timeout,
+    )
+    assert sync_tool_messages
+    assert "sunny" in sync_tool_messages[0]["content"].lower()
 
     agent.functions.clear()
 
@@ -201,9 +213,22 @@ async def test_tool_timeout():
         nonlocal flag
         flag = False
 
-    resp = await agent.run("What is the weather in Palo Alto?")
-    assert flag, "Tool should have timed out but it completed execution"
-    print(resp)
+    tool_messages = await agent._handle_tool_calls(
+        tool_calls=[{
+            "id": "call_async_weather",
+            "function": {
+                "name": "get_weather",
+                "arguments": json.dumps({"city": "Palo Alto", "unit": "celsius"}),
+            },
+        }],
+        context_variables={},
+        timeout=agent.tool_timeout,
+    )
+    assert tool_messages
+    bg_tasks = agent._bg_manager.list_tasks()
+    assert bg_tasks, "Timed out tool should be adopted into background execution"
+    assert bg_tasks[0].source == "timeout"
+    assert flag, "Tool coroutine should continue in background instead of blocking the foreground call"
 
 
 async def test_agent_transfer():

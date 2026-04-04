@@ -7,6 +7,8 @@
       "base_url": "https://api.openai.com/v1",
       "api_key_env": "OPENAI_API_KEY",
       "openai_compatible": true,
+      "chat_output_token_param": "max_completion_tokens",
+      "responses_output_token_param": "max_output_tokens",
       "models": {
         "gpt-5.4-pro": {
           "max_input_tokens": 1000000,
@@ -184,6 +186,22 @@
           "supports_computer_use": false,
           "supports_assistant_prefill": false
         },
+        "gpt-4o-mini": {
+          "max_input_tokens": 128000,
+          "max_output_tokens": 16384,
+          "input_cost_per_million": 0.15,
+          "output_cost_per_million": 0.6,
+          "supports_vision": true,
+          "supports_function_calling": true,
+          "supports_response_schema": true,
+          "supports_reasoning": false,
+          "supports_audio_input": false,
+          "supports_audio_output": false,
+          "supports_web_search": false,
+          "supports_pdf_input": false,
+          "supports_computer_use": false,
+          "supports_assistant_prefill": false
+        },
         "o3-pro": {
           "max_input_tokens": 200000,
           "max_output_tokens": 100000,
@@ -307,6 +325,7 @@
       "base_url": "https://api.anthropic.com",
       "api_key_env": "ANTHROPIC_API_KEY",
       "openai_compatible": false,
+      "chat_output_token_param": "max_tokens",
       "models": {
         "claude-opus-4-6": {
           "max_input_tokens": 1000000,
@@ -428,6 +447,7 @@
       "base_url": "https://generativelanguage.googleapis.com",
       "api_key_env": "GEMINI_API_KEY",
       "openai_compatible": false,
+      "chat_output_token_param": "max_output_tokens",
       "models": {
         "gemini-3.1-pro-preview": {
           "max_input_tokens": 2000000,
@@ -560,6 +580,7 @@
       "base_url": "https://api.deepseek.com/v1",
       "api_key_env": "DEEPSEEK_API_KEY",
       "openai_compatible": true,
+      "chat_output_token_param": "max_tokens",
       "models": {
         "deepseek-chat": {
           "max_input_tokens": 131072,
@@ -601,6 +622,7 @@
       "base_url": "https://open.bigmodel.cn/api/paas/v4",
       "api_key_env": "ZAI_API_KEY",
       "openai_compatible": true,
+      "chat_output_token_param": "max_tokens",
       "models": {
         "glm-5": {
           "max_input_tokens": 131072,
@@ -706,6 +728,7 @@
       "base_url": "https://api.minimax.io/v1",
       "api_key_env": "MINIMAX_API_KEY",
       "openai_compatible": true,
+      "chat_output_token_param": "max_tokens",
       "models": {
         "MiniMax-M2.7": {
           "max_input_tokens": 1000000,
@@ -795,6 +818,7 @@
       "base_url": "https://api.moonshot.ai/v1",
       "api_key_env": "MOONSHOT_API_KEY",
       "openai_compatible": true,
+      "chat_output_token_param": "max_tokens",
       "models": {
         "kimi-k2.5": {
           "max_input_tokens": 131072,
@@ -836,6 +860,7 @@
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
       "api_key_env": "DASHSCOPE_API_KEY",
       "openai_compatible": true,
+      "chat_output_token_param": "max_tokens",
       "models": {
         "qwen3-235b-a22b": {
           "max_input_tokens": 131072,
@@ -989,6 +1014,7 @@
       "base_url": "https://api.groq.com/openai/v1",
       "api_key_env": "GROQ_API_KEY",
       "openai_compatible": true,
+      "chat_output_token_param": "max_completion_tokens",
       "models": {
         "openai/gpt-oss-120b": {
           "max_input_tokens": 131072,
@@ -1110,6 +1136,7 @@
       "base_url": "https://openrouter.ai/api/v1",
       "api_key_env": "OPENROUTER_API_KEY",
       "openai_compatible": true,
+      "chat_output_token_param": "max_tokens",
       "models": {
         "anthropic/claude-sonnet-4-6": {
           "max_input_tokens": 1000000,
@@ -1183,6 +1210,7 @@
       "base_url": "https://api.mistral.ai/v1",
       "api_key_env": "MISTRAL_API_KEY",
       "openai_compatible": true,
+      "chat_output_token_param": "max_tokens",
       "models": {
         "mistral-large-latest": {
           "max_input_tokens": 262144,
@@ -1272,6 +1300,7 @@
       "base_url": "https://api.together.xyz/v1",
       "api_key_env": "TOGETHER_API_KEY",
       "openai_compatible": true,
+      "chat_output_token_param": "max_tokens",
       "models": {
         "Qwen/Qwen3.5-397B-A17B": {
           "max_input_tokens": 262144,
@@ -1346,6 +1375,7 @@
       "api_key_env": "",
       "openai_compatible": false,
       "auth_mode": "oauth",
+      "responses_output_token_param": "max_output_tokens",
       "models": {
         "gpt-5.4": {
           "max_input_tokens": 1000000,
@@ -1406,6 +1436,7 @@
       "api_key_env": "",
       "openai_compatible": true,
       "local": true,
+      "chat_output_token_param": "max_tokens",
       "models": {}
     }
   }

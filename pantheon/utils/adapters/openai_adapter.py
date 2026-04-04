@@ -73,7 +73,6 @@ def _normalize_response_format(response_format: Any) -> Any:
         pass
     return response_format
 
-
 class OpenAIAdapter(BaseAdapter):
     """Adapter for OpenAI and OpenAI-compatible APIs."""
 
