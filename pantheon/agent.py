@@ -2703,7 +2703,7 @@ async def _call_agent(
     except Exception as e:
         _bg_report(f"[agent] Sub-agent failed: {e}")
         # log stack trace
-        logger.info(f"Error in agent sampling: {e}", exc_info=True)
+        logger.opt(exception=True).info("Error in agent sampling: {}", e)
         return {
             "success": False,
             "error": str(e),

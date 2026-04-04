@@ -40,57 +40,16 @@ def _build_headers(access_token: str, account_id: str | None = None) -> dict:
 
 def _convert_messages_to_responses_input(messages: list[dict]) -> tuple[str | None, list[dict]]:
     """Convert Chat Completions messages to Responses API input format."""
-    instructions = None
-    input_items = []
+    from ..llm import _convert_messages_to_responses_input as _shared_convert
 
-    for msg in messages:
-        role = msg.get("role")
-        content = msg.get("content")
-
-        if role == "system":
-            if instructions is None:
-                instructions = content
-            else:
-                input_items.append({"role": "developer", "content": content})
-        elif role == "user":
-            input_items.append({"role": "user", "content": content})
-        elif role == "assistant":
-            if content:
-                input_items.append({"role": "assistant", "content": content})
-            for tc in msg.get("tool_calls") or []:
-                func = tc.get("function", {})
-                input_items.append({
-                    "type": "function_call",
-                    "call_id": tc["id"],
-                    "name": func.get("name", ""),
-                    "arguments": func.get("arguments", ""),
-                })
-        elif role == "tool":
-            input_items.append({
-                "type": "function_call_output",
-                "call_id": msg.get("tool_call_id", ""),
-                "output": content or "",
-            })
-
-    return instructions, input_items
+    return _shared_convert(messages)
 
 
 def _convert_tools(tools: list[dict] | None) -> list[dict] | None:
     """Convert Chat Completions tool format to Responses API format."""
-    if not tools:
-        return None
-    converted = []
-    for tool in tools:
-        func = tool.get("function", {})
-        item = {"type": "function", "name": func.get("name", "")}
-        if "description" in func:
-            item["description"] = func["description"]
-        if "parameters" in func:
-            item["parameters"] = func["parameters"]
-        if "strict" in func:
-            item["strict"] = func["strict"]
-        converted.append(item)
-    return converted
+    from ..llm import _convert_tools_for_responses as _shared_convert_tools
+
+    return _shared_convert_tools(tools)
 
 
 class CodexAdapter(BaseAdapter):

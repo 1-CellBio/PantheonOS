@@ -233,52 +233,16 @@ class OpenAIAdapter(BaseAdapter):
         Returns a normalized message dict (not chunks).
         """
         client = self._make_client(base_url, api_key)
+        from ..llm import (
+            _convert_messages_to_responses_input,
+            _convert_tools_for_responses,
+        )
 
         # Convert messages to Responses API format
-        instructions = None
-        input_items = []
-        for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content")
-            if role == "system":
-                if instructions is None:
-                    instructions = content
-                else:
-                    input_items.append({"role": "developer", "content": content})
-            elif role == "user":
-                input_items.append({"role": "user", "content": content})
-            elif role == "assistant":
-                if content:
-                    input_items.append({"role": "assistant", "content": content})
-                for tc in msg.get("tool_calls") or []:
-                    func = tc.get("function", {})
-                    input_items.append({
-                        "type": "function_call",
-                        "call_id": tc["id"],
-                        "name": func.get("name", ""),
-                        "arguments": func.get("arguments", ""),
-                    })
-            elif role == "tool":
-                input_items.append({
-                    "type": "function_call_output",
-                    "call_id": msg.get("tool_call_id", ""),
-                    "output": content or "",
-                })
+        instructions, input_items = _convert_messages_to_responses_input(messages)
 
         # Convert tools
-        converted_tools = None
-        if tools:
-            converted_tools = []
-            for tool in tools:
-                func = tool.get("function", {})
-                item = {"type": "function", "name": func.get("name", "")}
-                if "description" in func:
-                    item["description"] = func["description"]
-                if "parameters" in func:
-                    item["parameters"] = func["parameters"]
-                if "strict" in func:
-                    item["strict"] = func["strict"]
-                converted_tools.append(item)
+        converted_tools = _convert_tools_for_responses(tools)
 
         # Build kwargs
         call_kwargs = {"model": model, "input": input_items, "stream": True}

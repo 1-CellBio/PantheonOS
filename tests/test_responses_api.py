@@ -11,6 +11,7 @@ from pantheon.utils.llm_providers import (
     is_responses_api_model,
 )
 from pantheon.utils.llm import (
+    _convert_content_to_responses_blocks,
     _convert_messages_to_responses_input,
     _convert_tools_for_responses,
     _convert_model_params_for_responses,
@@ -171,6 +172,41 @@ class TestConvertMessagesToResponsesInput:
             "output": "Sunny, 72F",
         }
         assert items[3] == {"role": "assistant", "content": "It's sunny and 72F in NYC!"}
+
+    def test_user_multimodal_content_blocks_are_converted(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AAA", "detail": "high"},
+                    },
+                ],
+            }
+        ]
+        instructions, items = _convert_messages_to_responses_input(messages)
+        assert instructions is None
+        assert items == [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Describe this image"},
+                    {
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64,AAA",
+                        "detail": "high",
+                    },
+                ],
+            }
+        ]
+
+    def test_assistant_content_blocks_use_output_text(self):
+        assert _convert_content_to_responses_blocks(
+            "assistant",
+            [{"type": "text", "text": "Done"}],
+        ) == [{"type": "output_text", "text": "Done"}]
 
 
 # ============ _convert_tools_for_responses ============

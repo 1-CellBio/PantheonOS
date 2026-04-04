@@ -1017,8 +1017,8 @@ class FileManagerToolSet(FileManagerToolSetBase):
             
             return result
         except Exception as e:
-            logger.error(
-                f"Error calling agent for image observation: {e}", exc_info=True
+            logger.opt(exception=True).error(
+                "Error calling agent for image observation: {}", e
             )
             return {"success": False, "error": str(e)}
 

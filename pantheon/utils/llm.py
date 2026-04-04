@@ -126,6 +126,60 @@ async def acompletion_openai(
     return final_message
 
 
+def _convert_content_to_responses_blocks(
+    role: str,
+    content: Any,
+) -> Any:
+    """Convert Chat Completions-style content blocks to Responses API blocks."""
+    if content is None or isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return content
+
+    converted: list[dict] = []
+    for item in content:
+        if isinstance(item, str):
+            text_key = "text"
+            text_type = "output_text" if role == "assistant" else "input_text"
+            converted.append({"type": text_type, text_key: item})
+            continue
+
+        if not isinstance(item, dict):
+            text_type = "output_text" if role == "assistant" else "input_text"
+            converted.append({"type": text_type, "text": str(item)})
+            continue
+
+        item_type = item.get("type")
+
+        if role == "assistant":
+            if item_type == "text":
+                converted.append({"type": "output_text", "text": item.get("text", "")})
+            elif item_type in {"output_text", "refusal", "summary_text"}:
+                converted.append(item)
+            else:
+                # Best effort: preserve unsupported assistant blocks as text.
+                converted.append({"type": "output_text", "text": str(item)})
+            continue
+
+        if item_type == "text":
+            converted.append({"type": "input_text", "text": item.get("text", "")})
+        elif item_type == "image_url":
+            image_url = item.get("image_url", {})
+            converted_item = {
+                "type": "input_image",
+                "image_url": image_url.get("url", ""),
+            }
+            if image_url.get("detail"):
+                converted_item["detail"] = image_url["detail"]
+            converted.append(converted_item)
+        elif item_type in {"input_text", "input_image", "input_file"}:
+            converted.append(item)
+        else:
+            converted.append({"type": "input_text", "text": str(item)})
+
+    return converted
+
+
 def _convert_messages_to_responses_input(
     messages: list[dict],
 ) -> tuple[str | None, list[dict]]:
@@ -148,15 +202,24 @@ def _convert_messages_to_responses_input(
                 instructions = content
                 first_system_seen = True
             else:
-                input_items.append({"role": "developer", "content": content})
+                input_items.append({
+                    "role": "developer",
+                    "content": _convert_content_to_responses_blocks("developer", content),
+                })
 
         elif role == "user":
-            input_items.append({"role": "user", "content": content})
+            input_items.append({
+                "role": "user",
+                "content": _convert_content_to_responses_blocks("user", content),
+            })
 
         elif role == "assistant":
             # Text part
             if content:
-                input_items.append({"role": "assistant", "content": content})
+                input_items.append({
+                    "role": "assistant",
+                    "content": _convert_content_to_responses_blocks("assistant", content),
+                })
             # Tool calls → function_call items
             for tc in msg.get("tool_calls") or []:
                 func = tc.get("function", {})
