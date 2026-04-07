@@ -1,6 +1,12 @@
 import asyncio
 import dataclasses
 import io
+try:
+    import psutil as _psutil
+    _psutil_process = _psutil.Process()
+except ImportError:
+    _psutil = None  # type: ignore
+    _psutil_process = None
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -261,14 +267,15 @@ class ChatRoom(ToolSet):
             "has_active_tasks": has_active_tasks,
         }
 
-        try:
-            import psutil
-            metrics["cpu_percent"] = round(psutil.cpu_percent(interval=None), 1)
-            vm = psutil.virtual_memory()
-            metrics["mem_used_mb"] = round(vm.used / 1024 / 1024, 1)
-            metrics["mem_percent"] = round(vm.percent, 1)
-        except Exception:
-            pass  # psutil unavailable or failed — omit silently
+        if _psutil is not None and _psutil_process is not None:
+            try:
+                metrics["cpu_percent"] = round(_psutil.cpu_percent(interval=None), 1)
+                rss = _psutil_process.memory_info().rss
+                total = _psutil.virtual_memory().total
+                metrics["mem_used_mb"] = round(rss / 1024 / 1024, 1)
+                metrics["mem_percent"] = round(rss / total * 100, 1) if total > 0 else 0.0
+            except Exception:
+                pass  # process may have exited or psutil failed — omit silently
 
         return metrics
 
