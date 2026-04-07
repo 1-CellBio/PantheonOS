@@ -103,7 +103,7 @@ DEFAULT_PROVIDER_MODELS = {
     # OpenAI: GPT-5.4 series
     # https://platform.openai.com/docs/models
     "openai": {
-        "high": ["openai/gpt-5.4-pro", "openai/gpt-5.4", "openai/gpt-5.2-pro", "openai/gpt-5.2"],
+        "high": ["openai/gpt-5.4", "openai/gpt-5.2"],
         "normal": ["openai/gpt-5.4", "openai/gpt-5.2-codex", "openai/gpt-5.2", "openai/gpt-5"],
         "low": ["openai/gpt-5.4-mini", "openai/gpt-5.4-nano", "openai/gpt-5-mini", "openai/gpt-4.1-mini"],
     },
