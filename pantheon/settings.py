@@ -166,7 +166,7 @@ class Settings:
             - .env file: OPENAI_API_KEY=sk-...
             - settings.json api_keys section
 
-            Use LLM Proxy mode for secure API key handling (LLM_PROXY_ENABLED environment variable).
+            Use LLM Proxy mode for secure API key handling (set LLM_API_BASE environment variable).
         """
         from .constant import PROJECT_ROOT
 
@@ -837,7 +837,7 @@ def get_settings(
         settings.json api_keys section.
 
         For secure API key handling, use LLM Proxy mode by setting
-        LLM_PROXY_ENABLED environment variable.
+        LLM_API_BASE environment variable.
     """
     global _settings
 

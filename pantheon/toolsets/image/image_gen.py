@@ -14,7 +14,7 @@ from pantheon.utils.vision import (
     get_image_store,
     expand_image_references_for_llm,
 )
-from pantheon.utils.llm_providers import get_proxy_kwargs
+from pantheon.utils.llm_providers import get_llm_proxy_config
 from pantheon.utils.provider_registry import find_provider_for_model
 
 # Multimodal models that support image input + output via acompletion API
@@ -172,13 +172,14 @@ class ImageGenerationToolSet(ToolSet):
         from pantheon.utils.adapters import get_adapter
 
         provider_key, model_name, provider_config = find_provider_for_model(model)
-        proxy_kwargs = get_proxy_kwargs() if provider_key != "openai" else {}
-        base_url = proxy_kwargs.get("base_url") or provider_config.get("base_url")
-        api_key = proxy_kwargs.get("api_key")
-        if not api_key:
+        _proxy_base, _proxy_key = get_llm_proxy_config()
+        if _proxy_base:
+            base_url = _proxy_base
+            api_key = _proxy_key
+        else:
+            base_url = provider_config.get("base_url")
             api_key_env = provider_config.get("api_key_env")
-            if api_key_env:
-                api_key = os.environ.get(api_key_env)
+            api_key = os.environ.get(api_key_env) if api_key_env else None
         adapter = get_adapter("openai")
         response = await adapter.aimage_generation(
             model=model_name if provider_key != "unknown" else model,
@@ -245,19 +246,17 @@ class ImageGenerationToolSet(ToolSet):
         from pantheon.utils.adapters import get_adapter
         from pantheon.utils.provider_registry import find_provider_for_model
 
-        proxy_kwargs = get_proxy_kwargs()
+        _proxy_base, _proxy_key = get_llm_proxy_config()
         provider_key, model_name, provider_config = find_provider_for_model(model)
-        sdk_type = provider_config.get("sdk", "openai")
-        if proxy_kwargs:
-            sdk_type = "openai"
+        sdk_type = "openai" if _proxy_base else provider_config.get("sdk", "openai")
         adapter = get_adapter(sdk_type)
 
         collected_chunks = await adapter.acompletion(
-            model=model_name if not proxy_kwargs else model,
+            model=model if _proxy_base else model_name,
             messages=messages,
             stream=True,
-            base_url=proxy_kwargs.get("base_url") or provider_config.get("base_url"),
-            api_key=proxy_kwargs.get("api_key"),
+            base_url=_proxy_base or provider_config.get("base_url"),
+            api_key=_proxy_key or None,
             modalities=["text", "image"],
         )
         from pantheon.utils.llm import stream_chunk_builder
@@ -310,13 +309,14 @@ class ImageGenerationToolSet(ToolSet):
         from pantheon.utils.adapters import get_adapter
 
         provider_key, model_name, provider_config = find_provider_for_model(model)
-        proxy_kwargs = get_proxy_kwargs() if provider_key != "openai" else {}
-        base_url = proxy_kwargs.get("base_url") or provider_config.get("base_url")
-        api_key = proxy_kwargs.get("api_key")
-        if not api_key:
+        _proxy_base, _proxy_key = get_llm_proxy_config()
+        if _proxy_base:
+            base_url = _proxy_base
+            api_key = _proxy_key
+        else:
+            base_url = provider_config.get("base_url")
             api_key_env = provider_config.get("api_key_env")
-            if api_key_env:
-                api_key = os.environ.get(api_key_env)
+            api_key = os.environ.get(api_key_env) if api_key_env else None
         adapter = get_adapter("openai")
         response = await adapter.aimage_edit(
             model=model_name if provider_key != "unknown" else model,

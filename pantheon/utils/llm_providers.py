@@ -266,28 +266,33 @@ def _clean_message_fields(message: dict) -> None:
         message["tool_calls"] = None
 
 
-def get_proxy_kwargs() -> dict:
-    """Get proxy kwargs for API calls.
+def get_llm_config(provider: ProviderType) -> tuple[str, str]:
+    """Return (base_url, api_key) for the given provider.
 
-    When LLM_PROXY_ENABLED=true (or LITELLM_PROXY_ENABLED for backward compat),
-    returns {"base_url": ..., "api_key": ...} to route calls through a proxy.
-    Otherwise returns empty dict.
+    Single entry point for all callers that need a base URL and API key.
+    Handles proxy mode, provider-specific overrides, and settings.json.
+
+    Args:
+        provider: Provider type
+
+    Returns:
+        (base_url, api_key) — either may be empty string if not configured
     """
-    import os
+    return get_base_url(provider) or "", get_api_key_for_provider(provider) or ""
 
-    # Check new env vars first, fall back to legacy LITELLM_ prefix
-    proxy_enabled = (
-        os.environ.get("LLM_PROXY_ENABLED", "").lower() == "true"
-        or os.environ.get("LITELLM_PROXY_ENABLED", "").lower() == "true"
-    )
-    proxy_url = os.environ.get("LLM_PROXY_URL") or os.environ.get("LITELLM_PROXY_URL")
-    proxy_key = os.environ.get("LLM_PROXY_KEY") or os.environ.get("LITELLM_PROXY_KEY")
 
-    if proxy_enabled and proxy_url and proxy_key:
-        logger.info(f"[LLM_PROXY] Routing through proxy | URL={proxy_url}")
-        return {"base_url": proxy_url, "api_key": proxy_key}
+def get_llm_proxy_config() -> tuple[str, str]:
+    """Return (base_url, api_key) when proxy mode is active, else ('', '').
 
-    return {}
+    Proxy mode is active when LLM_API_BASE is set (env var or settings.json).
+    Use this when you need to detect proxy mode and switch SDK behaviour.
+    For simply fetching credentials, prefer get_llm_config(provider).
+    """
+    from pantheon.settings import get_settings
+    settings = get_settings()
+    base_url = settings.get_api_key("LLM_API_BASE") or ""
+    api_key = (settings.get_api_key("LLM_API_KEY") or "") if base_url else ""
+    return base_url, api_key
 
 
 def _extract_cost_and_usage(complete_resp: Any) -> tuple[float, dict]:

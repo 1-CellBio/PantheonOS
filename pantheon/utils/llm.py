@@ -303,17 +303,15 @@ async def acompletion_responses(
     Returns a normalised message dict compatible with ``extract_message_from_response``.
     """
     from openai import AsyncOpenAI
-    from .llm_providers import get_proxy_kwargs
     from .provider_registry import get_model_info, get_output_token_param
+    from .llm_providers import get_llm_proxy_config
 
     # ========== Build client ==========
-    proxy_kwargs = get_proxy_kwargs()
-    oauth_client_kwargs = None
-    if proxy_kwargs:
-        client = AsyncOpenAI(
-            base_url=proxy_kwargs["base_url"],
-            api_key=proxy_kwargs["api_key"]
-        )
+    _proxy_base, _proxy_key = get_llm_proxy_config()
+    if _proxy_base:
+        # Hub-deployed mode: route through LiteLLM proxy using virtual key.
+        # The proxy exposes /responses natively for OpenAI models.
+        client = AsyncOpenAI(base_url=_proxy_base, api_key=_proxy_key)
     elif base_url:
         client = AsyncOpenAI(base_url=base_url)
     else:
@@ -620,16 +618,15 @@ async def acompletion(
     Two modes of operation:
 
     1. PROXY MODE (Hub-launched agents):
-       - LLM_PROXY_ENABLED=true with LLM_PROXY_URL and LLM_PROXY_KEY
-       - Uses virtual key for authentication to Proxy
-       - Real API keys are hidden in Proxy, not in Pod environment
+       - LLM_API_BASE is set to the LiteLLM proxy URL
+       - Provider API keys are set to the user's virtual key
+       - All calls route through the OpenAI-compatible proxy
 
     2. STANDALONE MODE (agents running independently):
-       - LLM_PROXY_ENABLED not set or false
+       - LLM_API_BASE not set
        - Falls back to reading real API keys from environment variables
        - Uses native SDK adapters (openai, anthropic, google-genai)
     """
-    from .llm_providers import get_proxy_kwargs
     from .provider_registry import (
         find_provider_for_model,
         get_provider_config,
@@ -638,6 +635,7 @@ async def acompletion(
         get_output_token_param,
     )
     from .adapters import get_adapter
+    from .llm_providers import get_llm_proxy_config
 
     logger.debug(f"[ACOMPLETION] Starting LLM call | Model={model}")
 
@@ -663,14 +661,22 @@ async def acompletion(
             pass  # Fall through to provider default
 
     # ========== Mode Detection & Configuration ==========
-    proxy_kwargs = get_proxy_kwargs()
+    _proxy_base, _proxy_key = get_llm_proxy_config()
     oauth_client_kwargs = None
-    if proxy_kwargs:
-        # Proxy mode: all calls go through OpenAI-compatible proxy
-        effective_base_url = proxy_kwargs.get("base_url")
-        effective_api_key = proxy_kwargs.get("api_key")
-        sdk_type = "openai"  # proxy exposes OpenAI-compatible API
-        effective_model = model  # pass full model string to proxy
+    if _proxy_base:
+        # Proxy mode: LLM_API_BASE is set — all calls go through the
+        # OpenAI-compatible LiteLLM proxy.  Force OpenAI SDK for every
+        # provider (Anthropic, Gemini, etc.) so the proxy receives a
+        # standard /v1/chat/completions request with the full model string.
+        effective_base_url = _proxy_base
+        effective_api_key = _proxy_key
+        sdk_type = "openai"
+        effective_model = model  # pass full "provider/model" string to proxy
+        # Normalize provider-specific token param names to OpenAI-compatible.
+        # e.g. Gemini uses max_output_tokens, but the OpenAI SDK only accepts
+        # max_tokens / max_completion_tokens.
+        if "max_output_tokens" in model_params:
+            model_params["max_tokens"] = model_params.pop("max_output_tokens")
     elif sdk_type == "codex":
         # Codex OAuth: get access token from OAuth manager
         from .oauth import CodexOAuthManager
@@ -1116,17 +1122,17 @@ async def openai_embedding(
     Returns:
         List of embedding vectors
     """
-    from .llm_providers import get_proxy_kwargs
     from .adapters import get_adapter
+    from .llm_providers import get_llm_proxy_config
 
-    proxy_kwargs = get_proxy_kwargs()
+    _proxy_base, _proxy_key = get_llm_proxy_config()
     adapter = get_adapter("openai")
 
     return await adapter.aembedding(
         model=model,
         input=texts,
-        base_url=proxy_kwargs.get("base_url"),
-        api_key=proxy_kwargs.get("api_key"),
+        base_url=_proxy_base or None,
+        api_key=_proxy_key or None,
     )
 
 
@@ -1280,54 +1286,6 @@ class TimingTracker:
             yield
         finally:
             self.end(phase)
-
-
-# ============ LiteLLM Model Cost Map ============
-
-
-async def update_litellm_cost_map(delay: float = 2.0) -> bool:
-    """Fetch the latest litellm model cost/context-window data from GitHub.
-
-    LiteLLM's bundled model registry may not include newer models (e.g. gpt-5.4).
-    This function fetches the latest ``model_prices_and_context_window.json``
-    from the upstream LiteLLM repo and merges it into ``litellm.model_cost``
-    so that ``get_model_info()`` returns accurate ``max_input_tokens`` values.
-
-    Designed to be run as a fire-and-forget background task at startup::
-
-        asyncio.create_task(update_litellm_cost_map())
-
-    Args:
-        delay: Seconds to wait before fetching (lets caller finish init).
-
-    Returns:
-        True if the map was updated successfully, False otherwise.
-    """
-    try:
-        import asyncio
-        await asyncio.sleep(delay)
-
-        import litellm
-        import aiohttp
-
-        url = (
-            "https://raw.githubusercontent.com/BerriAI/litellm/main/"
-            "model_prices_and_context_window.json"
-        )
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as response:
-                if response.status == 200:
-                    new_map = await response.json(content_type=None)
-                    if new_map:
-                        litellm.model_cost.update(new_map)
-                        logger.info(
-                            f"Updated litellm model cost map ({len(new_map)} models)"
-                        )
-                        return True
-    except Exception:
-        pass  # Best-effort background update
-    return False
-
 
 def _fallback_token_count(text: str) -> int:
     """Fallback token counter with language awareness.
