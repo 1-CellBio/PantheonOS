@@ -162,6 +162,7 @@ class WeChatApiClient:
             "base_info": {"channel_version": "pantheonclaw"},
         }
         data = self._post_json("/ilink/bot/sendmessage", payload, timeout=(10.0, 20.0))
+        logger.info(f"[WeChat] send_image API response: {data}")
         errcode = data.get("errcode")
         ret = data.get("ret")
         if (isinstance(errcode, int) and errcode != 0) or (isinstance(ret, int) and ret != 0):
@@ -229,13 +230,19 @@ class WeChatGatewayBot(ChannelRuntime):
     async def _send_image(self, to_user_id: str, context_token: str, data_uri: str) -> None:
         raw, _mime = data_uri_to_bytes(data_uri)
         if not raw:
+            logger.warning(f"[WeChat] _send_image: data_uri_to_bytes returned empty, uri length={len(data_uri)}")
             return
-        await asyncio.to_thread(
-            self._client.send_image,
-            to_user_id=to_user_id,
-            image_data=raw,
-            context_token=context_token,
-        )
+        logger.info(f"[WeChat] _send_image: sending {len(raw)} bytes to {to_user_id}")
+        try:
+            await asyncio.to_thread(
+                self._client.send_image,
+                to_user_id=to_user_id,
+                image_data=raw,
+                context_token=context_token,
+            )
+            logger.info("[WeChat] _send_image: success")
+        except Exception as e:
+            logger.warning(f"[WeChat] _send_image failed: {e}")
 
     async def _handle_control(
         self,
