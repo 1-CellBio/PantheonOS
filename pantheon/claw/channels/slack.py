@@ -364,6 +364,35 @@ class SlackGatewayApp(ChannelRuntime):
             )
             self._set_task(route_key, task, tail or cleaned or "[file]")
 
+        @self._app.event("member_joined_channel")
+        async def _handle_bot_joined(body, client, ack):
+            await ack()
+            event = body.get("event", {})
+            # Only respond when the bot itself joins, not other users
+            try:
+                auth = await client.auth_test()
+                bot_user_id = auth.get("user_id", "")
+            except Exception:
+                return
+            if event.get("user") != bot_user_id:
+                return
+            channel = event.get("channel", "")
+            if not channel:
+                return
+            welcome = (
+                "Hi! I'm *PantheonClaw* — your AI research assistant.\n\n"
+                "Mention me with `@PantheonClaw` followed by your message to start a conversation.\n\n"
+                "*Commands* (use `!` prefix):\n"
+                "`!menu` — show all commands\n"
+                "`!new` — start a fresh chat\n"
+                "`!status` — show current status\n"
+                "`!cancel` — cancel running task\n"
+            )
+            try:
+                await client.chat_postMessage(channel=channel, text=welcome)
+            except Exception:
+                logger.warning("Failed to post welcome message to channel %s", channel)
+
     async def run(self) -> None:
         handler = AsyncSocketModeHandler(self._app, self._app_token)
         logger.info("Slack Socket Mode handler starting")
