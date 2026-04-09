@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Literal
 import tempfile
@@ -13,8 +14,49 @@ from datetime import datetime
 
 from pantheon.toolset import ToolSet, tool
 from pantheon.utils.log import logger
+from pantheon.utils.workspace import (
+    ensure_workspace_layout,
+    find_chat_workspace,
+    is_trusted_temp_upload_path,
+    resolve_workspace_layout,
+)
 from .apply_patch import execute_patch_operations
 from .grep_glob import grep_search, glob_search
+
+
+_VALID_WORKSPACE_VIEWS = {"global", "isolated"}
+_WORKSPACE_VIEW_ALIASES = {
+    "global": "global",
+    "isolated": "isolated",
+    "project": "global",
+    "session": "isolated",
+}
+
+
+def _is_within_path_boundary(candidate: Path, root: Path) -> bool:
+    try:
+        resolved_candidate = candidate.resolve()
+        resolved_root = root.resolve()
+    except Exception:
+        return False
+
+    if resolved_candidate == resolved_root:
+        return True
+
+    try:
+        return resolved_candidate.is_relative_to(resolved_root)
+    except Exception:
+        pass
+
+    candidate_str = os.path.normpath(str(resolved_candidate))
+    root_str = os.path.normpath(str(resolved_root))
+
+    if sys.platform == "darwin" or os.name == "nt":
+        candidate_cmp = candidate_str.casefold()
+        root_cmp = root_str.casefold()
+        return candidate_cmp == root_cmp or candidate_cmp.startswith(f"{root_cmp}{os.sep}")
+
+    return False
 
 
 def _replace_in_content(
@@ -117,13 +159,14 @@ class FileManagerToolSetBase(ToolSet):
     Provides unified path management and file operations.
     """
 
-    @tool(exclude=True)
+    @tool
     async def manage_path(
         self,
         operation: str,
         path: str,
         new_path: str | None = None,
         recursive: bool = False,
+        workspace_view: Literal["global", "isolated"] | None = None,
     ) -> dict:
         """Unified tool for managing files and directories.
 
@@ -146,6 +189,9 @@ class FileManagerToolSetBase(ToolSet):
             recursive: For "delete" operation only. When True, directories are
                       deleted recursively. When False, only empty directories
                       can be deleted. Default: False.
+
+            workspace_view: ``"global"`` resolves paths against the project
+                workspace, ``"isolated"`` against the session workspace.
 
         Returns:
             dict: {"success": bool, ...} with operation-specific details.
@@ -177,10 +223,10 @@ class FileManagerToolSetBase(ToolSet):
 
         try:
             if operation == "create_dir":
-                return await self.create_directory(path)
+                return await self.create_directory(path, workspace_view=workspace_view)
 
             elif operation == "delete":
-                return await self.delete_path(path, recursive=recursive)
+                return await self.delete_path(path, recursive=recursive, workspace_view=workspace_view)
 
             elif operation == "move":
                 if new_path is None:
@@ -188,7 +234,7 @@ class FileManagerToolSetBase(ToolSet):
                         "success": False,
                         "error": "new_path is required for 'move' operation",
                     }
-                return await self.move_file(path, new_path)
+                return await self.move_file(path, new_path, workspace_view=workspace_view)
 
         except Exception as e:
             logger.warning(f"manage_path failed for operation {operation}: {e}")
@@ -208,21 +254,426 @@ class FileManagerToolSetBase(ToolSet):
         self.black_list = black_list or []
 
     def _get_root(self) -> Path:
-        """Get the effective workspace root: workdir from context or default self.path."""
+        """Get the effective workspace root.
+
+        Priority:
+        1. Explicit workdir injected by ChatRoom/project context
+        2. Session workspace derived from client_id
+        3. Persisted active chat workspace (for direct file browser uploads)
+        4. ToolSet default path
+        """
         workdir = self._get_effective_workdir()
-        return Path(workdir) if workdir else self.path
+        if workdir:
+            return Path(workdir)
+
+        layout = self._get_managed_workspace_layout()
+        if layout is not None:
+            if layout.workspace_mode == "project":
+                return layout.project_workspace_path
+            return layout.effective_workspace_path
+
+        return self.path
+
+    def _get_managed_workspace_layout(self):
+        try:
+            from pantheon.settings import get_settings
+
+            settings = get_settings()
+            pantheon_dir = settings.pantheon_dir
+
+            session_id = self._resolve_managed_session_id(self.get_session_id())
+            if session_id:
+                return resolve_workspace_layout(pantheon_dir, session_id)
+
+            active_chat_marker = pantheon_dir / "active_chat_id"
+            if active_chat_marker.exists():
+                active_chat_id = self._resolve_managed_session_id(
+                    active_chat_marker.read_text(encoding="utf-8").strip()
+                )
+                if active_chat_id:
+                    return resolve_workspace_layout(pantheon_dir, active_chat_id)
+        except Exception:
+            pass
+        return None
+
+    def _find_session_workspace(self, pantheon_dir: Path, session_id: str) -> Path | None:
+        return find_chat_workspace(pantheon_dir, session_id)
+
+    def _is_managed_session_id(self, session_id: str | None) -> bool:
+        if not session_id or session_id == "default":
+            return False
+        try:
+            from pantheon.settings import get_settings
+
+            pantheon_dir = get_settings().pantheon_dir
+            memory_file = pantheon_dir / "memory" / f"{session_id}.json"
+            workspace_dir = pantheon_dir / "workspaces" / session_id
+            if memory_file.exists() or workspace_dir.is_dir():
+                return True
+            if find_chat_workspace(pantheon_dir, session_id) is not None:
+                return True
+            return False
+        except Exception:
+            return False
+
+    def _resolve_managed_session_id(self, session_id: str | None) -> str | None:
+        if self._is_managed_session_id(session_id):
+            return session_id
+        return None
+
+    def _ensure_attachment_bridge(self) -> None:
+        layout = self._get_managed_workspace_layout()
+        if layout is None:
+            return
+        ensure_workspace_layout(
+            layout,
+            create_chat_workspace=layout.workspace_override_path is None,
+            create_project_workspace=layout.workspace_override_path is None,
+            create_upload_workspace=True,
+            create_effective_workspace=True,
+            create_attachment_bridge=True,
+        )
+
+    def _get_upload_workspace_root(self) -> Path:
+        layout = self._get_managed_workspace_layout()
+        if layout is not None:
+            ensure_workspace_layout(
+                layout,
+                create_chat_workspace=layout.workspace_override_path is None,
+                create_project_workspace=layout.workspace_override_path is None,
+                create_upload_workspace=True,
+                create_effective_workspace=True,
+                create_attachment_bridge=True,
+            )
+            return layout.upload_workspace_path
+        return self._get_root()
+
+    def _normalize_workspace_view(self, workspace_view: str | None) -> str | None:
+        if isinstance(workspace_view, str):
+            return _WORKSPACE_VIEW_ALIASES.get(workspace_view.strip().lower())
+        return None
+
+    def _get_workspace_view_root(self, workspace_view: str | None) -> Path:
+        view = self._normalize_workspace_view(workspace_view)
+        if view is None:
+            return self._get_root()
+
+        layout = self._get_managed_workspace_layout()
+        if layout is None:
+            return self._get_root()
+
+        ensure_workspace_layout(
+            layout,
+            create_chat_workspace=layout.workspace_override_path is None,
+            create_project_workspace=layout.workspace_override_path is None,
+            create_upload_workspace=True,
+            create_effective_workspace=True,
+            create_attachment_bridge=True,
+        )
+        if view == "global":
+            return layout.project_workspace_path
+        return layout.session_workspace_path
+
+    def _resolve_path_with_root(
+        self,
+        file_path: str,
+        root: Path,
+        *,
+        allow_temp_upload_source: bool = False,
+    ) -> Path:
+        candidate = Path(file_path) if os.path.isabs(file_path) else root / file_path
+        resolved = candidate.resolve()
+        root_resolved = root.resolve()
+
+        if allow_temp_upload_source and is_trusted_temp_upload_path(resolved):
+            return resolved
+
+        if _is_within_path_boundary(resolved, root_resolved):
+            return resolved
+
+        raise PermissionError(f"Path outside workspace boundary: {file_path}")
+
+    def _get_upload_files_root(self) -> Path:
+        return self._get_upload_workspace_root() / ".uploaded_files"
+
+    def _get_all_upload_roots(self) -> list[Path]:
+        """Return all possible upload roots (session + project) for read fallback."""
+        roots: list[Path] = []
+        layout = self._get_managed_workspace_layout()
+        if layout is not None:
+            for ws in (layout.upload_workspace_path, layout.session_workspace_path, layout.project_workspace_path):
+                root = (ws / ".uploaded_files").resolve()
+                if root not in roots:
+                    roots.append(root)
+        else:
+            roots.append(self._get_upload_files_root().resolve())
+
+        # When the effective root is a nested chat workspace (workspaces/<slug>/<chat_id>),
+        # the parent directory is the project workspace.  Include its .uploaded_files/ so
+        # that reads in isolated mode can find files uploaded to the global/project scope.
+        try:
+            effective_root = self._get_root().resolve()
+            parent_upload = (effective_root.parent / ".uploaded_files").resolve()
+            if parent_upload.is_dir() and parent_upload not in roots:
+                roots.append(parent_upload)
+        except Exception:
+            pass
+
+        return roots
+
+    def _resolve_upload_namespace_path(self, file_path: str) -> Path | None:
+        upload_files_root = self._get_upload_files_root().resolve()
+        candidate_path = Path(file_path)
+
+        if candidate_path.is_absolute():
+            resolved = candidate_path.resolve()
+            if _is_within_path_boundary(resolved, upload_files_root):
+                return resolved
+            # Fallback: check all upload roots for read access
+            for alt_root in self._get_all_upload_roots():
+                if _is_within_path_boundary(resolved, alt_root) and resolved.exists():
+                    return resolved
+            return None
+
+        if candidate_path.parts[:1] != (".uploaded_files",):
+            return None
+
+        resolved = (self._get_upload_workspace_root() / candidate_path).resolve()
+        if _is_within_path_boundary(resolved, upload_files_root):
+            if resolved.exists():
+                return resolved
+
+        # Fallback: check both project and session .uploaded_files/
+        layout = self._get_managed_workspace_layout()
+        if layout is not None:
+            for ws_root in (layout.project_workspace_path, layout.session_workspace_path):
+                alt_root = (ws_root / ".uploaded_files").resolve()
+                alt_resolved = (ws_root / candidate_path).resolve()
+                if _is_within_path_boundary(alt_resolved, alt_root) and alt_resolved.exists():
+                    return alt_resolved
+
+        # Primary path was valid but file doesn't exist yet (e.g. write target)
+        if _is_within_path_boundary(resolved, upload_files_root):
+            return resolved
+
+        raise PermissionError(f"Path outside workspace boundary: {file_path}")
+
+    def _resolve_user_visible_path(
+        self,
+        file_path: str,
+        *,
+        workspace_view: str | None = None,
+        allow_temp_upload_source: bool = False,
+        is_read_only: bool = False,
+    ) -> Path:
+        # If this is a read-only request and an absolute path is provided,
+        # use the less strict read-path resolver, which allows reading
+        # from any permitted root (including project workspace when in isolated mode).
+        if is_read_only and os.path.isabs(file_path):
+            return self._resolve_read_path(file_path)
+
+        # For .uploaded_files/ paths in read-only mode, resolve via upload namespace
+        # BEFORE workspace_view, so that files uploaded to the project-level scope
+        # are found even when the caller is in the isolated/session view.
+        if is_read_only and Path(file_path).parts[:1] == (".uploaded_files",):
+            upload_path = self._resolve_upload_namespace_path(file_path)
+            if upload_path is not None:
+                return upload_path
+
+        normalized_view = self._normalize_workspace_view(workspace_view)
+        if normalized_view is not None:
+            # First try the specified view root
+            try:
+                return self._resolve_path_with_root(
+                    file_path,
+                    self._get_workspace_view_root(normalized_view),
+                    allow_temp_upload_source=allow_temp_upload_source,
+                )
+            except PermissionError:
+                # For reads, fall back to checking all allowed roots
+                # so project workspace files are readable in isolated mode
+                candidate = Path(file_path) if os.path.isabs(file_path) else self._get_workspace_view_root(normalized_view) / file_path
+                resolved = candidate.resolve()
+                if self._is_path_within_allowed_roots(resolved, allow_temp_upload_source=allow_temp_upload_source):
+                    return resolved
+                raise
+
+        upload_path = self._resolve_upload_namespace_path(file_path)
+        if upload_path is not None:
+            return upload_path
+
+        if allow_temp_upload_source or os.path.isabs(file_path):
+            return self._resolve_read_path(file_path)
+        return self._resolve_path(file_path)
+
+    def _resolve_search_scope(
+        self,
+        path: str | None,
+        workspace_view: str | None = None,
+    ) -> tuple[Path, str | None]:
+        normalized_view = self._normalize_workspace_view(workspace_view)
+        if normalized_view is not None:
+            root = self._get_workspace_view_root(normalized_view).resolve()
+            if not path:
+                return root, None
+            resolved = self._resolve_path_with_root(path, root)
+            try:
+                relative_path = resolved.relative_to(root)
+            except ValueError:
+                raise PermissionError(f"Path outside workspace boundary: {path}") from None
+            relative_path_str = str(relative_path)
+            return root, None if relative_path_str in {"", "."} else relative_path_str
+
+        if not path:
+            return self._get_root(), path
+
+        upload_namespace_path = self._resolve_upload_namespace_path(path)
+        if upload_namespace_path is not None:
+            upload_workspace_root = self._get_upload_workspace_root().resolve()
+            try:
+                relative_path = upload_namespace_path.relative_to(upload_workspace_root)
+            except ValueError:
+                raise PermissionError(f"Path outside workspace boundary: {path}") from None
+            return upload_workspace_root, str(relative_path)
+
+        return self._get_root(), path
+
+    def _resolve_path_for_view(
+        self,
+        file_path: str,
+        workspace_view: str | None = None,
+    ) -> Path:
+        """Like ``_resolve_path`` but honours an explicit workspace_view."""
+        view = self._normalize_workspace_view(workspace_view)
+        if view is None:
+            return self._resolve_path(file_path)
+        root = self._get_workspace_view_root(view)
+        return self._resolve_path_with_root(file_path, root)
+
+    def _deny_global_write_in_isolated_mode(
+        self,
+        workspace_view: str | None,
+    ) -> str | None:
+        normalized_view = self._normalize_workspace_view(workspace_view)
+        if normalized_view != "global":
+            return None
+
+        layout = self._get_managed_workspace_layout()
+        if layout is None or layout.workspace_mode != "isolated":
+            return None
+
+        return (
+            "Global/project view is read-only while workspace isolation is enabled. "
+            "Use the isolated/session view to write session files."
+        )
+
+    def _resolve_read_path(self, file_path: str) -> Path:
+        """Resolve a read path, allowing trusted transient upload sources."""
+        upload_path = self._resolve_upload_namespace_path(file_path)
+        if upload_path is not None:
+            return upload_path
+
+        candidate = Path(file_path) if os.path.isabs(file_path) else self._get_root() / file_path
+        if not os.path.isabs(file_path):
+            return candidate
+
+        resolved = candidate.resolve()
+        if self._is_path_within_allowed_roots(resolved, allow_temp_upload_source=True):
+            return resolved
+
+        raise PermissionError(f"Path outside workspace boundary: {file_path}")
+
+    def _get_allowed_read_roots(self) -> list[Path]:
+        """Return directories allowed as read sources for UI/resource fetches."""
+        roots: list[Path] = []
+
+        def _add(path: Path | None) -> None:
+            if path is None:
+                return
+            try:
+                resolved = path.resolve()
+            except Exception:
+                return
+            if resolved not in roots:
+                roots.append(resolved)
+
+        _add(self._get_root())
+
+        layout = self._get_managed_workspace_layout()
+        if layout is not None:
+            _add(layout.session_workspace_path)
+            _add(layout.project_workspace_path)
+            _add(layout.upload_workspace_path)
+
+        # When the effective root is a nested session workspace, include the
+        # parent (project) workspace so that files uploaded at project scope
+        # are readable from isolated mode.  Mirrors _get_all_upload_roots().
+        try:
+            effective_root = self._get_root().resolve()
+            parent = effective_root.parent.resolve()
+            if parent != effective_root and parent not in roots:
+                roots.append(parent)
+        except Exception:
+            pass
+
+        return roots
+
+    def _is_path_within_allowed_roots(
+        self,
+        candidate_path: Path,
+        *,
+        allow_temp_upload_source: bool = False,
+    ) -> bool:
+        """Check whether a resolved path is within one of the allowed read roots."""
+        try:
+            resolved = candidate_path.resolve()
+        except Exception:
+            return False
+
+        if allow_temp_upload_source and is_trusted_temp_upload_path(resolved):
+            return True
+
+        for root in self._get_allowed_read_roots():
+            if _is_within_path_boundary(resolved, root):
+                return True
+
+        return False
 
     def _resolve_path(self, file_path: str) -> Path:
-        """Resolve a file path: absolute paths pass through, relative paths
-        resolve against the effective workspace root (workdir or self.path)."""
+        """Resolve a file path: absolute paths pass through with boundary check,
+        relative paths resolve against the effective workspace root."""
+        candidate = Path(file_path) if os.path.isabs(file_path) else self._get_root() / file_path
         if os.path.isabs(file_path):
-            return Path(file_path)
-        return self._get_root() / file_path
+            resolved = candidate.resolve()
+            if self._is_path_within_allowed_roots(resolved):
+                return resolved
+            raise PermissionError(f"Path outside workspace boundary: {file_path}")
+        return candidate
 
     @tool(exclude=True)
-    async def get_cwd(self) -> dict:
+    async def get_cwd(
+        self,
+        workspace_view: Literal["global", "isolated"] | None = None,
+    ) -> dict:
         """Get current working directory."""
-        return {"success": True, "cwd": str(self._get_root())}
+        normalized_view = self._normalize_workspace_view(workspace_view)
+        if normalized_view is None:
+            layout = self._get_managed_workspace_layout()
+            if layout is not None and layout.workspace_mode == "project":
+                normalized_view = "global"
+        cwd = self._get_workspace_view_root(normalized_view).resolve()
+        workspace_scope = None
+        if normalized_view == "global":
+            workspace_scope = "project"
+        elif normalized_view == "isolated":
+            workspace_scope = "session"
+
+        return {
+            "success": True,
+            "cwd": str(cwd),
+            "workspace_view": normalized_view,
+            "workspace_scope": workspace_scope,
+        }
 
     @tool(exclude=True)
     async def list_files(
@@ -230,6 +681,7 @@ class FileManagerToolSetBase(ToolSet):
         sub_dir: str | None = None,
         recursive: bool = False,
         max_depth: int = 5,
+        workspace_view: Literal["global", "isolated"] | None = None,
     ) -> dict:
         """DEPRECATED: Use glob() or grep() instead.
 
@@ -249,18 +701,29 @@ class FileManagerToolSetBase(ToolSet):
             max_depth: Maximum depth to recurse (only used when recursive=True).
                        0 means only the target directory, 1 includes immediate children, etc.
                        Default is 5.
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             dict: {success: bool, files: list} with name, type, size, last_modified.
         """
         # Determine target directory - support absolute paths
         if sub_dir:
-            target_path = self._resolve_path(sub_dir)
+            target_path = self._resolve_user_visible_path(
+                sub_dir,
+                workspace_view=workspace_view,
+            )
         else:
-            target_path = self._get_root()
+            target_path = self._get_workspace_view_root(workspace_view)
 
         if not target_path.exists():
             return {"success": False, "error": "Directory does not exist"}
+
+        normalized_view = self._normalize_workspace_view(workspace_view)
+        if normalized_view is None:
+            layout = self._get_managed_workspace_layout()
+            if layout is not None and layout.workspace_mode == "project":
+                normalized_view = "global"
 
         def _build_file_entry(path: Path) -> dict | None:
             """Safely build metadata for a directory entry.
@@ -303,6 +766,15 @@ class FileManagerToolSetBase(ToolSet):
             return {
                 "success": True,
                 "files": entries,
+                "cwd": str(target_path.resolve()),
+                "workspace_view": normalized_view,
+                "workspace_scope": (
+                    "project"
+                    if normalized_view == "global"
+                    else "session"
+                    if normalized_view == "isolated"
+                    else None
+                ),
             }
         else:
 
@@ -346,20 +818,42 @@ class FileManagerToolSetBase(ToolSet):
             if not target_path.exists():
                 return {"success": False, "error": "Target directory does not exist"}
 
-            return {"success": True, "tree": _list_tree(target_path, 0)}
+            return {
+                "success": True,
+                "tree": _list_tree(target_path, 0),
+                "cwd": str(target_path.resolve()),
+                "workspace_view": normalized_view,
+                "workspace_scope": (
+                    "project"
+                    if normalized_view == "global"
+                    else "session"
+                    if normalized_view == "isolated"
+                    else None
+                ),
+            }
 
     @tool(exclude=True)
-    async def create_directory(self, sub_dir: str | list[str]) -> dict:
+    async def create_directory(
+        self,
+        sub_dir: str | list[str],
+        workspace_view: Literal["global", "isolated"] | None = None,
+    ) -> dict:
         """Create one or more directories.
 
         Args:
             sub_dir: Directory path or list of directory paths to create.
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             dict: Success status. For batch operations, includes results for each path.
         """
+        policy_error = self._deny_global_write_in_isolated_mode(workspace_view)
+        if policy_error is not None:
+            return {"success": False, "error": policy_error}
+
         if isinstance(sub_dir, str):
-            new_dir = self._resolve_path(sub_dir)
+            new_dir = self._resolve_path_for_view(sub_dir, workspace_view)
             new_dir.mkdir(parents=True, exist_ok=True)
             return {"success": True}
 
@@ -367,7 +861,7 @@ class FileManagerToolSetBase(ToolSet):
         results = []
         for path in sub_dir:
             try:
-                new_dir = self._resolve_path(path)
+                new_dir = self._resolve_path_for_view(path, workspace_view)
                 new_dir.mkdir(parents=True, exist_ok=True)
                 results.append({"path": path, "success": True})
             except Exception as exc:
@@ -381,16 +875,22 @@ class FileManagerToolSetBase(ToolSet):
         self,
         path: str | list[str],
         recursive: bool = False,
+        workspace_view: Literal["global", "isolated"] | None = None,
     ) -> dict:
         """Delete files or directories with optional recursion.
 
         Args:
             path: Single path or list of paths relative to the workspace root.
             recursive: When True, directories are deleted recursively using rmtree.
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
         """
+        policy_error = self._deny_global_write_in_isolated_mode(workspace_view)
+        if policy_error is not None:
+            return {"success": False, "error": policy_error}
 
         def _delete_single_path(relative_path: str) -> dict:
-            target_path = self._resolve_path(relative_path)
+            target_path = self._resolve_path_for_view(relative_path, workspace_view)
             if not target_path.exists():
                 return {
                     "path": relative_path,
@@ -421,39 +921,120 @@ class FileManagerToolSetBase(ToolSet):
         return {"success": all_success, "results": results}
 
     @tool(exclude=True)
-    async def move_file(self, old_path: str, new_path: str):
+    async def move_file(
+        self,
+        old_path: str,
+        new_path: str,
+        workspace_view: Literal["global", "isolated"] | None = None,
+    ):
         """Move or rename a file.
 
         Args:
             old_path: Current path of the file (relative to workspace root).
             new_path: New path for the file (relative to workspace root).
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             dict: {success: bool} or {success: False, error: str}
         """
-        old_path = self._resolve_path(old_path)
+        policy_error = self._deny_global_write_in_isolated_mode(workspace_view)
+        if policy_error is not None:
+            return {"success": False, "error": policy_error}
+
+        trusted_temp_import = False
+        try:
+            trusted_temp_import = is_trusted_temp_upload_path(old_path)
+        except Exception:
+            trusted_temp_import = False
+
+        old_path = self._resolve_user_visible_path(
+            old_path,
+            workspace_view=workspace_view,
+            allow_temp_upload_source=True,
+        )
+        new_path = self._resolve_user_visible_path(new_path, workspace_view=workspace_view)
+
         if not old_path.exists():
+            if trusted_temp_import and new_path.exists():
+                return {"success": True}
             return {"success": False, "error": "Old path does not exist"}
-        new_path = self._resolve_path(new_path)
-        # Ensure parent directory exists before moving
+
         new_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Desktop/WebUI imports can stage files under /tmp/pantheon_uploads first.
+        # When the backend has already materialized the final file, the follow-up
+        # move should still succeed and refresh the destination contents.
+        if trusted_temp_import and new_path.exists() and old_path.resolve() != new_path.resolve():
+            if new_path.is_dir():
+                return {"success": False, "error": "New path is an existing directory"}
+            new_path.unlink()
+
         shutil.move(old_path, new_path)
         return {"success": True}
 
+    @tool
+    async def create_module_workspace(
+        self,
+        module_name: str,
+        subdirs: list[str] | None = None,
+    ) -> dict:
+        """Create a structured output directory for the current task/module.
+
+        Organizes session outputs into a stable per-module directory with
+        standard subdirectories, keeping the workspace clean and navigable.
+
+        Args:
+            module_name: Short identifier for this task module (e.g. "data_analysis",
+                         "literature_review", "image_generation"). Alphanumeric + underscores.
+            subdirs: Custom subdirectory names. Defaults to
+                     ["code", "data", "figures", "logs", "results"].
+
+        Returns:
+            dict with:
+              - module_dir: absolute path to the created module directory
+              - subdirs: list of created subdirectory paths
+        """
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", module_name).strip("_") or "task"
+        root = self._get_root()
+        module_dir = root / safe_name
+
+        default_subdirs = subdirs or ["code", "data", "figures", "logs", "results"]
+        created = []
+        for sd in default_subdirs:
+            sd_path = module_dir / sd
+            sd_path.mkdir(parents=True, exist_ok=True)
+            created.append(str(sd_path))
+
+        return {
+            "success": True,
+            "module_dir": str(module_dir),
+            "module_name": safe_name,
+            "subdirs": created,
+        }
+
 
 def path_to_image_url(path: str) -> str:
-    """Convert an image file to a base64 PNG data URL.
-    
+    """Convert an image file to a base64 data URL.
+
     Reads file bytes into memory first to avoid PIL lazy loading issues
     (e.g., 'PngImageFile' object has no attribute '_im').
-    All images are converted to PNG format for consistency.
+    Raster images are converted to PNG format for consistency.
+    SVG files are returned as-is with the appropriate MIME type.
     """
+    suffix = Path(path).suffix.lower()
+    if suffix == ".svg":
+        with open(path, "rb") as f:
+            svg_bytes = f.read()
+        b64 = base64.b64encode(svg_bytes).decode("utf-8")
+        return f"data:image/svg+xml;base64,{b64}"
+
     from PIL import Image
-    
+
     # Read file bytes into memory first to avoid lazy loading issues
     with open(path, "rb") as f:
         file_bytes = f.read()
-    
+
     # Open from memory buffer - this forces complete loading
     with Image.open(io.BytesIO(file_bytes)) as img:
         with io.BytesIO() as buffer:
@@ -522,19 +1103,22 @@ class FileManagerToolSet(FileManagerToolSetBase):
         self,
         resource_paths: list[str],
         base_path: str | None = None,
+        workspace_view: Literal["global", "isolated"] | None = None,
     ) -> dict:
         """Batch fetch multiple resources for HTML preview (frontend-only).
-        
+
         This tool is designed for frontend HTML preview to efficiently load
         multiple resources (images, CSS, JS) referenced in HTML files.
-        
+
         Args:
             resource_paths: List of resource paths. Can be:
                            - Absolute paths (starting with /)
                            - Relative paths (if base_path is provided)
             base_path: Optional base directory for resolving relative paths.
                       Should be the directory containing the HTML file.
-        
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
+
         Returns:
             dict: {
                 "success": bool,
@@ -552,14 +1136,14 @@ class FileManagerToolSet(FileManagerToolSetBase):
                 "loaded": int,
                 "failed": int
             }
-        
+
         Example:
             # Load resources with relative paths
             fetch_resources_batch(
                 resource_paths=["./images/logo.png", "../styles/main.css", "js/app.js"],
                 base_path="/workspace/project/pages"
             )
-            
+
             # Load resources with absolute paths
             fetch_resources_batch(
                 resource_paths=["/workspace/project/images/logo.png"]
@@ -567,62 +1151,95 @@ class FileManagerToolSet(FileManagerToolSetBase):
         """
         import mimetypes
         from pathlib import Path
-        
+
         results = []
         loaded_count = 0
         failed_count = 0
-        
+
         for resource_path in resource_paths:
             result = {
                 "path": resource_path,
                 "success": False
             }
-            
+
             try:
                 # Resolve path
                 if os.path.isabs(resource_path):
                     # Absolute path
-                    target_path = Path(resource_path)
+                    target_path = self._resolve_user_visible_path(
+                        resource_path,
+                        workspace_view=workspace_view,
+                        allow_temp_upload_source=True,
+                        is_read_only=True,
+                    )
                 elif base_path:
                     # Relative path with base_path
-                    base = Path(base_path) if os.path.isabs(base_path) else self._get_root() / base_path
-                    target_path = (base / resource_path).resolve()
+                    if Path(resource_path).parts[:1] == (".uploaded_files",):
+                        target_path = self._resolve_user_visible_path(
+                            resource_path,
+                            workspace_view=workspace_view,
+                            allow_temp_upload_source=True,
+                            is_read_only=True,
+                        )
+                    else:
+                        if os.path.isabs(base_path):
+                            base = self._resolve_user_visible_path(
+                                base_path,
+                                workspace_view=workspace_view,
+                                is_read_only=True,
+                            )
+                        else:
+                            base = self._get_workspace_view_root(workspace_view) / base_path
+                        target_path = (base / resource_path).resolve()
                 else:
                     # Relative path without base_path (relative to workspace)
-                    target_path = self._get_root() / resource_path
-                
+                    target_path = self._resolve_user_visible_path(
+                        resource_path,
+                        workspace_view=workspace_view,
+                        allow_temp_upload_source=True,
+                        is_read_only=True,
+                    )
+
                 result["resolved_path"] = str(target_path)
-                
+
                 # Security check: Ensure resolved path is within workspace
-                # This prevents path traversal attacks (e.g., ../../etc/passwd)
                 try:
-                    target_path.relative_to(self.path)
-                except ValueError:
+                    resolved_target = target_path.resolve()
+                except Exception:
+                    result["error"] = "Invalid resource path"
+                    failed_count += 1
+                    results.append(result)
+                    continue
+
+                if not self._is_path_within_allowed_roots(
+                    resolved_target,
+                    allow_temp_upload_source=True,
+                ):
                     result["error"] = "Resource path escapes workspace boundary"
                     failed_count += 1
                     results.append(result)
                     continue
-                
+
                 # Validate path exists
                 if not target_path.exists():
                     result["error"] = "Resource file does not exist"
                     failed_count += 1
                     results.append(result)
                     continue
-                
+
                 if not target_path.is_file():
                     result["error"] = "Path is not a file"
                     failed_count += 1
                     results.append(result)
                     continue
-                
+
                 # Determine MIME type
                 mime_type, _ = mimetypes.guess_type(str(target_path))
                 if mime_type is None:
                     mime_type = "application/octet-stream"
-                
+
                 result["mime_type"] = mime_type
-                
+
                 # Load resource based on type
                 if mime_type.startswith("image/"):
                     # Return base64 data URI for images
@@ -640,16 +1257,16 @@ class FileManagerToolSet(FileManagerToolSetBase):
                         failed_count += 1
                         results.append(result)
                         continue
-                
+
                 result["success"] = True
                 loaded_count += 1
-                
+
             except Exception as e:
                 result["error"] = str(e)
                 failed_count += 1
-            
+
             results.append(result)
-        
+
         return {
             "success": True,
             "resources": results,
@@ -667,6 +1284,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
         end_line: int | None = None,
         max_chars: int | None = None,
         symbol: str | None = None,
+        workspace_view: Literal["global", "isolated"] | None = None,
     ) -> dict:
         """Read the contents of a text file.
 
@@ -686,10 +1304,12 @@ class FileManagerToolSet(FileManagerToolSetBase):
             max_chars: Optional. Maximum characters to return (for quick preview, use lower values like 5000).
             symbol: Optional. Qualified name of a code symbol to extract (dot notation).
                    Examples: "MyClass", "MyClass.my_method", "helper_function"
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             dict: {success, content, total_lines, format, [truncated, truncation_info, suggestions]}
-        
+
         Note:
             Large files are limited to max_file_read_lines and max_file_read_chars.
             Use start_line/end_line to paginate or max_chars to control output size.
@@ -698,7 +1318,9 @@ class FileManagerToolSet(FileManagerToolSetBase):
         if symbol:
             try:
                 from pantheon.toolsets.code.tree_sitter_parser import get_code_item
-                target_path = self._resolve_path(file_path)
+                target_path = self._resolve_user_visible_path(
+                    file_path, workspace_view=workspace_view, is_read_only=True,
+                )
                 if not target_path.exists():
                     return {"success": False, "error": "File does not exist"}
                 return get_code_item(target_path, symbol)
@@ -708,7 +1330,9 @@ class FileManagerToolSet(FileManagerToolSetBase):
                 return {"success": False, "error": str(e)}
 
         # Support both absolute and relative paths
-        target_path = self._resolve_path(file_path)
+        target_path = self._resolve_user_visible_path(
+            file_path, workspace_view=workspace_view, is_read_only=True,
+        )
         if not target_path.exists():
             return {"success": False, "error": "File does not exist"}
         if not target_path.is_file():
@@ -860,6 +1484,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
         content: str = "",
         overwrite: bool = True,
         append: bool = False,
+        workspace_view: Literal["global", "isolated"] | None = None,
     ) -> dict:
         """Create a new file, overwrite an existing one, or append to it.
 
@@ -883,11 +1508,17 @@ class FileManagerToolSet(FileManagerToolSetBase):
             overwrite: When False, abort if the target file already exists (ignored when append=True).
             append: When True, append content to the end of an existing file instead of overwriting.
                     The file must already exist when using append mode.
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             dict: Success status or error message.
         """
-        target_path = self._resolve_path(file_path)
+        policy_error = self._deny_global_write_in_isolated_mode(workspace_view)
+        if policy_error is not None:
+            return {"success": False, "error": policy_error}
+
+        target_path = self._resolve_path_for_view(file_path, workspace_view)
 
         if append:
             if not target_path.exists():
@@ -918,6 +1549,45 @@ class FileManagerToolSet(FileManagerToolSetBase):
             return {"success": True, "overwritten": overwrite}
         except Exception as exc:
             logger.error(f"write_file failed for {file_path}: {exc}")
+            return {"success": False, "error": str(exc)}
+
+    @tool
+    async def append_file(
+        self,
+        file_path: str,
+        content: str,
+        workspace_view: Literal["global", "isolated"] | None = None,
+    ) -> dict:
+        """Append content to an existing file (or create it if it does not exist).
+
+        Use this tool when writing long documents in chunks:
+        1. Call ``write_file`` with the first portion of content.
+        2. Call ``append_file`` one or more times with subsequent portions.
+
+        This avoids output-token truncation when generating very long content
+        in a single tool call.
+
+        Args:
+            file_path: The path to the file to append to.
+            content: The content to append.
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
+
+        Returns:
+            dict: Success status or error message.
+        """
+        policy_error = self._deny_global_write_in_isolated_mode(workspace_view)
+        if policy_error is not None:
+            return {"success": False, "error": policy_error}
+
+        target_path = self._resolve_path_for_view(file_path, workspace_view)
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(target_path, "a", encoding="utf-8") as f:
+                f.write(content)
+            return {"success": True}
+        except Exception as exc:
+            logger.error(f"append_file failed for {file_path}: {exc}")
             return {"success": False, "error": str(exc)}
 
     @tool
@@ -1011,7 +1681,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
 
         # Add images to the message
         for img_path in image_paths:
-            ipath = self._resolve_path(img_path)
+            ipath = self._resolve_user_visible_path(img_path, is_read_only=True)
 
             # Validate image path
             if not ipath.exists():
@@ -1036,7 +1706,8 @@ class FileManagerToolSet(FileManagerToolSetBase):
             # Check for blank images FIRST
             blank_warnings = []
             for img_path in image_paths:
-                if is_image_blank(self._resolve_path(img_path)):
+                resolved = self._resolve_user_visible_path(img_path, is_read_only=True)
+                if resolved.suffix.lower() != ".svg" and is_image_blank(resolved):
                     blank_warnings.append(f"WARNING: Image '{img_path}' appears to be BLANK (solid color or transparent). The image contains no visual information. Please check how this image was generated.")
 
             response = await context.call_agent(messages=messages, use_memory=True)
@@ -1081,7 +1752,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
             page_numbers: The numbers of the pages to observe. If not provided, all pages will be observed.
             dpi: The DPI of the screenshots. If not provided, the default value is 300.
         """
-        file_path = self._resolve_path(pdf_path)
+        file_path = self._resolve_user_visible_path(pdf_path, is_read_only=True)
         if not file_path.exists():
             return {"success": False, "error": "PDF file does not exist"}
         if not file_path.is_file():
@@ -1122,6 +1793,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
         question: str | None = None,
         page_numbers: list[int] | None = None,
         dpi: int = 300,
+        workspace_view: Literal["global", "isolated"] | None = None,
     ) -> dict:
         """Read a PDF file. Extracts text by default, or analyzes page screenshots when a question is provided.
 
@@ -1132,6 +1804,8 @@ class FileManagerToolSet(FileManagerToolSetBase):
             page_numbers: Optional. Specific page numbers to read (0-indexed).
                          If not provided, reads all pages.
             dpi: Resolution for screenshot mode (default: 300). Only used when question is provided.
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             dict: Success status, content, and metadata about the PDF.
@@ -1145,7 +1819,11 @@ class FileManagerToolSet(FileManagerToolSetBase):
                 dpi=dpi,
             )
 
-        file_path = self._resolve_path(pdf_path)
+        file_path = self._resolve_user_visible_path(
+            pdf_path,
+            workspace_view=workspace_view,
+            is_read_only=True,
+        )
 
         # Check if file exists
         if not file_path.exists():
@@ -1225,11 +1903,17 @@ class FileManagerToolSet(FileManagerToolSetBase):
             }
 
     @tool(exclude=True)
-    async def fetch_image_base64(self, image_path: str) -> dict:
+    async def fetch_image_base64(
+        self,
+        image_path: str,
+        workspace_view: Literal["global", "isolated"] | None = None,
+    ) -> dict:
         """Fetch an image and return the base64 encoded image. for frontend display
 
         Args:
             image_path: Path to the image file (relative to workspace)
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             Dict with success status and either data_uri or error message
@@ -1242,17 +1926,23 @@ class FileManagerToolSet(FileManagerToolSetBase):
 
         try:
             # Support both relative (to workspace) and absolute paths
-            candidate = Path(image_path)
-            if candidate.is_absolute():
-                i_path = candidate
-            else:
-                i_path = self._resolve_path(image_path)
+            try:
+                i_path = self._resolve_user_visible_path(
+                    image_path,
+                    workspace_view=workspace_view,
+                    allow_temp_upload_source=True,
+                    is_read_only=True,
+                )
+            except PermissionError:
+                return {"success": False, "error": "Path outside allowed workspace"}
 
             # Security: Check if path is within allowed directories
             try:
                 resolved_path = i_path.resolve()
-                allowed_path = self.path.resolve()
-                if not str(resolved_path).startswith(str(allowed_path)):
+                if not self._is_path_within_allowed_roots(
+                    resolved_path,
+                    allow_temp_upload_source=True,
+                ):
                     return {"success": False, "error": "Path outside allowed workspace"}
             except Exception:
                 return {"success": False, "error": "Invalid path"}
@@ -1303,6 +1993,8 @@ class FileManagerToolSet(FileManagerToolSetBase):
             mime_format = format.lstrip(".")
             if mime_format == "jpg":
                 mime_format = "jpeg"
+            elif mime_format == "svg":
+                mime_format = "svg+xml"
 
             data_uri = f"data:image/{mime_format};base64,{b64}"
             return {
@@ -1425,11 +2117,12 @@ class FileManagerToolSet(FileManagerToolSetBase):
         type_filter: Literal["file", "directory", "any"] | None = None,
         excludes: list[str] | None = None,
         max_depth: int | None = None,
+        workspace_view: Literal["global", "isolated"] | None = None,
     ) -> dict:
         """Search for files and subdirectories within a specified directory using glob patterns.
-        
+
         Search uses smart case and will ignore gitignored files by default.
-        To avoid overwhelming output, the results are capped at max_glob_results. 
+        To avoid overwhelming output, the results are capped at max_glob_results.
         Use the various arguments to filter the search scope as needed.
         Results will include the type, size, modification time, and relative path.
 
@@ -1454,6 +2147,9 @@ class FileManagerToolSet(FileManagerToolSetBase):
             excludes: Optional, exclude files/directories that match the given glob patterns.
 
             max_depth: Optional, maximum depth to search.
+
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             dict: {
@@ -1488,12 +2184,23 @@ class FileManagerToolSet(FileManagerToolSetBase):
             # Complex search with multiple filters
             pattern="**/*.{py,js}", excludes=["node_modules/*", ".venv/*"], type_filter="file", max_depth=3
         """
+        if not pattern:
+            return {"success": False, "error": "pattern is required. Example: '**/*.py'"}
+
         # Run in thread pool to avoid blocking event loop
+        try:
+            workspace_root, search_path = self._resolve_search_scope(
+                path,
+                workspace_view=workspace_view,
+            )
+        except PermissionError as e:
+            return {"success": False, "error": str(e)}
+
         result = await asyncio.to_thread(
             glob_search,
             pattern=pattern,
-            workspace_root=self._get_root(),
-            path=path,
+            workspace_root=workspace_root,
+            path=search_path,
             respect_git_ignore=respect_git_ignore,
             type_filter=type_filter,
             excludes=excludes,
@@ -1535,9 +2242,10 @@ class FileManagerToolSet(FileManagerToolSetBase):
         context_lines: int = 0,
         case_sensitive: bool = False,
         respect_git_ignore: bool = True,
+        workspace_view: Literal["global", "isolated"] | None = None,
     ) -> dict:
         """Search for text patterns within file contents.
-        
+
         Search uses case-insensitive matching by default and will ignore gitignored files.
         Searches recursively by default. Refine your pattern or use file_pattern to narrow scope.
         Results are capped at max_glob_results to avoid overwhelming output.
@@ -1558,6 +2266,9 @@ class FileManagerToolSet(FileManagerToolSetBase):
             case_sensitive: Optional, whether search is case-sensitive (default: False).
 
             respect_git_ignore: Optional, whether to respect .gitignore patterns (default: True).
+
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             dict: {
@@ -1588,16 +2299,27 @@ class FileManagerToolSet(FileManagerToolSetBase):
             # Search in gitignored directory
             pattern="version.*1.2.3", path="node_modules", respect_git_ignore=False
         """
+        if not pattern:
+            return {"success": False, "error": "pattern is required. Example: 'TODO'"}
+
         # Get max results from settings to pass down for early termination
         from pantheon.settings import get_settings
         max_results = get_settings().max_glob_results
-        
+
         # Run in thread pool to avoid blocking event loop
+        try:
+            workspace_root, search_path = self._resolve_search_scope(
+                path,
+                workspace_view=workspace_view,
+            )
+        except PermissionError as e:
+            return {"success": False, "error": str(e)}
+
         result = await asyncio.to_thread(
             grep_search,
             pattern=pattern,
-            workspace_root=self._get_root(),
-            path=path,
+            workspace_root=workspace_root,
+            path=search_path,
             file_pattern=file_pattern,
             context_lines=context_lines,
             case_sensitive=case_sensitive,
@@ -1663,7 +2385,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
             abs_refs = []
             for ref in reference_images:
                 if not ref.startswith(("/", "file://", "http")):
-                    abs_refs.append(str(self._resolve_path(ref)))
+                    abs_refs.append(str(self._resolve_user_visible_path(ref)))
                 else:
                     abs_refs.append(ref)
 

@@ -1,5 +1,6 @@
 import aiofiles
 import base64
+import re
 import time
 import uuid
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from pantheon.toolset import tool
 from pantheon.toolsets.file.file_manager import FileManagerToolSetBase
 from pantheon.utils.log import logger
+from pantheon.utils.workspace import build_upload_attachment_metadata
 
 
 class FileTransferToolSet(FileManagerToolSetBase):
@@ -40,13 +42,59 @@ class FileTransferToolSet(FileManagerToolSetBase):
         self.FLUSH_INTERVAL_CHUNKS = 10  # Flush every N chunks
         self.FLUSH_INTERVAL_BYTES = 5 * 1024 * 1024  # Flush every 5MB
         self.FLUSH_INTERVAL_SECONDS = 2.0  # Flush every 2 seconds
+        self._staged_upload_name_re = re.compile(r"^\d+_[A-Za-z0-9]+_(.+)$")
+
+    def _normalize_external_upload_name(self, file_path: str | Path) -> str:
+        """Recover the original filename from a staged upload path when possible."""
+        filename = Path(file_path).name
+        match = self._staged_upload_name_re.match(filename)
+        if match:
+            return match.group(1)
+        return filename
+
+    def _resolve_write_path(self, file_path: str, *, workspace_view: str | None = None) -> Path:
+        """Resolve upload destinations while remapping external absolute sources."""
+        upload_target = self._resolve_upload_namespace_path(file_path)
+        if upload_target is not None:
+            return upload_target
+
+        if not Path(file_path).is_absolute():
+            return self._resolve_path_for_view(file_path, workspace_view=workspace_view)
+
+        candidate = Path(file_path).resolve()
+        root = self._get_root().resolve()
+        if candidate == root or candidate.is_relative_to(root):
+            return candidate
+
+        # Absolute path outside workspace remapped to .uploaded_files
+        upload_dir = root / ".uploaded_files"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = self._normalize_external_upload_name(candidate)
+        stem = Path(filename).stem or "upload"
+        suffix = Path(filename).suffix
+        target = upload_dir / filename
+        counter = 1
+        while target.exists():
+            target = upload_dir / f"{stem}_{counter}{suffix}"
+            counter += 1
+
+        return target.resolve()
+
+    def _build_attachment_result(self, path: Path) -> dict | None:
+        layout = self._get_managed_workspace_layout()
+        if layout is None:
+            return None
+        return build_upload_attachment_metadata(layout, path)
 
     @tool
-    async def open_file_for_write(self, file_path: str):
+    async def open_file_for_write(self, file_path: str, workspace_view: str | None = None):
         """Open a file for writing (async).
 
         Args:
             file_path: Relative path to the file (cannot contain '..')
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             dict: {"success": True, "handle_id": str} on success
@@ -55,7 +103,8 @@ class FileTransferToolSet(FileManagerToolSetBase):
         if ".." in file_path:
             return {"error": "File path cannot contain '..'"}
 
-        path = self._get_root() / file_path
+        self._ensure_attachment_bridge()
+        path = self._resolve_write_path(file_path, workspace_view=workspace_view)
 
         # Ensure parent directory exists
         try:
@@ -68,9 +117,11 @@ class FileTransferToolSet(FileManagerToolSetBase):
         try:
             # Open file asynchronously
             handle = await aiofiles.open(path, mode="wb")
+            attachment = self._build_attachment_result(path)
             self._handles[handle_id] = handle
             self._file_info[handle_id] = {
                 "path": path,
+                "attachment": attachment,
                 "size": 0,
                 "chunks_written": 0,
                 "bytes_since_flush": 0,
@@ -78,7 +129,10 @@ class FileTransferToolSet(FileManagerToolSetBase):
                 "created_at": time.time(),
             }
             logger.debug(f"Opened file for write: {path} (handle_id={handle_id})")
-            return {"success": True, "handle_id": handle_id}
+            result = {"success": True, "handle_id": handle_id}
+            if attachment is not None:
+                result["attachment"] = attachment
+            return result
         except Exception as e:
             logger.error(f"Failed to open file for write: {path}, error: {e}")
             return {"success": False, "error": str(e)}
@@ -205,6 +259,11 @@ class FileTransferToolSet(FileManagerToolSetBase):
                     "total_size": total_size,
                     "chunks_written": chunks_written,
                     "duration_seconds": round(total_time, 2),
+                    **(
+                        {"attachment": attachment}
+                        if (attachment := info.get("attachment")) is not None
+                        else {}
+                    ),
                 }
             else:
                 return {"success": True}
@@ -226,11 +285,13 @@ class FileTransferToolSet(FileManagerToolSetBase):
             return {"success": False, "error": str(e)}
 
     @tool
-    async def open_file_for_read(self, file_path: str):
+    async def open_file_for_read(self, file_path: str, workspace_view: str | None = None):
         """Open a file for chunked reading (async). Returns handle_id and total_size.
 
         Args:
             file_path: Relative path to the file (cannot contain '..')
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             dict: {"success": True, "handle_id": str, "total_size": int} on success
@@ -239,7 +300,10 @@ class FileTransferToolSet(FileManagerToolSetBase):
         if ".." in file_path:
             return {"success": False, "error": "File path cannot contain '..'"}
 
-        path = self._get_root() / file_path
+        self._ensure_attachment_bridge()
+        path = self._resolve_user_visible_path(
+            file_path, workspace_view=workspace_view,
+        )
         if not path.exists():
             return {"success": False, "error": "File does not exist"}
 
@@ -304,7 +368,8 @@ class FileTransferToolSet(FileManagerToolSetBase):
 
     @tool
     async def read_file(
-        self, file_path: str, receive_chunk=None, chunk_size: int = 1024
+        self, file_path: str, receive_chunk=None, chunk_size: int = 1024,
+        workspace_view: str | None = None,
     ):
         """Read a file (streaming or non-streaming mode).
 
@@ -312,6 +377,8 @@ class FileTransferToolSet(FileManagerToolSetBase):
             file_path: Relative path to the file (cannot contain '..')
             receive_chunk: Optional callback for streaming mode (direct connections)
             chunk_size: Chunk size for streaming mode. Default: 1KB.
+            workspace_view: ``"global"`` resolves against the project workspace,
+                ``"isolated"`` against the session workspace.
 
         Returns:
             Non-streaming: {"success": True, "data": str (base64), "total_size": int, "encoding": "base64"}
@@ -321,7 +388,10 @@ class FileTransferToolSet(FileManagerToolSetBase):
         if ".." in file_path:
             return {"success": False, "error": "File path cannot contain '..'"}
 
-        path = self._get_root() / file_path
+        self._ensure_attachment_bridge()
+        path = self._resolve_user_visible_path(
+            file_path, workspace_view=workspace_view,
+        )
         if not path.exists():
             return {"success": False, "error": "File does not exist"}
 
@@ -352,4 +422,3 @@ class FileTransferToolSet(FileManagerToolSetBase):
             except Exception as e:
                 logger.error(f"Failed to stream file: {path}, error: {e}")
                 return {"success": False, "error": str(e)}
-

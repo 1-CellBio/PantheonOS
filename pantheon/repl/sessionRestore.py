@@ -105,7 +105,12 @@ def restoreWorktreeForResume(worktreeSession: Any) -> None:
         logger.warning("[resume] worktree path no longer exists: {}", worktree_path)
         return
 
-    original_cwd = worktreeSession.get("originalCwd") or os.getcwd()
+    original_cwd = worktreeSession.get("originalCwd")
+    if not original_cwd:
+        try:
+            original_cwd = os.getcwd()
+        except (FileNotFoundError, OSError):
+            original_cwd = str(Path.home())
     current = {
         **worktreeSession,
         "originalCwd": original_cwd,

@@ -12,7 +12,7 @@ test.py
 __pycache__/
 *.py[cod]
 *$py.class
-
+uv.lock
 # C extensions
 *.so
 
@@ -238,3 +238,4 @@ examples/code_distillation/data/*.npz
 .uploaded_files/
 *.aux
 .claude/worktrees/
+.claude/settings.local.json

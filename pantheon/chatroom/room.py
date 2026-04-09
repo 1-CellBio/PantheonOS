@@ -3,6 +3,10 @@ import copy
 import dataclasses
 import io
 import json as _json
+import os
+import sys
+
+
 try:
     import psutil as _psutil
     _psutil_process = _psutil.Process()
@@ -26,6 +30,16 @@ from pantheon.team import PantheonTeam
 from pantheon.toolset import ToolSet, tool
 from pantheon.utils.log import logger
 from pantheon.utils.misc import run_func
+from pantheon.utils.workspace import (
+    build_upload_attachment_metadata,
+    build_workspace_views,
+    WorkspaceLayout,
+    ensure_workspace_layout,
+    normalize_project_metadata,
+    resolve_upload_attachment_path,
+    resolve_workspace_layout,
+    slugify_project_name,
+)
 from .special_agents import get_suggestion_generator
 from .thread import Thread
 
@@ -34,6 +48,79 @@ if TYPE_CHECKING:
 
 
 DEFAULT_TOOLSETS = []
+
+_READ_ONLY_WORKSPACE_VIEW_METHODS = {
+    "get_cwd",
+    "list_files",
+    "glob",
+    "grep",
+    "read_file",
+    "read_pdf",
+    "fetch_image_base64",
+    "fetch_resources_batch",
+}
+_WRITE_WORKSPACE_VIEW_METHODS = {
+    "manage_path",
+    "create_directory",
+    "write_file",
+    "append_file",
+    "delete_path",
+    "move_file",
+}
+_WORKSPACE_VIEW_AWARE_METHODS = _READ_ONLY_WORKSPACE_VIEW_METHODS | _WRITE_WORKSPACE_VIEW_METHODS
+_FILE_TRANSFER_WORKSPACE_VIEW_HINT_METHODS = {
+    "open_file_for_write",
+    "open_file_for_read",
+    "read_file",
+}
+_VALID_WORKSPACE_VIEWS = {"global", "isolated"}
+_WORKSPACE_VIEW_ALIASES = {
+    "global": "global",
+    "isolated": "isolated",
+    "project": "global",
+    "session": "isolated",
+}
+
+
+def _supports_workspace_view_input(
+    toolset_name: str | None,
+    method_name: str,
+) -> bool:
+    if toolset_name == "file_transfer":
+        return method_name in _FILE_TRANSFER_WORKSPACE_VIEW_HINT_METHODS
+    return method_name in _WORKSPACE_VIEW_AWARE_METHODS
+
+
+def _passes_workspace_view_downstream(
+    toolset_name: str | None,
+    method_name: str,
+) -> bool:
+    if toolset_name == "file_transfer":
+        return method_name in _FILE_TRANSFER_WORKSPACE_VIEW_HINT_METHODS
+    return method_name in _WORKSPACE_VIEW_AWARE_METHODS
+
+
+def _path_is_within_root(candidate: Path, root: Path) -> bool:
+    try:
+        resolved_candidate = candidate.expanduser().resolve()
+        resolved_root = root.expanduser().resolve()
+    except Exception:
+        return False
+
+    if resolved_candidate == resolved_root:
+        return True
+
+    try:
+        return resolved_candidate.is_relative_to(resolved_root)
+    except Exception:
+        pass
+
+    if sys.platform == "darwin" or os.name == "nt":
+        candidate_cmp = os.path.normpath(str(resolved_candidate)).casefold()
+        root_cmp = os.path.normpath(str(resolved_root)).casefold()
+        return candidate_cmp == root_cmp or candidate_cmp.startswith(f"{root_cmp}{os.sep}")
+
+    return False
 
 
 def _custom_models_path() -> Path:
@@ -263,6 +350,9 @@ class ChatRoom(ToolSet):
         # Register activity callback for _ping responses (used by Hub idle cleanup)
         if hasattr(self, 'worker') and self.worker and hasattr(self.worker, 'set_activity_callback'):
             self.worker.set_activity_callback(self._get_activity_status)
+
+        # Migrate legacy flat workspace directories to nested layout
+        await self._migrate_legacy_workspaces()
 
     def _get_activity_status(self) -> dict:
         """Return current activity status for _ping responses.
@@ -777,6 +867,493 @@ class ChatRoom(ToolSet):
             logger.error(f"Error getting toolsets: {e}")
             return {"success": False, "error": str(e)}
 
+    def _normalize_workspace_view_arg(self, value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        return _WORKSPACE_VIEW_ALIASES.get(value.strip().lower())
+
+    def _infer_workspace_view_from_path(
+        self,
+        layout: WorkspaceLayout,
+        path_value: object,
+    ) -> str | None:
+        if not isinstance(path_value, str) or not path_value.strip():
+            return None
+
+        try:
+            candidate = Path(path_value).expanduser().resolve()
+        except Exception:
+            return None
+
+        try:
+            session_root = layout.session_workspace_path.resolve()
+            if _path_is_within_root(candidate, session_root):
+                return "isolated"
+        except Exception:
+            pass
+
+        try:
+            project_root = layout.project_workspace_path.resolve()
+            if _path_is_within_root(candidate, project_root):
+                return "global"
+        except Exception:
+            pass
+
+        return None
+
+    def _infer_workspace_view_for_request(
+        self,
+        args: dict,
+        layout: WorkspaceLayout,
+    ) -> str | None:
+        explicit_view = self._normalize_workspace_view_arg(
+            args.get("workspace_view")
+            or args.get("workspace_scope")
+            or args.get("scope")
+            or args.get("view")
+            or args.get("fileView")
+            or args.get("file_view")
+        )
+        if explicit_view is not None:
+            return explicit_view
+
+        request_candidates: list[object] = [
+            args.get("_workdir"),
+            args.get("workdir"),
+        ]
+
+        context_variables = args.get("context_variables")
+        if isinstance(context_variables, dict):
+            request_candidates.extend(
+                [
+                    context_variables.get("_workdir"),
+                    context_variables.get("workdir"),
+                    context_variables.get("cwd"),
+                    context_variables.get("current_dir"),
+                    context_variables.get("currentDir"),
+                    context_variables.get("current_path"),
+                    context_variables.get("currentPath"),
+                ]
+            )
+
+        for candidate in request_candidates:
+            inferred = self._infer_workspace_view_from_path(layout, candidate)
+            if inferred is not None:
+                return inferred
+
+        # Default based on workspace mode before checking stale caller context.
+        if layout.workspace_mode == "project":
+            return "global"
+        if layout.workspace_mode == "isolated":
+            return "isolated"
+
+        caller_context = self.get_context() or {}
+        caller_candidates = [
+            caller_context.get("_workdir"),
+            caller_context.get("workdir"),
+            caller_context.get("cwd"),
+            caller_context.get("current_dir"),
+            caller_context.get("currentDir"),
+            caller_context.get("current_path"),
+            caller_context.get("currentPath"),
+        ]
+
+        for candidate in caller_candidates:
+            inferred = self._infer_workspace_view_from_path(layout, candidate)
+            if inferred is not None:
+                return inferred
+
+        return None
+
+    def _normalize_attachment_descriptor(
+        self,
+        raw_attachment: dict,
+        layout: WorkspaceLayout,
+    ) -> dict | None:
+        candidate = raw_attachment
+        if not isinstance(candidate, dict):
+            return None
+
+        for key in ("file", "attachment", "uploaded_file", "file_ref"):
+            nested = candidate.get(key)
+            if isinstance(nested, dict):
+                candidate = nested
+                break
+
+        metadata = None
+        absolute_path = candidate.get("absolute_path")
+        if isinstance(absolute_path, str) and absolute_path:
+            metadata = build_upload_attachment_metadata(layout, absolute_path)
+
+        workspace_scope = candidate.get("workspace_scope") or candidate.get("scope")
+        if workspace_scope not in {"project", "session"}:
+            workspace_scope = None
+
+        virtual_path = candidate.get("virtual_path") or candidate.get("path")
+        if not isinstance(virtual_path, str) or not virtual_path.strip():
+            virtual_path = metadata.get("virtual_path") if metadata else None
+        if not isinstance(virtual_path, str) or not virtual_path.strip():
+            return metadata
+
+        virtual_path = virtual_path.strip()
+        if workspace_scope is None and metadata is not None:
+            workspace_scope = metadata["workspace_scope"]
+        if workspace_scope is None:
+            workspace_view = candidate.get("workspace_view")
+            if workspace_view == "global":
+                workspace_scope = "project"
+            elif workspace_view == "isolated":
+                workspace_scope = "session"
+        if workspace_scope is None:
+            project_path = resolve_upload_attachment_path(
+                layout,
+                virtual_path,
+                workspace_scope="project",
+                workspace_view="global",
+            )
+            session_path = resolve_upload_attachment_path(
+                layout,
+                virtual_path,
+                workspace_scope="session",
+                workspace_view="isolated",
+            )
+            project_exists = bool(project_path and project_path.exists())
+            session_exists = bool(session_path and session_path.exists())
+            if project_exists and not session_exists:
+                workspace_scope = "project"
+            elif session_exists and not project_exists:
+                workspace_scope = "session"
+        if workspace_scope is None:
+            workspace_scope = (
+                "project"
+                if layout.upload_workspace_path == layout.project_workspace_path
+                else "session"
+            )
+        if workspace_scope is None:
+            return metadata
+
+        name = candidate.get("name")
+        if not isinstance(name, str) or not name.strip():
+            name = Path(virtual_path).name
+
+        workspace_view = "global" if workspace_scope == "project" else "isolated"
+        scope_label = "项目上传区" if workspace_scope == "project" else "会话上传区"
+
+        normalized = {
+            "name": name.strip(),
+            "virtual_path": virtual_path,
+            "workspace_scope": workspace_scope,
+            "workspace_view": workspace_view,
+            "display_path": f"{scope_label} · {virtual_path}",
+            "scope_label": scope_label,
+        }
+        if isinstance(absolute_path, str) and absolute_path:
+            normalized["absolute_path"] = absolute_path
+        elif metadata and metadata.get("absolute_path"):
+            normalized["absolute_path"] = metadata["absolute_path"]
+        else:
+            resolved_path = resolve_upload_attachment_path(
+                layout,
+                virtual_path,
+                workspace_scope=workspace_scope,
+                workspace_view=workspace_view,
+            )
+            if resolved_path is not None:
+                normalized["absolute_path"] = str(resolved_path)
+        return normalized
+
+    def _inject_attachment_scope_into_messages(
+        self,
+        messages: list[dict],
+        layout: WorkspaceLayout,
+    ) -> list[dict]:
+        for message in messages:
+            raw_attachments: list[dict] = []
+
+            attachments = message.get("attachments")
+            if isinstance(attachments, list):
+                raw_attachments.extend(
+                    item for item in attachments if isinstance(item, dict)
+                )
+
+            user_metadata = message.get("_user_metadata")
+            if isinstance(user_metadata, dict):
+                metadata_attachments = user_metadata.get("attachments")
+                if isinstance(metadata_attachments, list):
+                    raw_attachments.extend(
+                        item for item in metadata_attachments if isinstance(item, dict)
+                    )
+
+            content = message.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("type") in {"file", "attachment", "uploaded_file", "file_ref"}:
+                        raw_attachments.append(item)
+
+            normalized_attachments: list[dict] = []
+            seen_keys: set[tuple[str, str]] = set()
+            for raw_attachment in raw_attachments:
+                normalized = self._normalize_attachment_descriptor(raw_attachment, layout)
+                if normalized is None:
+                    continue
+                dedupe_key = (
+                    normalized["workspace_scope"],
+                    normalized["virtual_path"],
+                )
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
+                normalized_attachments.append(normalized)
+
+            if not normalized_attachments:
+                continue
+
+            message["attachments"] = normalized_attachments
+            attachment_lines = [
+                f"- {attachment['name']} -> {attachment['scope_label']}: {attachment['virtual_path']}"
+                for attachment in normalized_attachments
+            ]
+            for attachment in normalized_attachments:
+                abs_path = attachment.get("absolute_path")
+                if isinstance(abs_path, str) and abs_path:
+                    attachment_lines.append(f"  完整路径: {abs_path}")
+            injection = "附件位置说明:\n" + "\n".join(attachment_lines)
+
+            if "_llm_content" not in message or message["_llm_content"] is None:
+                message["_llm_content"] = message.get("content")
+
+            if isinstance(message["_llm_content"], str):
+                message["_llm_content"] += f"\n\n{injection}"
+            elif isinstance(message["_llm_content"], list):
+                message["_llm_content"].append({"type": "text", "text": f"\n\n{injection}"})
+
+        return messages
+
+    def _resolve_workspace_layout(
+        self,
+        chat_id: str,
+        project: dict | None = None,
+    ) -> WorkspaceLayout:
+        return resolve_workspace_layout(self.memory_dir.parent, chat_id, project)
+
+    def _normalize_project_metadata(
+        self,
+        chat_id: str,
+        project: dict | None = None,
+    ) -> tuple[dict, WorkspaceLayout]:
+        project_data = normalize_project_metadata(self.memory_dir.parent, chat_id, project)
+        return project_data, self._resolve_workspace_layout(chat_id, project_data)
+
+    def _sync_workspace_metadata(
+        self,
+        memory,
+        chat_id: str,
+        *,
+        create_chat_workspace: bool = False,
+        create_project_workspace: bool = False,
+        create_effective_workspace: bool = False,
+    ) -> tuple[dict, WorkspaceLayout]:
+        """Normalize and persist project workspace metadata, returning (project, layout)."""
+        project = memory.extra_data.get("project", {}) if hasattr(memory, "extra_data") else {}
+        if not isinstance(project, dict):
+            project = {}
+
+        # If workspace_path points to a flat layout (workspaces/<uuid>/),
+        # remove it so the layout system computes the nested path instead.
+        old_ws = project.get("workspace_path")
+        if old_ws:
+            try:
+                old_path = Path(old_ws).resolve()
+                ws_root = (self.memory_dir.parent / "workspaces").resolve()
+                if old_path.parent == ws_root:
+                    project.pop("workspace_path", None)
+                    project.pop("workspace_override_path", None)
+                    project.pop("original_cwd", None)
+            except Exception:
+                pass
+
+        normalized_project, layout = self._normalize_project_metadata(chat_id, project)
+        ensure_workspace_layout(
+            layout,
+            create_chat_workspace=create_chat_workspace,
+            create_project_workspace=create_project_workspace,
+            create_upload_workspace=create_chat_workspace or create_project_workspace,
+            create_effective_workspace=create_effective_workspace,
+            create_attachment_bridge=(
+                create_effective_workspace or create_chat_workspace or create_project_workspace
+            ),
+        )
+
+        if normalized_project != project:
+            memory.extra_data["project"] = normalized_project
+            memory.mark_dirty()
+
+        return normalized_project, layout
+
+    def _resolve_effective_workdir(self, project: dict, chat_id: str) -> str:
+        return str(self._resolve_workspace_layout(chat_id, project).effective_workspace_path)
+
+    def _active_chat_marker_path(self) -> Path:
+        return self.memory_dir.parent / "active_chat_id"
+
+    def _persist_active_chat_id(self, chat_id: str | None) -> None:
+        marker = self._active_chat_marker_path()
+        try:
+            if not chat_id:
+                marker.unlink(missing_ok=True)
+                return
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(chat_id, encoding="utf-8")
+        except Exception as e:
+            logger.debug(f"Failed to persist active chat marker: {e}")
+
+    async def _migrate_legacy_workspaces(self) -> None:
+        """Move legacy ``workspaces/<chat_id>/`` dirs to ``workspaces/default/<chat_id>/``.
+
+        Also patches the corresponding memory's ``project`` metadata so the
+        new paths are persisted.  The migration is idempotent.
+        """
+        import re as _re
+        import shutil
+
+        ws_root = self.memory_dir.parent / "workspaces"
+        if not ws_root.exists():
+            return
+
+        try:
+            tracked_ids = set(await run_func(self.memory_manager.list_memories))
+        except Exception:
+            return
+
+        uuid_re = _re.compile(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        )
+
+        migrated = 0
+        for child in list(ws_root.iterdir()):
+            if not child.is_dir():
+                continue
+            if not uuid_re.match(child.name):
+                continue
+            chat_id = child.name
+            dest = ws_root / "default" / chat_id
+            if dest.exists():
+                continue
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(child), str(dest))
+                logger.info(f"Migrated legacy workspace {child.name} -> default/{chat_id}")
+                migrated += 1
+            except Exception as e:
+                logger.warning(f"Failed to migrate workspace {child}: {e}")
+                continue
+
+            # Patch memory metadata if the chat still exists.
+            if chat_id in tracked_ids:
+                try:
+                    memory = await run_func(self.memory_manager.get_memory, chat_id)
+                    project = memory.extra_data.get("project", {})
+                    if not isinstance(project, dict):
+                        project = {}
+                    project["slug"] = "default"
+                    project["workspace_mode"] = project.get("workspace_mode", "isolated")
+                    project["chat_workspace_path"] = str(dest)
+                    project["project_workspace_path"] = str(ws_root / "default")
+                    project["workspace_path"] = self._resolve_effective_workdir(project, chat_id)
+                    # Remove stale flat-path overrides
+                    project.pop("workspace_override_path", None)
+                    project.pop("original_cwd", None)
+                    memory.extra_data["project"] = project
+                    memory.mark_dirty()
+                    await run_func(self.memory_manager.save_one, chat_id)
+                except Exception as e:
+                    logger.debug(f"Failed to patch memory for migrated chat {chat_id}: {e}")
+
+        if migrated:
+            logger.info(f"Legacy workspace migration complete: {migrated} chat(s) moved to 'default' project")
+
+    def _normalize_file_op_args(
+        self,
+        method_name: str,
+        args: dict,
+        workspace_path: str,
+        *,
+        toolset_name: str | None = None,
+    ) -> None:
+        """Pin file-operation paths to the resolved session workspace.
+
+        When workspace_view routing is active, the toolset resolves paths itself,
+        so we skip normalization.  Otherwise we rewrite relative paths to absolute
+        ones so they resolve against the correct workspace root even if downstream
+        workdir propagation is missing or stale.
+        """
+        if (
+            _passes_workspace_view_downstream(toolset_name, method_name)
+            and args.get("workspace_view") in _VALID_WORKSPACE_VIEWS
+        ):
+            return
+
+        workspace_root = Path(workspace_path).resolve()
+
+        path_keys_by_method = {
+            "read_file": ("file_path",),
+            "write_file": ("file_path",),
+            "append_file": ("file_path",),
+            "list_files": ("sub_dir",),
+            "glob": ("path",),
+            "grep": ("path",),
+            "manage_path": ("path", "new_path"),
+            "create_directory": ("sub_dir",),
+            "delete_path": ("path",),
+            "move_file": ("old_path", "new_path"),
+            "open_file_for_write": ("file_path",),
+            "open_file_for_read": ("file_path",),
+            "observe_pdf_screenshots": ("pdf_path",),
+        }
+
+        for key in path_keys_by_method.get(method_name, ()):
+            raw_value = args.get(key)
+            if not isinstance(raw_value, str) or not raw_value:
+                continue
+            if raw_value.startswith("file://") or Path(raw_value).is_absolute():
+                continue
+            if Path(raw_value).parts[:1] == (".uploaded_files",):
+                continue
+            args[key] = str((workspace_root / raw_value).resolve())
+
+        # observe_images uses a list of paths rather than a single string
+        if method_name == "observe_images":
+            raw_list = args.get("image_paths")
+            if isinstance(raw_list, list):
+                normalized: list[str] = []
+                for raw_value in raw_list:
+                    if not isinstance(raw_value, str) or not raw_value:
+                        normalized.append(raw_value)
+                        continue
+                    if raw_value.startswith("file://") or Path(raw_value).is_absolute():
+                        normalized.append(raw_value)
+                        continue
+                    if Path(raw_value).parts[:1] == (".uploaded_files",):
+                        normalized.append(raw_value)
+                        continue
+                    normalized.append(str((workspace_root / raw_value).resolve()))
+                args["image_paths"] = normalized
+
+    def _workspace_payload(self, layout: WorkspaceLayout) -> dict:
+        upload_scope = "project" if layout.upload_workspace_path == layout.project_workspace_path else "session"
+        return {
+            "workspace_path": str(layout.project_workspace_path),
+            "effective_workspace_path": str(layout.effective_workspace_path),
+            "default_workspace_view": "global" if layout.workspace_mode == "project" else "isolated",
+            "workspace_views": build_workspace_views(layout),
+            "upload_scope": upload_scope,
+            "project_workspace_path": str(layout.project_workspace_path),
+            "session_workspace_path": str(layout.session_workspace_path),
+            "upload_workspace_path": str(layout.upload_workspace_path),
+        }
+
     @tool
     async def proxy_toolset(
         self,
@@ -795,46 +1372,171 @@ class ChatRoom(ToolSet):
             The result from the toolset method call.
         """
         try:
+            args = args or {}
+
             # Add debug logging
             logger.debug(
                 f"chatroom proxy_toolset: method_name={method_name}, toolset_name={toolset_name}, args={args}"
             )
 
-            # Inject workdir from project metadata if session is in isolated mode
-            session_id = (args or {}).get("session_id") or getattr(self, '_current_chat_id', None)
-            # Special '__global__' session_id: explicitly use project root (clear any workdir)
-            if session_id == '__global__':
+            # --- Workspace view routing for file operations ---
+            file_methods = {
+                "manage_path",
+                "create_directory",
+                "write_file",
+                "append_file",
+                "delete_path",
+                "move_file",
+                "read_file",
+                "read_pdf",
+                "get_cwd",
+                "list_files",
+                "glob",
+                "grep",
+                "fetch_image_base64",
+                "fetch_resources_batch",
+                "observe_images",
+                "observe_pdf_screenshots",
+                # file_transfer methods (need workdir injection for upload path resolution)
+                "open_file_for_write",
+                "write_chunk",
+                "close_file",
+                "open_file_for_read",
+                "read_chunk",
+            }
+
+            # Normalize workspace_view aliases from various caller conventions
+            workspace_view = self._normalize_workspace_view_arg(
+                args.get("workspace_view")
+                or args.get("workspace_scope")
+                or args.get("scope")
+                or args.get("view")
+                or args.get("fileView")
+                or args.get("file_view")
+            )
+            if workspace_view is not None:
+                args["workspace_view"] = workspace_view
+            for alias_key in (
+                "workspace_scope",
+                "scope",
+                "view",
+                "fileView",
+                "file_view",
+            ):
+                args.pop(alias_key, None)
+            if args.get("workspace_view") is not None and args["workspace_view"] not in _VALID_WORKSPACE_VIEWS:
+                return {
+                    "success": False,
+                    "error": "workspace_view must be 'global' or 'isolated'",
+                }
+            if args.get("workspace_view") is not None and not _supports_workspace_view_input(
+                toolset_name,
+                method_name,
+            ):
+                # Silently strip workspace_view for methods that don't support it,
+                # rather than erroring — callers may pass it generically.
+                args.pop("workspace_view", None)
+            ctx = self.get_context() or {}
+
+            # Resolve session/chat context
+            requested_session_id = args.get("session_id") or ctx.get("session_id")
+            requested_chat_anchor = args.get("chat_id") or args.get("client_id")
+            fallback_chat_anchor = ctx.get("chat_id") or ctx.get("client_id")
+            explicit_chat_anchor = requested_chat_anchor or fallback_chat_anchor
+            session_id = requested_session_id or explicit_chat_anchor
+            auto_created_session = False
+            global_view_requested = False
+
+            if requested_session_id == "__global__":
                 from pantheon.toolset import get_current_context_variables
-                ctx = get_current_context_variables()
-                if ctx is not None:
-                    ctx.pop("workdir", None)
-                session_id = None
-            if session_id:
+                gctx = get_current_context_variables()
+                if gctx is not None:
+                    gctx.pop("workdir", None)
+                global_view_requested = True
+                session_id = explicit_chat_anchor
+                args.pop("session_id", None)
+                if "workspace_view" not in args:
+                    args["workspace_view"] = "global"
+
+            if method_name in file_methods:
+                args.pop("chat_id", None)
+                args.pop("client_id", None)
+
+            # Inject workspace_view + workdir based on project metadata
+            if method_name in file_methods and session_id:
                 try:
                     memory = await run_func(self.memory_manager.get_memory, session_id)
                     project = memory.extra_data.get("project", {})
-                    if isinstance(project, dict):
-                        workspace_mode = project.get("workspace_mode",
-                            "isolated" if project.get("workspace_path") else "project")
-                        workspace_path = project.get("workspace_path")
-                        from pantheon.toolset import get_current_context_variables
-                        ctx = get_current_context_variables()
-                        if ctx is not None:
-                            if workspace_mode == "isolated" and workspace_path:
-                                ctx["workdir"] = workspace_path
-                            else:
-                                # Clear workdir so toolset falls back to project root
-                                ctx.pop("workdir", None)
+                    if not isinstance(project, dict):
+                        project = {}
+
+                    project, layout = self._sync_workspace_metadata(
+                        memory,
+                        session_id,
+                        create_chat_workspace=True,
+                        create_project_workspace=True,
+                        create_effective_workspace=True,
+                    )
+                    requested_view = self._infer_workspace_view_for_request(args, layout)
+                    if (
+                        requested_view is not None
+                        and _passes_workspace_view_downstream(toolset_name, method_name)
+                    ):
+                        args["workspace_view"] = requested_view
+
+                    workspace_path = str(layout.effective_workspace_path)
+                    if requested_view == "global":
+                        workspace_path = str(layout.project_workspace_path)
+                    elif requested_view == "isolated":
+                        workspace_path = str(layout.session_workspace_path)
+
+                    from pantheon.toolset import get_current_context_variables
+                    ctx = get_current_context_variables()
+                    if ctx is not None:
+                        ctx["workdir"] = workspace_path
+
+                    # Explicit propagation for endpoint/toolset manager paths.
+                    if not _passes_workspace_view_downstream(toolset_name, method_name):
+                        args.pop("workspace_view", None)
+
+                    # Normalize relative paths to absolute for methods without workspace_view
+                    self._normalize_file_op_args(
+                        method_name,
+                        args,
+                        workspace_path,
+                        toolset_name=toolset_name,
+                    )
+
+                    # Propagate workdir through context_variables (NOT through args directly,
+                    # to avoid unexpected keyword argument errors in tool methods).
+                    context_vars = args.get("context_variables")
+                    if not isinstance(context_vars, dict):
+                        context_vars = {}
+                    context_vars["workdir"] = workspace_path
+                    args["context_variables"] = context_vars
                 except Exception as e:
                     logger.debug(f"Could not inject workdir for session {session_id}: {e}")
+
+            # Final safety net: strip workspace_view for any method that doesn't support it.
+            # This prevents unexpected keyword argument errors in downstream toolsets.
+            if not _passes_workspace_view_downstream(toolset_name, method_name):
+                args.pop("workspace_view", None)
 
             # Use unified endpoint call method
             result = await self._call_endpoint_method(
                 endpoint_method_name="proxy_toolset",
                 method_name=method_name,
-                args=args or {},
+                args=args,
                 toolset_name=toolset_name,
             )
+
+            if (
+                auto_created_session
+                and isinstance(result, dict)
+                and result.get("success") is True
+                and session_id
+            ):
+                result.setdefault("session_id", session_id)
 
             return result
 
@@ -958,58 +1660,63 @@ class ChatRoom(ToolSet):
         chat_name: str | None = None,
         project_name: str | None = None,
         workspace_path: str | None = None,
-        workspace_mode: str = "project",
+        workspace_mode: str = "isolated",
     ) -> dict:
         """Create a new chat.
 
         Args:
             chat_name: The name of the chat.
             project_name: Optional project name for grouping.
-            workspace_path: Optional workspace directory path.
-            workspace_mode: Workspace mode - "project" (shared, default) or "isolated" (per-chat).
+            workspace_path: Optional explicit workspace directory path.
+            workspace_mode: ``"isolated"`` (default, per-chat dir) or
+                ``"project"`` (shared project dir).
         """
+        if workspace_mode not in ("isolated", "project"):
+            workspace_mode = "isolated"
+
         memory = await run_func(self.memory_manager.new_memory, chat_name)
         memory.set_metadata("last_activity_date", datetime.now().isoformat())
 
-        if workspace_path:
-            # Explicit path provided — always isolated
-            workspace_mode = "isolated"
-            import os
-            try:
-                os.makedirs(workspace_path, exist_ok=True)
-                logger.info(f"Ensured workspace directory exists: {workspace_path}")
-            except Exception as e:
-                logger.warning(f"Failed to create workspace directory {workspace_path}: {e}")
-        elif workspace_mode == "isolated":
-            # Create per-session workspace
-            settings = get_settings()
-            session_workspace_dir = settings.pantheon_dir / "workspaces" / memory.id
-            try:
-                session_workspace_dir.mkdir(parents=True, exist_ok=True)
-                workspace_path = str(session_workspace_dir)
-                logger.info(f"Created session workspace directory: {workspace_path}")
-            except Exception as e:
-                logger.warning(f"Failed to create session workspace directory: {e}")
-                workspace_mode = "project"  # Fallback to project mode
-
-        # Set project metadata
-        project = {}
-        if project_name:
+        project = memory.extra_data.get("project", {})
+        if not isinstance(project, dict):
+            project = {}
+        if project_name is not None:
             project["name"] = project_name
         project["workspace_mode"] = workspace_mode
         if workspace_path:
-            project["workspace_path"] = workspace_path
-            project["original_cwd"] = str(get_settings().workspace)
-        if project:
-            memory.set_metadata("project", project)
+            project["workspace_override_path"] = str(Path(workspace_path).expanduser().resolve())
+        else:
+            project.pop("workspace_override_path", None)
+
+        project, layout = self._normalize_project_metadata(memory.id, project)
+        memory.extra_data["project"] = project
+        ensure_workspace_layout(
+            layout,
+            create_chat_workspace=layout.workspace_override_path is None,
+            create_project_workspace=layout.workspace_override_path is None,
+            create_upload_workspace=True,
+            create_effective_workspace=True,
+            create_attachment_bridge=True,
+        )
+        memory.extra_data["project"] = project
+        memory.mark_dirty()
+
+        # Track as current chat so proxy_toolset can inject workdir immediately
+        self._current_chat_id = memory.id
+        self._persist_active_chat_id(memory.id)
+        try:
+            await run_func(self.memory_manager.save_one, memory.id)
+        except Exception as e:
+            logger.warning(f"Failed to persist newly created chat {memory.id}: {e}")
 
         return {
             "success": True,
             "message": "Chat created successfully",
             "chat_name": memory.name,
             "chat_id": memory.id,
-            "workspace_mode": workspace_mode,
-            "workspace_path": workspace_path,
+            "workspace_mode": project["workspace_mode"],
+            "project_slug": project["slug"],
+            **self._workspace_payload(layout),
         }
 
     @tool
@@ -1022,24 +1729,25 @@ class ChatRoom(ToolSet):
         import shutil
 
         try:
-            # Check if chat has an isolated workspace to clean up
+            # Determine the session workspace to clean up (if isolated mode)
             workspace_path_to_delete = None
             try:
                 memory = await run_func(self.memory_manager.get_memory, chat_id)
                 project = memory.extra_data.get("project", {})
                 if isinstance(project, dict):
-                    workspace_mode = project.get("workspace_mode",
-                        "isolated" if project.get("workspace_path") else "project")
-                    workspace_path = project.get("workspace_path")
-                    if workspace_mode == "isolated" and workspace_path:
-                        settings = get_settings()
-                        workspaces_dir = settings.pantheon_dir / "workspaces"
-                        workspace_path_obj = Path(workspace_path)
-                        try:
-                            workspace_path_obj.relative_to(workspaces_dir)
-                            workspace_path_to_delete = workspace_path_obj
-                        except ValueError:
-                            pass  # Not under .pantheon/workspaces/, don't delete
+                    layout = self._resolve_workspace_layout(chat_id, project)
+                    # Only delete the per-session directory in isolated mode.
+                    # In project mode, the shared directory must survive.
+                    if layout.workspace_mode == "isolated":
+                        candidate = layout.session_workspace_path
+                        if candidate is not None:
+                            settings = get_settings()
+                            workspaces_dir = settings.pantheon_dir / "workspaces"
+                            try:
+                                candidate.resolve().relative_to(workspaces_dir.resolve())
+                                workspace_path_to_delete = candidate
+                            except ValueError:
+                                pass  # Not under .pantheon/workspaces/, don't delete
             except Exception as e:
                 logger.debug(f"Could not get workspace path for chat {chat_id}: {e}")
 
@@ -1101,6 +1809,10 @@ class ChatRoom(ToolSet):
                             "last_activity_date", None
                         ),
                         "project": project,
+                        "workspace_mode": project.get("workspace_mode", "isolated") if isinstance(project, dict) else "isolated",
+                        **self._workspace_payload(
+                            self._resolve_workspace_layout(id, project if isinstance(project, dict) else None)
+                        ),
                     }
                 )
 
@@ -1167,6 +1879,21 @@ class ChatRoom(ToolSet):
                             del message["raw_content"]
                     except (TypeError, ValueError):
                         pass
+            # Resolve workspace layout so frontend can track workspace mode changes
+            project = memory.extra_data.get("project", {})
+            if isinstance(project, dict):
+                project, layout = self._sync_workspace_metadata(
+                    memory, chat_id,
+                    create_chat_workspace=False,
+                    create_project_workspace=False,
+                    create_effective_workspace=False,
+                )
+                return {
+                    "success": True,
+                    "messages": messages,
+                    "workspace_mode": layout.workspace_mode,
+                    **self._workspace_payload(layout),
+                }
             return {"success": True, "messages": messages}
         except KeyError:
             return {
@@ -1213,13 +1940,14 @@ class ChatRoom(ToolSet):
 
         Args:
             chat_id: The chat ID.
-            workspace_mode: "project" (shared) or "isolated" (per-chat).
+            workspace_mode: ``"isolated"`` (per-chat dir) or ``"project"``
+                (shared project dir).
 
         Returns:
-            A dictionary with success status, workspace_mode, and workspace_path.
+            Dict with success status, workspace_mode, and resolved workspace info.
         """
-        if workspace_mode not in ("project", "isolated"):
-            return {"success": False, "message": "workspace_mode must be 'project' or 'isolated'"}
+        if workspace_mode not in ("isolated", "project"):
+            return {"success": False, "message": "workspace_mode must be 'isolated' or 'project'"}
 
         try:
             memory = await run_func(self.memory_manager.get_memory, chat_id)
@@ -1227,30 +1955,26 @@ class ChatRoom(ToolSet):
             if not isinstance(project, dict):
                 project = {}
 
-            workspace_path = project.get("workspace_path")
-
-            if workspace_mode == "isolated" and not workspace_path:
-                # Create per-session workspace if switching to isolated
-                settings = get_settings()
-                session_workspace_dir = settings.pantheon_dir / "workspaces" / chat_id
-                try:
-                    session_workspace_dir.mkdir(parents=True, exist_ok=True)
-                    workspace_path = str(session_workspace_dir)
-                    project["workspace_path"] = workspace_path
-                    project["original_cwd"] = str(settings.workspace)
-                    logger.info(f"Created workspace for chat {chat_id}: {workspace_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to create workspace for chat {chat_id}: {e}")
-                    return {"success": False, "message": f"Failed to create workspace: {e}"}
-
             project["workspace_mode"] = workspace_mode
-            memory.set_metadata("project", project)
+
+            project, layout = self._normalize_project_metadata(chat_id, project)
+            ensure_workspace_layout(
+                layout,
+                create_chat_workspace=layout.workspace_override_path is None,
+                create_project_workspace=layout.workspace_override_path is None,
+                create_upload_workspace=True,
+                create_effective_workspace=True,
+                create_attachment_bridge=True,
+            )
+            memory.extra_data["project"] = project
+            memory.mark_dirty()
+            await run_func(self.memory_manager.save_one, chat_id)
 
             return {
                 "success": True,
                 "message": f"Workspace mode set to '{workspace_mode}'",
-                "workspace_mode": workspace_mode,
-                "workspace_path": workspace_path if workspace_mode == "isolated" else None,
+                "workspace_mode": project["workspace_mode"],
+                **self._workspace_payload(layout),
             }
         except Exception as e:
             logger.error(f"Error setting workspace mode: {e}")
@@ -1267,11 +1991,14 @@ class ChatRoom(ToolSet):
     ) -> dict:
         """Set or update project metadata for a chat.
 
+        When ``project_name`` changes, the slug and workspace paths are
+        recomputed to match the new project directory.
+
         Args:
             chat_id: The ID of the chat.
             project_name: Project name (None to remove project).
-            workspace_path: Optional workspace directory path.
-            workspace_mode: Optional workspace mode ("project" or "isolated").
+            workspace_path: Optional explicit workspace directory path.
+            workspace_mode: Optional ``"isolated"`` or ``"project"``.
             **kwargs: Additional project metadata (color, icon, etc.)
 
         Returns:
@@ -1281,9 +2008,9 @@ class ChatRoom(ToolSet):
             memory = await run_func(self.memory_manager.get_memory, chat_id)
 
             if project_name is None and workspace_path is None and workspace_mode is None and not kwargs:
-                # Remove project metadata
-                memory.delete_metadata("project")
+                memory.extra_data.pop("project", None)
                 message = "Project metadata removed"
+                layout = self._resolve_workspace_layout(chat_id, {})
             else:
                 # Create or update project object
                 project = copy.deepcopy(memory.extra_data.get("project", {}))
@@ -1292,9 +2019,12 @@ class ChatRoom(ToolSet):
 
                 if project_name is not None:
                     project["name"] = project_name
+                    project["slug"] = slugify_project_name(project_name)
+
                 if workspace_path is not None:
-                    project["workspace_path"] = workspace_path
-                    project.setdefault("original_cwd", str(get_settings().workspace))
+                    project["workspace_override_path"] = str(
+                        Path(workspace_path).expanduser().resolve()
+                    )
                 if workspace_mode is not None:
                     project["workspace_mode"] = workspace_mode
 
@@ -1302,9 +2032,25 @@ class ChatRoom(ToolSet):
                     if value is not None:
                         project[key] = value
 
-                memory.set_metadata("project", project)
-                message = f"Project metadata updated for chat"
-            return {"success": True, "message": message}
+                project, layout = self._normalize_project_metadata(chat_id, project)
+                ensure_workspace_layout(
+                    layout,
+                    create_chat_workspace=layout.workspace_override_path is None,
+                    create_project_workspace=layout.workspace_override_path is None,
+                    create_upload_workspace=True,
+                    create_effective_workspace=True,
+                    create_attachment_bridge=True,
+                )
+                memory.extra_data["project"] = project
+                message = f"Project '{project.get('name', project['slug'])}' set for chat"
+
+            memory.mark_dirty()
+            return {
+                "success": True,
+                "message": message,
+                "workspace_mode": layout.workspace_mode,
+                **self._workspace_payload(layout),
+            }
         except Exception as e:
             logger.error(f"Error setting chat project: {e}")
             return {"success": False, "message": str(e)}
@@ -1622,6 +2368,10 @@ class ChatRoom(ToolSet):
 
         logger.info(f"Received message: {chat_id}|{message}")
 
+        # Track as current chat so proxy_toolset can inject workdir
+        self._current_chat_id = chat_id
+        self._persist_active_chat_id(chat_id)
+
         if chat_id in self.threads:
             return {"success": False, "message": "Chat is already running"}
         try:
@@ -1642,16 +2392,30 @@ class ChatRoom(ToolSet):
         team = await self.get_team_for_chat(chat_id)
         self._setup_bg_auto_notify(chat_id, team)
 
-        # Inject workdir from project metadata if in isolated mode
-        project = memory.extra_data.get("project", {})
-        workspace_path = None
-        if isinstance(project, dict):
-            workspace_mode = project.get("workspace_mode",
-                "isolated" if project.get("workspace_path") else "project")
-            workspace_path = project.get("workspace_path")
-            if workspace_mode == "isolated" and workspace_path:
+        # Inject workdir from project metadata using workspace layout
+        layout = None
+        try:
+            project = memory.extra_data.get("project", {})
+            if isinstance(project, dict):
+                project, layout = self._sync_workspace_metadata(
+                    memory,
+                    chat_id,
+                    create_chat_workspace=True,
+                    create_project_workspace=True,
+                    create_effective_workspace=True,
+                )
                 context_variables = context_variables or {}
-                context_variables["workdir"] = workspace_path
+                context_variables["workspace"] = str(layout.project_workspace_path)
+                context_variables["workdir"] = str(layout.effective_workspace_path)
+                context_variables["effective_workspace_path"] = str(layout.effective_workspace_path)
+                context_variables["workspace_mode"] = layout.workspace_mode
+                upload_scope = "project" if layout.upload_workspace_path == layout.project_workspace_path else "session"
+                context_variables["upload_scope"] = upload_scope
+                context_variables["project_workspace_path"] = str(layout.project_workspace_path)
+                context_variables["session_workspace_path"] = str(layout.session_workspace_path)
+                message = self._inject_attachment_scope_into_messages(message, layout)
+        except Exception as e:
+            logger.debug(f"Could not inject workdir for chat {chat_id}: {e}")
 
         # Set up a designated image output directory so agents save images
         # to a known location and claw channels can detect them cheaply.
@@ -1659,9 +2423,10 @@ class ChatRoom(ToolSet):
             IMAGE_OUTPUT_DIR, snapshot_images, diff_snapshots, encode_images_to_uris,
         )
         image_output_path: str | None = None
-        if workspace_path:
+        if layout is not None:
             import os
-            image_output_path = os.path.join(workspace_path, IMAGE_OUTPUT_DIR)
+            _ws_path = str(layout.effective_workspace_path)
+            image_output_path = os.path.join(_ws_path, IMAGE_OUTPUT_DIR)
             os.makedirs(image_output_path, exist_ok=True)
             context_variables = context_variables or {}
             context_variables["image_output_dir"] = image_output_path
