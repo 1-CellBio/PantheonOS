@@ -131,8 +131,10 @@ class SlackGatewayApp(ChannelRuntime):
         if not raw:
             return
         ext = mime.split("/")[-1] if mime else "png"
+        # Use app client (has bot token) — bolt's event client may lack token for file uploads
+        upload_client = self._app.client
         try:
-            await client.files_upload_v2(
+            await upload_client.files_upload_v2(
                 channel=channel,
                 content=raw,
                 filename=f"image.{ext}",
@@ -206,7 +208,7 @@ class SlackGatewayApp(ChannelRuntime):
                 import os
                 if os.path.isfile(fpath):
                     try:
-                        await client.files_upload_v2(
+                        await self._app.client.files_upload_v2(
                             channel=channel,
                             thread_ts=thread_ts,
                             file=fpath,
