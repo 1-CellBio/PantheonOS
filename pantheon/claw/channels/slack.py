@@ -286,9 +286,10 @@ class SlackGatewayApp(ChannelRuntime):
             if event.get("subtype") == "bot_message":
                 return
             route = self._route_from_event(body)
-            if route.scope_type != "dm" and not event.get("thread_ts"):
-                return
             text = str(event.get("text") or "").strip()
+            # In channels: only process DMs, threaded replies, or ! commands
+            if route.scope_type != "dm" and not event.get("thread_ts") and not text.startswith("!"):
+                return
             image_uris = await self._download_files(client, event)
             # Download non-image files and inject as attachments
             docs = await self._download_documents(client, event)
