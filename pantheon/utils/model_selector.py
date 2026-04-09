@@ -315,9 +315,11 @@ class ModelSelector:
             if api_key_value:
                 self._available_providers.add(provider)
 
-        # Check custom endpoint keys
+        # Check custom endpoint keys (env var or settings.json)
+        from pantheon.settings import get_settings
+        settings = get_settings()
         for provider_key, config in CUSTOM_ENDPOINT_ENVS.items():
-            if os.environ.get(config.api_key_env, ""):
+            if os.environ.get(config.api_key_env, "") or settings.get_api_key(config.api_key_env):
                 self._available_providers.add(provider_key)
 
         # Check OAuth providers (e.g., Codex, Gemini CLI)
@@ -418,11 +420,12 @@ class ModelSelector:
         Returns:
             Dict mapping quality levels to model lists
         """
-        # Custom endpoints: use the configured model from env var
+        # Custom endpoints: use the configured model from env var or settings
         if provider in CUSTOM_ENDPOINT_ENVS:
             import os
+            from pantheon.settings import get_settings
             config = CUSTOM_ENDPOINT_ENVS[provider]
-            model = os.environ.get(config.model_env, "")
+            model = os.environ.get(config.model_env, "") or get_settings().get_api_key(config.model_env) or ""
             if model:
                 prefixed = f"{provider}/{model}"
                 return {"high": [prefixed], "normal": [prefixed], "low": [prefixed]}
